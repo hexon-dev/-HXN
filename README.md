@@ -6,7 +6,7 @@ Hexon ($HXN) is a programmable liquidity protocol built on Solana using SPL Toke
 
 The project demonstrates how token-level logic can enforce sustainable market structure — reducing supply concentration, mitigating automated exploitation, and funding long-term protocol development directly on-chain.
 
-🌐 Website
+🌐 Website https://github.com/hexon-dev/-HXN
 📱 Telegram
 🐦 X (Twitter)
 
