@@ -120,7 +120,7 @@ We believe sustainable token economies must be engineered — not marketed.
 Official Links
 	•	X (Twitter): https://twitter.com/Hexon_Coin
 	•	Telegram: https://t.me/HexonOfficial
-	•	GitHub: https://github.com/Hexon-Project
+	•	GitHub: [https://github.com/hexon-dev/-HXN]
 
 ⸻
 
