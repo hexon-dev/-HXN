@@ -5,6 +5,10 @@
   <title>Hexon — HXN Grid Activation</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
+
+  <!-- Telegram Web App script (required by main.js integration) -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
   <style>
     /* Basic layout + mobile-friendly */
     html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family: 'Orbitron', sans-serif; color:#E6F7FF; }
@@ -18,7 +22,7 @@
     .energyBar { width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
     .energyFill { height:100%; width:60%; background:linear-gradient(90deg,#22d3ee,#3b82f6); transition:width .25s ease; }
     .button { display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,#3b82f6,#22d3ee); color:#021125; font-weight:700; cursor:pointer; margin-top:8px; }
-    .btn-ghost { background:transparent; border:1px solid rgba(126,231,255,0.1); color:#7EE7FF; }
+    .btn-ghost { background:transparent; border:1px solid rgba(126,231,255,0.1); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; }
     .leaderboard { max-height:150px; overflow:auto; }
     .leader-entry { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed rgba(126,231,255,0.03); }
     .touch-controls { display:flex; justify-content:space-around; gap:8px; margin-top:8px; }
@@ -39,10 +43,22 @@
 </head>
 <body>
 
-<div id="gameContainer">
-  <div id="phaserCanvas"></div>
+<div id="gameContainer" role="application" aria-label="Hexon game">
+  <div id="phaserCanvas" aria-hidden="false"></div>
 
-  <div id="uiPanel">
+  <div id="uiPanel" aria-live="polite">
+    <!-- header with Telegram / username -->
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div class="small muted">Player</div>
+        <div class="stat small" id="ui-username">Guest</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="muted small">Session</div>
+        <div class="small" id="ui-session">—</div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="small muted">Level</div>
       <div class="stat" id="ui-level">1</div>
@@ -53,49 +69,70 @@
     <div class="card">
       <div class="small muted">Score</div>
       <div class="stat" id="ui-score">0</div>
-      <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
         <div>
           <div class="muted small">GP</div>
           <div id="ui-gp" class="small">0 GP</div>
         </div>
         <div>
-          <button id="bindWalletBtn" class="button">Bind Wallet</button>
+          <button id="bindWalletBtn" class="button" aria-label="Bind wallet">Bind Wallet</button>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <div class="small muted">Energy</div>
-      <div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-        <div><div class="muted small">Auto Refill</div><div id="ui-auto" class="small">+10% / 30m</div></div>
-        <div><div class="muted small">Sittings Left</div><div id="ui-sittings" class="small">3/3</div></div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div class="small muted">Energy</div>
+          <div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div>
+        </div>
+        <div style="text-align:right;">
+          <div class="muted small">Auto Refill</div>
+          <div class="small" id="ui-auto">+10% / 30m</div>
+        </div>
       </div>
+
+      <div style="display:flex; justify-content:space-between; margin-top:8px;">
+        <div>
+          <div class="muted small">Sittings Left</div>
+          <div class="small" id="ui-sittings">3/3</div>
+        </div>
+        <div>
+          <div class="muted small">Ads Today</div>
+          <div class="small" id="ui-adsToday">0</div>
+        </div>
+      </div>
+
       <div style="margin-top:8px;">
-        <button id="showRefBtn" class="btn-ghost">Share Referral</button>
-        <button id="watchAdBtn" class="button">Watch Transmission</button>
+        <button id="showRefBtn" class="btn-ghost" aria-label="Share referral">Share Referral</button>
+        <button id="watchAdBtn" class="button" aria-label="Watch ad">Watch Transmission</button>
       </div>
     </div>
 
     <div class="card">
       <div class="small muted">Miners (Off-chain)</div>
-      <div id="minersList" class="small">
+      <div id="minersList" class="small" aria-live="polite">
         <!-- dynamic -->
       </div>
       <div style="margin-top:8px;">
-        <button id="openStore" class="button">Open Miner Shop</button>
+        <button id="openStore" class="button" aria-label="Open miner shop">Open Miner Shop</button>
       </div>
     </div>
 
     <div class="card">
       <div style="display:flex; justify-content:space-between;"><div class="small muted">Claimable HXN (preview)</div><div class="small-muted">Est/day</div></div>
       <div style="display:flex; justify-content:space-between; margin-top:6px;"><div class="stat" id="ui-hxn">0 HXN</div><div class="small" id="ui-au">AU: 0</div></div>
-      <div style="margin-top:8px;"><button id="viewAlloc" class="btn-ghost">View Allocation</button></div>
+
+      <!-- Claim & close button (main.js expects #claimRewardBtn) -->
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button id="viewAlloc" class="btn-ghost" aria-label="View allocation">View Allocation</button>
+        <button id="claimRewardBtn" class="button" aria-label="Claim rewards and close">Claim & Close</button>
+      </div>
     </div>
 
     <div class="card">
       <div class="small muted">Top Scorers</div>
-      <div class="leaderboard" id="leaderboard">
+      <div class="leaderboard" id="leaderboard" aria-live="polite">
         <!-- dynamic -->
       </div>
     </div>
@@ -111,14 +148,16 @@
 </div>
 
 <!-- Overlays / modals -->
-<div id="overlay" class="overlay">
-  <div class="modal" id="modalContent">
+<div id="overlay" class="overlay" aria-hidden="true">
+  <div class="modal" id="modalContent" role="dialog" aria-modal="true">
     <!-- dynamic -->
   </div>
 </div>
 
 <!-- Phaser & game code -->
-<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
-<script src="./main.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" defer></script>
+
+<!-- your game file (main.js) — must be loaded after Telegram & Phaser -->
+<script src="./main.js" defer></script>
 </body>
 </html>
