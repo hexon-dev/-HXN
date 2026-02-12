@@ -1,7 +1,10 @@
 /* main.js
-   Hexon — Phaser 3 Tetris engine (fixed movement, rotation, larger grid,
-   canvas sized to board so blocks don't fall below dashboard)
-   - Update API_BASE for your backend
+   Hexon — Phaser 3 Tetris engine (full redraft)
+   - Single canonical piece model: {type, rot, x, y}
+   - getPieceCells() used everywhere (movement, collision, render)
+   - Canvas sized to board so board is fully visible above UI
+   - Widened grid + taller board
+   - Keep API placeholders (update API_BASE)
 */
 
 'use strict';
@@ -9,11 +12,18 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-const API_BASE = 'https://api.yourdomain.com'; // <-- update
-const GRID_COLS = 14;   // widened
-const GRID_ROWS = 24;   // taller
-const CELL_SIZE = 28;
-const CELL_GAP = 2;
+const API_BASE = 'https://api.yourdomain.com'; // <-- update to your backend
+const DAILY_EMISSION_CAP = 1250000;
+const GAME_ALLOCATION = 150_000_000;
+
+// Increased grid size as requested
+const GRID_COLS = 14;
+const GRID_ROWS = 24;
+
+const CELL_SIZE = 28;    // px
+const CELL_GAP = 2;      // px gap between cells
+
+// Gameplay timing
 const INITIAL_DROP_MS = 800;
 
 const AUTO_RECHARGE_MINUTES = 30;
@@ -23,11 +33,12 @@ const MAX_ADS_PER_SITTING = 3;
 const MAX_ADS_PER_DAY = 9;
 
 /* ---------------------------
-   Client state & utils
+   Client state & helpers
    --------------------------- */
 let clientState = {
   sessionId: generateUUID(),
   userId: null,
+  wallet: null,
   gp: 0,
   energy: 65,
   miners: [],
@@ -49,17 +60,20 @@ async function api(path, method='GET', body=null){
       headers: {'Content-Type':'application/json'},
       body: body ? JSON.stringify(body) : undefined
     });
-    if (!res.ok) throw new Error('api:' + res.status);
+    if (!res.ok) throw new Error('api ' + res.status);
     return await res.json();
-  } catch(e) { console.warn('API error', e); return null; }
+  } catch(e){
+    console.warn('API error', e);
+    return null;
+  }
 }
 
 /* ---------------------------
    Game state
    --------------------------- */
 const gameState = {
-  grid: null,
-  activePiece: null,   // { type, rot, x, y }
+  grid: null,            // GRID_ROWS x GRID_COLS array
+  activePiece: null,     // { type, rot, x, y }
   nextPiece: null,
   score: 0,
   level: 1,
@@ -67,11 +81,12 @@ const gameState = {
   dropInterval: INITIAL_DROP_MS,
   dropTimer: 0,
   isPlaying: false,
-  combo: 0
+  combo: 0,
 };
 
 /* ---------------------------
-   Tetromino definitions (rotation states)
+   Tetromino definitions (states)
+   Each entry = array of [x,y] pairs for that rotation state
    --------------------------- */
 const PIECES = {
   I: [
@@ -127,38 +142,37 @@ class GameScene extends Phaser.Scene {
   create(){
     console.log('GameScene.create()');
 
-    // compute board pixel size (small margin)
+    // compute board pixel size and set canvas origin
     this.boardPixelWidth = GRID_COLS * (CELL_SIZE + CELL_GAP) + 40;
     this.boardPixelHeight = GRID_ROWS * (CELL_SIZE + CELL_GAP) + 40;
-
-    // top-left origin inside canvas
     this.gridOrigin = { x: 16, y: 16 };
 
-    // background panel & light grid lines
+    // draw board background & lines
     const g = this.add.graphics();
     g.fillStyle(0x061426, 1);
-    g.fillRoundedRect(this.gridOrigin.x-8, this.gridOrigin.y-8, this.boardPixelWidth, this.boardPixelHeight, 10);
+    g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
     g.lineStyle(1, 0x0d2130, 0.6);
     for (let r=0; r<=GRID_ROWS; r++){
-      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL_SIZE+CELL_GAP), this.gridOrigin.x + GRID_COLS*(CELL_SIZE+CELL_GAP), this.gridOrigin.y + r*(CELL_SIZE+CELL_GAP)));
+      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL_SIZE + CELL_GAP), this.gridOrigin.x + GRID_COLS*(CELL_SIZE + CELL_GAP), this.gridOrigin.y + r*(CELL_SIZE + CELL_GAP)));
     }
     for (let c=0; c<=GRID_COLS; c++){
-      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL_SIZE+CELL_GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL_SIZE+CELL_GAP), this.gridOrigin.y + GRID_ROWS*(CELL_SIZE+CELL_GAP)));
+      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL_SIZE + CELL_GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL_SIZE + CELL_GAP), this.gridOrigin.y + GRID_ROWS*(CELL_SIZE + CELL_GAP)));
     }
 
-    // init logical grid & sprites
+    // setup logical grid & sprites
     initGrid();
     this.cellSprites = [];
     for (let r=0; r<GRID_ROWS; r++){
       this.cellSprites[r] = [];
       for (let c=0; c<GRID_COLS; c++){
-        const x = this.gridOrigin.x + c*(CELL_SIZE+CELL_GAP) + CELL_SIZE/2;
-        const y = this.gridOrigin.y + r*(CELL_SIZE+CELL_GAP) + CELL_SIZE/2;
+        const x = this.gridOrigin.x + c*(CELL_SIZE + CELL_GAP) + CELL_SIZE/2;
+        const y = this.gridOrigin.y + r*(CELL_SIZE + CELL_GAP) + CELL_SIZE/2;
         const rect = this.add.rectangle(x, y, CELL_SIZE, CELL_SIZE, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
         this.cellSprites[r][c] = rect;
       }
     }
 
+    // spawn first piece & start
     spawnPiece();
     gameState.isPlaying = true;
     gameState.dropTimer = 0;
@@ -166,11 +180,13 @@ class GameScene extends Phaser.Scene {
     this.setupInput();
     updateUI();
 
+    // auto-recharge (placeholder)
     this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
   }
 
   update(time, delta){
     if (!gameState.isPlaying) return;
+
     gameState.dropTimer += delta;
     if (gameState.dropTimer >= gameState.dropInterval){
       gameState.dropTimer = 0;
@@ -178,11 +194,12 @@ class GameScene extends Phaser.Scene {
       logAction('tick_drop', { moved });
       if (!moved) lockPiece();
     }
+
     this.renderGrid();
   }
 
   renderGrid(){
-    // locked grid
+    // locked cells
     for (let r=0; r<GRID_ROWS; r++){
       for (let c=0; c<GRID_COLS; c++){
         const val = gameState.grid[r][c];
@@ -201,6 +218,7 @@ class GameScene extends Phaser.Scene {
   }
 
   setupInput(){
+    // single handler for keydown events
     this.input.keyboard.on('keydown', (ev)=>{
       if (!gameState.isPlaying) return;
       switch(ev.code){
@@ -212,6 +230,7 @@ class GameScene extends Phaser.Scene {
       }
       updateUI();
     });
+    // add touch controls if not present
     if (!document.querySelector('.touch-controls')) setupTouchControls(this);
   }
 
@@ -223,38 +242,48 @@ class GameScene extends Phaser.Scene {
 }
 
 /* ---------------------------
-   Piece helpers
+   Piece utilities (single canonical model)
    --------------------------- */
 function getPieceCells(piece){
+  // piece: { type, rot, x, y }
   const states = PIECES[piece.type];
   const state = states[piece.rot % states.length];
   return state.map(p => ({ x: p[0] + piece.x, y: p[1] + piece.y }));
 }
 
 /* ---------------------------
-   Game logic
+   Game logic: init, spawn, move, rotate, lock, clear
    --------------------------- */
 function initGrid(){
-  gameState.grid = Array.from({length: GRID_ROWS}, () => Array(GRID_COLS).fill(0));
-  gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0;
+  gameState.grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(0));
+  gameState.score = 0;
+  gameState.level = 1;
+  gameState.lines = 0;
+  gameState.combo = 0;
+  gameState.dropInterval = INITIAL_DROP_MS;
 }
 
 function spawnPiece(){
-  const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
+  const type = PIECE_TYPES[Math.floor(Math.random() * PIECE_TYPES.length)];
   const rot = 0;
+  // center horizontally; many tetrominoes assume a 4-wide spawn area
   const xStart = Math.floor((GRID_COLS - 4) / 2);
-  const yStart = -1; // small spawn buffer above visible area
+  // start slightly above visible area for smooth spawn
+  const yStart = -1;
   gameState.activePiece = { type, rot, x: xStart, y: yStart };
-  gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-  logAction('spawn', { type, x:xStart, y:yStart });
-  if (checkCollision(getPieceCells(gameState.activePiece))) {
+  gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random() * PIECE_TYPES.length)];
+  logAction('spawn', { type, x: xStart, y: yStart });
+
+  // immediate collision => game over
+  if (checkCollision(getPieceCells(gameState.activePiece))){
     gameOver();
   }
 }
 
 function checkCollision(cells){
   for (const p of cells){
-    if (p.x < 0 || p.x >= GRID_COLS || p.y >= GRID_ROWS) return true;
+    if (p.x < 0 || p.x >= GRID_COLS) return true;
+    if (p.y >= GRID_ROWS) return true;
     if (p.y >= 0 && gameState.grid[p.y][p.x]) return true;
   }
   return false;
@@ -265,7 +294,7 @@ function movePiece(dir){
   const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir };
   if (!checkCollision(getPieceCells(cand))){
     gameState.activePiece.x = cand.x;
-    logAction('move', {dir});
+    logAction('move', { dir });
   }
 }
 
@@ -279,22 +308,29 @@ function movePieceDown(){
   return false;
 }
 
-function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); } }
+function softDrop(){
+  if (movePieceDown()){
+    gameState.score += 1;
+    clientState.gp += 1;
+    logAction('soft_drop');
+    updateUI();
+  }
+}
 
 function hardDrop(){
   let falls = 0;
-  while(movePieceDown()) falls++;
+  while (movePieceDown()) falls++;
   lockPiece();
   gameState.score += falls * 2;
   clientState.gp += falls * 2;
-  logAction('hard_drop', {falls});
+  logAction('hard_drop', { falls });
   updateUI();
 }
 
 function rotatePiece(){
   if (!gameState.activePiece) return;
   const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) };
-  // simple wall-kick attempts
+  // simple wall kicks to allow rotation near walls/blocks
   const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}];
   for (const k of kicks){
     const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy };
@@ -302,11 +338,11 @@ function rotatePiece(){
       gameState.activePiece.rot = cand.rot;
       gameState.activePiece.x = cand.x;
       gameState.activePiece.y = cand.y;
-      logAction('rotate', {rot:gameState.activePiece.rot, kick:k});
+      logAction('rotate', { rot: cand.rot, kick: k });
       return;
     }
   }
-  // blocked: no rotation
+  // rotation blocked
 }
 
 function lockPiece(){
@@ -318,20 +354,22 @@ function lockPiece(){
       gameState.grid[p.y][p.x] = ap.type;
     }
   }
-  // clear lines
+
+  // check lines to clear
   const cleared = [];
   for (let r=0; r<GRID_ROWS; r++){
     if (gameState.grid[r].every(v => v !== 0)) cleared.push(r);
   }
   if (cleared.length > 0) clearLines(cleared);
   else gameState.combo = 0;
+
   spawnPiece();
 }
 
 function clearLines(rows){
   rows.sort((a,b)=>a-b);
   for (const r of rows){
-    gameState.grid.splice(r,1);
+    gameState.grid.splice(r, 1);
     gameState.grid.unshift(Array(GRID_COLS).fill(0));
   }
   const count = rows.length;
@@ -340,7 +378,7 @@ function clearLines(rows){
   gameState.lines += count;
   gameState.combo += 1;
   clientState.gp += (count * 10) + (gameState.combo * 5);
-  logAction('clear', {count, combo:gameState.combo});
+  logAction('clear', { count, combo: gameState.combo });
   if (gameState.lines % 10 === 0){
     gameState.level++;
     gameState.dropInterval = Math.max(120, gameState.dropInterval * 0.92);
@@ -350,11 +388,21 @@ function clearLines(rows){
 
 async function gameOver(){
   gameState.isPlaying = false;
-  logAction('gameover', {score:gameState.score, lines:gameState.lines});
-  // send best-effort
-  try { await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, userId: clientState.userId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
-  showModal(`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div><div style="height:12px"></div><button id="playAgain" class="button">Play Again</button>`, ()=>{
-    $('#playAgain').onclick = ()=>{ hideModal(); resetForPlay(); };
+  logAction('gameover', { score: gameState.score, lines: gameState.lines });
+  // best-effort submit
+  try {
+    await api('/game/submit-score','POST', {
+      sessionId: clientState.sessionId,
+      userId: clientState.userId,
+      score: gameState.score,
+      lines: gameState.lines,
+      actionLog: clientState.actionLog.slice(-2000)
+    });
+  } catch(e){ console.warn(e); }
+  showModal(`<div style="font-weight:700">Game Over</div>
+    <div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>
+    <div style="height:12px"></div><button id="playAgain" class="button">Play Again</button>`, ()=>{
+      $('#playAgain').onclick = ()=>{ hideModal(); resetForPlay(); };
   });
   updateUI();
 }
@@ -383,12 +431,12 @@ function setupTouchControls(scene){
   if (document.querySelector('.touch-controls')) return;
   const wrapper = document.createElement('div');
   wrapper.classList.add('touch-controls');
-  wrapper.style.display='flex'; wrapper.style.justifyContent='space-around'; wrapper.style.gap='8px'; wrapper.style.marginTop='10px';
+  wrapper.style.display='flex'; wrapper.style.justifyContent='space-around'; wrapper.style.gap='8px'; wrapper.style.marginTop='12px';
   const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerText='◀';
   const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerText='▶';
   const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerText='↻';
   const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerText='↓';
-  [btnLeft, btnRotate, btnDown, btnRight].forEach(b => { b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
+  [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
   wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
   const ui = $('uiPanel');
   if (ui) ui.append(wrapper);
@@ -399,20 +447,20 @@ function setupTouchControls(scene){
 }
 
 /* ---------------------------
-   Minimal stubs for UI functions (keep your implementations if present)
+   Minimal stubs for shop / ads / wallet (preserve your implementations if present)
    --------------------------- */
-async function handleWatchAd(){ clientState.energy = Math.min(100, clientState.energy + 50); showModal('<div class="small-muted">Ad simulated</div>'); updateUI(); }
-async function openMinerShop(){ showModal('<div class="small-muted">Shop (stub)</div>'); }
+async function handleWatchAd(){ clientState.energy = Math.min(100, clientState.energy + 50); showModal('<div class="small-muted">Ad simulated (energy +50%)</div>'); updateUI(); }
+async function openMinerShop(){ showModal('<div class="small-muted">Miner shop (stub)</div>'); }
 async function bindWallet(){ showModal('<div class="small-muted">Bind wallet (stub)</div>'); }
-function renderMinersList(){ /* existing UI function preserved if present */ }
-async function refreshLeaderboard(){ /* stub */ }
-function showReferralShare(){ prompt('Share invite', window.location.href + '?ref=code'); }
+function renderMinersList(){ const el = $('minersList'); if (!el) return; el.innerHTML = (clientState.miners && clientState.miners.length) ? clientState.miners.map(m=>`<div>${m.name}</div>`).join('') : '<div class="small-muted">No miners owned</div>'; }
+async function refreshLeaderboard(){ /* optional */ }
+function showReferralShare(){ prompt('Share invite link', window.location.href + '?ref=code'); }
 
 /* ---------------------------
-   Modal helpers & UI updates
+   Modal helpers + small UI update
    --------------------------- */
-function showModal(html, onMounted){ const o=$('overlay'); if(!o) return; o.classList.add('show'); $('#modalContent').innerHTML=html; if(onMounted) setTimeout(onMounted,80); }
-function hideModal(){ const o=$('overlay'); if(!o) return; o.classList.remove('show'); $('#modalContent').innerHTML=''; }
+function showModal(html, onMounted){ const o=$('overlay'); if(!o) return; o.classList.add('show'); $('#modalContent').innerHTML = html; if(onMounted) setTimeout(onMounted, 60); }
+function hideModal(){ const o=$('overlay'); if(!o) return; o.classList.remove('show'); $('#modalContent').innerHTML = ''; }
 
 function updateUI(){
   if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
@@ -424,7 +472,7 @@ function updateUI(){
 }
 
 /* ---------------------------
-   Init & Phaser boot
+   Init & Phaser boot — canvas sized exactly to board so board sits above dashboard
    --------------------------- */
 window.addEventListener('load', async ()=>{
   // wire UI controls (if present)
@@ -434,9 +482,9 @@ window.addEventListener('load', async ()=>{
   if ($('showRefBtn')) $('showRefBtn').onclick = showReferralShare;
   if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
 
-  // attempt optional client init
+  // optional client init (best-effort)
   try {
-    const init = await api('/client/init','POST',{ sessionId:clientState.sessionId, referral:clientState.referralCode });
+    const init = await api('/client/init','POST', { sessionId: clientState.sessionId, referral: clientState.referralCode });
     if (init){
       clientState.userId = init.userId ?? clientState.userId;
       clientState.gp = init.gp ?? clientState.gp;
@@ -444,13 +492,19 @@ window.addEventListener('load', async ()=>{
       clientState.userAU = init.userAU ?? clientState.userAU;
       clientState.totalAU = init.totalAU ?? clientState.totalAU;
     }
-  } catch(e){ console.warn(e); }
+  } catch(e) { console.warn(e); }
 
-  // compute canvas to exactly match board so board stays above dashboard
+  // set canvas size to exactly the board size so it doesn't overlap dashboard
   const canvasWidth = GRID_COLS * (CELL_SIZE + CELL_GAP) + 40;
   const canvasHeight = GRID_ROWS * (CELL_SIZE + CELL_GAP) + 40;
 
   const parentEl = document.getElementById('phaserCanvas') || document.body;
+  // ensure parent element has no conflicting styles that shrink canvas; set explicit size
+  if (parentEl && parentEl.style) {
+    parentEl.style.width = canvasWidth + 'px';
+    parentEl.style.height = canvasHeight + 'px';
+  }
+
   phaserGame = new Phaser.Game({
     type: Phaser.AUTO,
     parent: parentEl,
@@ -460,11 +514,11 @@ window.addEventListener('load', async ()=>{
     scene: [ BootScene, GameScene ]
   });
 
-  // initial UI sync
+  // initial UI sync & refresh
   updateUI();
   renderMinersList();
   refreshLeaderboard();
   setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
-  console.log('Phaser started: board', GRID_COLS+'x'+GRID_ROWS, 'canvas', canvasWidth, 'x', canvasHeight);
+  console.log('Hexon Tetris booted — board:', GRID_COLS + 'x' + GRID_ROWS, 'canvas:', canvasWidth + 'x' + canvasHeight);
 });
