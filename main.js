@@ -1,10 +1,7 @@
 /* main.js
-   Hexon — Phaser 3 Tetris engine (fixed)
-   - Reliable grid rendering
-   - Drop loop uses Phaser time events (stable inside webviews)
-   - Restart drop loop when dropInterval changes
-   - Pieces spawn inside the visible grid
-   - AdsGram, Phantom, Telegram integrations preserved
+   Hexon — Phaser 3 Tetris engine (robust/redraft)
+   - fixes for canvas sizing, stable drop loop, safe handlers
+   - preserves AdsGram, Phantom, Telegram integrations
 */
 
 'use strict';
@@ -12,7 +9,7 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-const API_BASE = 'https://api.yourdomain.com'; // <-- update to your backend
+const API_BASE = 'https://api.yourdomain.com'; // <-- update to your backend (optional)
 const DAILY_EMISSION_CAP = 1250000;
 const GAME_ALLOCATION = 150_000_000;
 
@@ -61,7 +58,8 @@ function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if
 
 async function api(path, method='GET', body=null){
   try {
-    const res = await fetch(API_BASE + path, {
+    const url = API_BASE + path;
+    const res = await fetch(url, {
       method,
       headers: {'Content-Type':'application/json'},
       body: body ? JSON.stringify(body) : undefined
@@ -75,7 +73,7 @@ async function api(path, method='GET', body=null){
 }
 
 /* ---------------------------
-   Telegram WebApp integration (feature-detected, safe)
+   Telegram WebApp integration (feature-detected)
    --------------------------- */
 let tg = null;
 function initTelegram(){
@@ -172,49 +170,52 @@ const PIECES = {
 const PIECE_TYPES = Object.keys(PIECES);
 
 /* ---------------------------
-   AdsGram loader (kept, non-blocking)
+   AdsGram loader (non-blocking)
    --------------------------- */
 let AdsGramLoaded = false;
 let AdController = null;
 function loadAdsGram(){
-  if (window.Adsgram && !AdController){
-    try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn(e); }
-  }
-  if (AdsGramLoaded) return;
-  const s = document.createElement('script');
-  s.src = ADSGRAM_SRC;
-  s.async = true;
-  s.onload = () => {
-    try {
-      if (window.Adsgram && typeof window.Adsgram.init === 'function'){
-        AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
-        AdsGramLoaded = true;
-      }
-    } catch(e){ console.warn('AdsGram init error', e); }
-  };
-  s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); };
-  document.head.appendChild(s);
+  try {
+    if (window.Adsgram && !AdController){
+      try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn(e); }
+    }
+    if (AdsGramLoaded) return;
+    const s = document.createElement('script');
+    s.src = ADSGRAM_SRC;
+    s.async = true;
+    s.onload = () => {
+      try {
+        if (window.Adsgram && typeof window.Adsgram.init === 'function'){
+          AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
+          AdsGramLoaded = true;
+        }
+      } catch(e){ console.warn('AdsGram init error', e); }
+    };
+    s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); };
+    document.head.appendChild(s);
+  } catch(e){ console.warn('loadAdsGram', e); }
 }
 
 /* ---------------------------
-   Phaser scenes (redrafted)
+   Phaser scenes
    --------------------------- */
 let phaserGame;
 
 class BootScene extends Phaser.Scene {
   constructor(){ super({ key:'BootScene' }); }
-  create(){ this.scene.start('GameScene'); }
+  create(){ console.log('BootScene.create -> switching to GameScene'); this.scene.start('GameScene'); }
 }
 
 class GameScene extends Phaser.Scene {
   constructor(){ super({ key:'GameScene' }); }
   create(){
-    // compute board pixel size
+    console.log('GameScene.create');
+    // compute board pixel size using current CELL/GAP
     this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
     this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
     this.gridOrigin = { x: 16, y: 16 };
 
-    // draw panel & grid lines (background)
+    // draw panel background and grid lines
     const g = this.add.graphics();
     g.fillStyle(0x061426, 1);
     g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
@@ -226,24 +227,21 @@ class GameScene extends Phaser.Scene {
       g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y + GRID_ROWS*(CELL + GAP)));
     }
 
-    // initialize logical grid first
+    // initialize logical grid
     initGrid();
 
-    // create persistent rectangle sprites for each cell
-    this.cellSprites = [];
+    // create persistent rectangle sprites for each grid cell
+    this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
     for (let r=0; r<GRID_ROWS; r++){
-      this.cellSprites[r] = [];
       for (let c=0; c<GRID_COLS; c++){
         const x = this.gridOrigin.x + c*(CELL + GAP) + CELL/2;
         const y = this.gridOrigin.y + r*(CELL + GAP) + CELL/2;
-        // initial fill color for empty cell
         const rect = this.add.rectangle(x, y, CELL, CELL, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
-        // safe method to change color later: use both property and setFillStyle if available
         rect.updateFill = function(color){
-          try { if (typeof this.setFillStyle === 'function'){ this.setFillStyle(color); } } catch(e){}
+          // Phaser.GameObjects.Rectangle supports 'fillColor' and 'setFillStyle' may not exist; do both defensively
           try { this.fillColor = color; } catch(e){}
+          try { if (typeof this.setFillStyle === 'function') this.setFillStyle(color); } catch(e){}
         };
-        // interactive feedback
         rect.setInteractive({ useHandCursor: true });
         ((rr, cc, node) => {
           node.on('pointerdown', () => {
@@ -258,30 +256,31 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // spawn initial piece and start loop
+    // spawn first piece
     spawnPiece();
     gameState.isPlaying = true;
-
-    // start the drop loop using Phaser timed event (stable)
-    this.startDropLoop();
-
-    this.setupInput();
     updateUI();
 
-    // auto-recharge for energy (keeps running)
+    // start the drop loop, stable
+    this.startDropLoop();
+
+    // input setup
+    this.setupInput();
+
+    // auto recharge event
     this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
+
+    console.log('GameScene created — boardSize', this.boardPixelWidth, this.boardPixelHeight);
   }
 
-  // safe method to start or restart the drop loop
   startDropLoop(){
-    // if existing event, remove it
-    if (this.dropEvent) {
-      try { this.dropEvent.remove(false); } catch(e){ console.warn('dropEvent remove', e); }
+    if (this.dropEvent){
+      try { this.dropEvent.remove(false); } catch(e){ console.warn('dropEvent remove failed', e); }
       this.dropEvent = null;
     }
-    // create new event with current dropInterval
+    const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
     this.dropEvent = this.time.addEvent({
-      delay: Math.max(40, gameState.dropInterval),
+      delay,
       loop: true,
       callback: () => {
         if (!gameState.isPlaying) return;
@@ -290,10 +289,11 @@ class GameScene extends Phaser.Scene {
         if (!moved) lockPiece();
       }
     });
+    // small debug
+    // console.log('drop loop started, delay', delay);
   }
 
   update(){
-    // only rendering each frame now — movement handled by dropEvent
     if (!gameState.isPlaying) return;
     this.renderGrid();
   }
@@ -305,7 +305,7 @@ class GameScene extends Phaser.Scene {
         const val = gameState.grid[r][c];
         const color = val ? colorFromVal(val) : 0x102033;
         const rect = this.cellSprites[r][c];
-        if (rect) rect.updateFill(color);
+        if (rect && typeof rect.updateFill === 'function') rect.updateFill(color);
       }
     }
     // overlay active piece
@@ -314,7 +314,7 @@ class GameScene extends Phaser.Scene {
       cells.forEach(p=>{
         if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){
           const rect = this.cellSprites[p.y][p.x];
-          if (rect) rect.updateFill(colorFromVal(gameState.activePiece.type));
+          if (rect && typeof rect.updateFill === 'function') rect.updateFill(colorFromVal(gameState.activePiece.type));
         }
       });
     }
@@ -324,11 +324,10 @@ class GameScene extends Phaser.Scene {
     // Phaser keyboard (preferred)
     this.input.keyboard.on('keydown', (ev)=>{
       if (!gameState.isPlaying) return;
-      // use ev.code for arrow keys; fallback to ev.key for others
       handleKey(ev.code || ev.key);
     });
 
-    // fallback window keyboard (in case focus lost)
+    // fallback window keyboard
     window.addEventListener('keydown', (ev) => {
       if (!gameState.isPlaying) return;
       handleKey(ev.code || ev.key);
@@ -345,7 +344,7 @@ class GameScene extends Phaser.Scene {
 }
 
 /* ---------------------------
-   Key handling (kept)
+   Key handling
    --------------------------- */
 function handleKey(code){
   switch(code){
@@ -370,7 +369,7 @@ function handleKey(code){
 }
 
 /* ---------------------------
-   Piece helper & movement (kept, spawn inside grid)
+   Piece helper & movement
    --------------------------- */
 function getPieceCells(piece){
   const states = PIECES[piece.type];
@@ -390,20 +389,18 @@ function initGrid(){
 function spawnPiece(){
   const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   const rot = 0;
-  // start inside the top visible row(s) to avoid "stuck above grid" issues
   const xStart = Math.floor((GRID_COLS - 4) / 2);
-  const yStart = 0; // ensure piece is visible
+  const yStart = 0; // visible start
   gameState.activePiece = { type, rot, x: xStart, y: yStart };
   gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   logAction('spawn', { type, x: xStart, y: yStart });
 
-  // immediate collision -> gameover
-  if (checkCollision( getPieceCells(gameState.activePiece) )){
+  if (checkCollision(getPieceCells(gameState.activePiece))){
     gameOver();
   }
 }
 
-/* collision / movement helpers */
+/* collision / movement */
 function checkCollision(cells){
   for (const p of cells){
     if (p.x < 0 || p.x >= GRID_COLS) return true;
@@ -416,7 +413,7 @@ function checkCollision(cells){
 function movePiece(dir){
   if (!gameState.activePiece) return;
   const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir };
-  if (!checkCollision( getPieceCells(cand) )){
+  if (!checkCollision(getPieceCells(cand))){
     gameState.activePiece.x = cand.x;
     logAction('move', { dir });
   }
@@ -425,7 +422,7 @@ function movePiece(dir){
 function movePieceDown(){
   if (!gameState.activePiece) return false;
   const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 };
-  if (!checkCollision( getPieceCells(cand) )){
+  if (!checkCollision(getPieceCells(cand))){
     gameState.activePiece.y = cand.y;
     return true;
   }
@@ -449,7 +446,7 @@ function rotatePiece(){
   const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}];
   for (const k of kicks){
     const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy };
-    if (!checkCollision( getPieceCells(cand) )){
+    if (!checkCollision(getPieceCells(cand))){
       gameState.activePiece.rot = cand.rot;
       gameState.activePiece.x = cand.x;
       gameState.activePiece.y = cand.y;
@@ -481,9 +478,11 @@ function lockPiece(){
 
   spawnPiece();
 
-  // ensure drop loop uses updated interval (in case level changed)
-  const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-  if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
+  // restart drop loop in scene
+  try {
+    const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+    if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
+  } catch(e){ console.warn('restart drop loop failed', e); }
 }
 
 function clearLines(rows){
@@ -502,7 +501,7 @@ function clearLines(rows){
   if (gameState.lines % 10 === 0){
     gameState.level++;
     gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92));
-    // restart timer handled by lockPiece() after spawn
+    // drop loop will be restarted from lockPiece after spawn
   }
   updateUI();
 }
@@ -536,9 +535,10 @@ function resetForPlay(){
   clientState.actionLog = [];
   spawnPiece();
   gameState.isPlaying = true;
-  // restart loop
-  const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-  if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
+  try {
+    const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+    if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
+  } catch(e){ console.warn(e); }
   updateUI();
 }
 
@@ -570,7 +570,7 @@ function setupTouchControls(scene){
 }
 
 /* ---------------------------
-   Ads / Wallet / UI helpers (kept, unchanged in intent)
+   Ads / Wallet / UI helpers (kept)
    --------------------------- */
 loadAdsGram();
 
@@ -647,6 +647,9 @@ async function bindWallet(){
   }
 }
 
+/* ---------------------------
+   UI helpers
+   --------------------------- */
 function renderMinersList(){
   const container = $('minersList'); if (!container) return;
   container.innerHTML = '';
@@ -673,7 +676,7 @@ async function refreshLeaderboard(){
 }
 
 /* ---------------------------
-   Claim rewards / modal / UI helpers
+   Claim rewards / modal helpers
    --------------------------- */
 async function claimRewards(){
   showModal('<div class="small-muted">Claiming rewards...</div>');
@@ -717,74 +720,88 @@ function updateUI(){
 }
 
 /* ---------------------------
-   Boot & sizing (create Phaser with parent id)
+   Boot & sizing
    --------------------------- */
 window.addEventListener('load', async ()=>{
-
-  initTelegram();
-
-  // wire UI buttons
-  if ($('watchAdBtn')) $('watchAdBtn').onclick = handleWatchAd;
-  if ($('openStore')) $('openStore').onclick = openMinerShop;
-  if ($('bindWalletBtn')) $('bindWalletBtn').onclick = bindWallet;
-  if ($('showRefBtn')) $('showRefBtn').onclick = ()=> showModal('<div class="small-muted">Invite friends</div>');
-  if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
-  if ($('claimRewardBtn')) $('claimRewardBtn').onclick = claimRewards;
-
-  // init server-side client (best-effort)
   try {
-    const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.referralCode });
-    if (init){
-      clientState.userId = init.userId ?? clientState.userId;
-      clientState.gp = init.gp ?? clientState.gp;
-      clientState.miners = init.miners ?? clientState.miners;
-      clientState.userAU = init.userAU ?? clientState.userAU;
-      clientState.totalAU = init.totalAU ?? clientState.totalAU;
-      clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
-      if (!clientState.username && init.username) clientState.username = init.username;
+    console.log('Hexon boot starting...');
+    initTelegram();
+
+    // wire UI buttons safely (guard missing functions)
+    try { if ($('watchAdBtn')) $('watchAdBtn').onclick = handleWatchAd; } catch(e){ console.warn(e); }
+    try { if ($('openStore') && typeof openMinerShop === 'function') $('openStore').onclick = openMinerShop; } catch(e){ console.warn('openMinerShop not available', e); }
+    try { if ($('bindWalletBtn') && typeof bindWallet === 'function') $('bindWalletBtn').onclick = bindWallet; } catch(e){ console.warn(e); }
+    if ($('showRefBtn')) $('showRefBtn').onclick = ()=> showModal('<div class="small-muted">Invite friends</div>');
+    if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
+    if ($('claimRewardBtn') && typeof claimRewards === 'function') $('claimRewardBtn').onclick = claimRewards;
+
+    // attempt initial client init (best-effort)
+    try {
+      const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.referralCode });
+      if (init){
+        clientState.userId = init.userId ?? clientState.userId;
+        clientState.gp = init.gp ?? clientState.gp;
+        clientState.miners = init.miners ?? clientState.miners;
+        clientState.userAU = init.userAU ?? clientState.userAU;
+        clientState.totalAU = init.totalAU ?? clientState.totalAU;
+        clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
+        if (!clientState.username && init.username) clientState.username = init.username;
+      }
+    } catch(e){ console.warn('client init failed', e); }
+
+    // compute scale and desired canvas size
+    const parentEl = document.getElementById('phaserCanvas') || document.body;
+
+    // Ensure parentEl has a visible height (avoid 0x0 canvas)
+    // If clientHeight is zero, set a safe minHeight
+    if (parentEl && parentEl.clientHeight < 200){
+      // mobile-friendly fallback; adjust if you want less/more
+      parentEl.style.minHeight = Math.max(420, Math.floor(window.innerHeight * 0.6)) + 'px';
+      parentEl.style.width = '100%';
+      // allow some breathing space
+      console.log('Enforced minHeight on phaserCanvas:', parentEl.style.minHeight);
     }
-  } catch(e){ console.warn(e); }
 
-  // compute scaling to fit #phaserCanvas
-  const parentEl = document.getElementById('phaserCanvas') || document.body;
-  const rect = parentEl.getBoundingClientRect();
-  const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.65, 900));
-  const availH = Math.max(320, rect.height || Math.min(window.innerHeight * 0.9, 1200));
+    const rect = parentEl.getBoundingClientRect();
+    const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.9, 900));
+    const availH = Math.max(320, rect.height || Math.min(window.innerHeight * 0.9, 1200));
 
-  const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
-  const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
-  const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
+    const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
+    const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
+    const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
 
-  CELL = Math.max(10, Math.floor(BASE_CELL * scale));
-  GAP = Math.max(1, Math.floor(BASE_GAP * scale));
+    CELL = Math.max(10, Math.floor(BASE_CELL * scale));
+    GAP = Math.max(1, Math.floor(BASE_GAP * scale));
 
-  const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
-  const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
+    const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
+    const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
-  // enforce parent size so Phaser canvas isn't 0x0
-  if (parentEl && parentEl.style){
-    parentEl.style.width = canvasWidth + 'px';
-    parentEl.style.height = canvasHeight + 'px';
-    parentEl.style.minWidth = '320px';
+    // ensure parent min size again (so Phaser doesn't get 0x0)
+    if (parentEl && parentEl.style){
+      parentEl.style.minWidth = Math.min(canvasWidth, Math.max(320, canvasWidth)) + 'px';
+      parentEl.style.minHeight = Math.min(canvasHeight, Math.max(420, canvasHeight)) + 'px';
+    }
+
+    // create Phaser game (use parent DOM id)
+    phaserGame = new Phaser.Game({
+      type: Phaser.AUTO,
+      parent: 'phaserCanvas',
+      width: canvasWidth,
+      height: canvasHeight,
+      backgroundColor: '#061426',
+      scene: [ BootScene, GameScene ],
+      render: { pixelArt: false, antialias: true }
+    });
+
+    loadAdsGram();
+
+    updateUI();
+    renderMinersList();
+    refreshLeaderboard();
+    setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
+
+    console.log('Hexon booted — board', GRID_COLS+'x'+GRID_ROWS, 'CELL', CELL, 'GAP', GAP, 'canvas', canvasWidth+'x'+canvasHeight);
+  } catch (err) {
+    console.error('Hexon boot failure:', err);
   }
-
-  // create Phaser game (use parent DOM id)
-  phaserGame = new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: 'phaserCanvas',
-    width: canvasWidth,
-    height: canvasHeight,
-    backgroundColor: '#061426',
-    scene: [ BootScene, GameScene ],
-    render: { pixelArt: false, antialias: true }
-  });
-
-  loadAdsGram();
-
-  updateUI();
-  renderMinersList();
-  refreshLeaderboard();
-  setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
-
-  console.log('Hexon booted — board', GRID_COLS+'x'+GRID_ROWS, 'CELL', CELL, 'GAP', GAP, 'canvas', canvasWidth+'x'+canvasHeight);
 });
