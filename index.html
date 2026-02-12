@@ -21,9 +21,9 @@
 
     /* Page layout */
     #pageWrap { display:flex; flex-direction:column; gap:12px; padding:12px; min-height:100dvh; padding-top: calc(var(--safe-pad) + 8px); padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px); }
-    #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); }
-    /* keep canvas responsive within container */
-    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; }
+    #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; }
+    /* keep canvas responsive within container and constrain height */
+    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-height:56vh; }
 
     /* Controls panel below canvas */
     #uiPanel{ width:100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: 48vh; overflow:auto; -webkit-overflow-scrolling: touch; }
@@ -58,8 +58,9 @@
     /* desktop tweaks: place UI to side if enough width */
     @media(min-width:900px){
       #pageWrap{ flex-direction:row; align-items:flex-start; gap:16px; padding:18px; }
-      #phaserCanvas{ flex: 2; max-width: calc(100% - 360px); }
+      #phaserCanvas{ flex: 2; max-width: calc(100% - 360px); max-height: 80vh; }
       #uiPanel{ flex: 1; max-width: 340px; max-height: calc(100dvh - 48px); overflow:auto; }
+      #phaserCanvas canvas { max-height:80vh; }
     }
   </style>
 </head>
@@ -208,7 +209,8 @@
   const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev';
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
-  const BASE_CELL = 28, BASE_GAP = 2;
+  // REDUCED base cell so the grid renders smaller
+  const BASE_CELL = 20, BASE_GAP = 2;
   const INITIAL_DROP_MS = 800;
   const ADSGRAM_SRC = 'https://sad.adsgram.ai/js/sad.min.js';
   const ADSGRAM_BLOCK_ID = 'int-22823';
@@ -1110,15 +1112,16 @@
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
-      const availH = Math.max(320, rect.height || Math.min(window.innerHeight * 0.6, 1200));
+      // more aggressive vertical fit so canvas stays small on phones
+      const availH = Math.max(260, rect.height || Math.min(window.innerHeight * 0.5, 900));
       const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
       const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
       const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
-      CELL = Math.max(10, Math.floor(BASE_CELL * scale));
+      CELL = Math.max(8, Math.floor(BASE_CELL * scale));
       GAP = Math.max(1, Math.floor(BASE_GAP * scale));
       const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
       const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
-      if (parentEl && parentEl.style){ parentEl.style.minWidth = Math.min(canvasWidth, Math.max(320, canvasWidth)) + 'px'; parentEl.style.minHeight = Math.min(canvasHeight, Math.max(420, canvasHeight)) + 'px'; }
+      if (parentEl && parentEl.style){ parentEl.style.minWidth = Math.min(canvasWidth, Math.max(260, canvasWidth)) + 'px'; parentEl.style.minHeight = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px'; parentEl.style.maxHeight = '56vh'; }
 
       phaserGame = new Phaser.Game({ type: Phaser.AUTO, parent: 'phaserCanvas', width: canvasWidth, height: canvasHeight, backgroundColor: '#061426', scene: [ BootScene, GameScene ], render: { pixelArt: false, antialias: true } });
 
