@@ -4,7 +4,7 @@
    - Phantom wallet connect
    - Board sized to fit #phaserCanvas
    - Pieces move/rotate reliably (keyboard + window fallback)
-   - API placeholders remain (update API_BASE)
+   - Telegram WebApp integration (vibrate, username, close)
 */
 
 'use strict';
@@ -16,11 +16,9 @@ const API_BASE = 'https://api.yourdomain.com'; // <-- update to your backend
 const DAILY_EMISSION_CAP = 1250000;
 const GAME_ALLOCATION = 150_000_000;
 
-// logical board size
 const GRID_COLS = 14;
 const GRID_ROWS = 24;
 
-// base cell size (scaled to container)
 const BASE_CELL = 28;
 const BASE_GAP = 2;
 let CELL = BASE_CELL;
@@ -28,11 +26,9 @@ let GAP = BASE_GAP;
 
 const INITIAL_DROP_MS = 800;
 
-// AdsGram
 const ADSGRAM_SRC = 'https://sad.adsgram.ai/js/sad.min.js';
-const ADSGRAM_BLOCK_ID = 'int-22823'; // provided by you
+const ADSGRAM_BLOCK_ID = 'int-22823';
 
-// ad/energy config
 const AUTO_RECHARGE_MINUTES = 30;
 const AUTO_RECHARGE_PERCENT = 10;
 const MAX_SITTINGS_PER_DAY = 3;
@@ -45,6 +41,7 @@ const MAX_ADS_PER_DAY = 9;
 let clientState = {
   sessionId: generateUUID(),
   userId: null,
+  username: null,
   wallet: null,
   gp: 0,
   energy: 65,
@@ -78,11 +75,87 @@ async function api(path, method='GET', body=null){
 }
 
 /* ---------------------------
+   Telegram WebApp integration (feature-detected, safe)
+   --------------------------- */
+let tg = null; // window.Telegram.WebApp (if present)
+
+function initTelegram(){
+  try {
+    if (window.Telegram && window.Telegram.WebApp){
+      tg = window.Telegram.WebApp;
+      // notify Telegram that app is ready; safe-guarded
+      try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){ console.warn('tg.ready() failed', e); }
+
+      // Extract user info if present (initDataUnsafe is commonly available)
+      const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
+      if (u){
+        clientState.userId = clientState.userId || u.id;
+        clientState.username = u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null;
+      }
+      console.log('Telegram WebApp detected', { username: clientState.username });
+    } else {
+      console.log('Telegram WebApp not present (running outside Telegram)');
+    }
+  } catch (e) {
+    console.warn('initTelegram error', e);
+  }
+}
+
+/**
+ * vibratePreferTelegram:
+ * - tries Telegram haptic APIs if available (various clients expose different names)
+ * - falls back to navigator.vibrate()
+ *
+ * We use feature detection; do not assume any particular Telegram method exists.
+ */
+function vibratePreferTelegram(pattern=20){
+  try {
+    if (tg){
+      // Common-sense probes for known wrappers or SDKs:
+      if (typeof tg.triggerHapticFeedback === 'function'){
+        // Some wrappers expose triggerHapticFeedback(type)
+        try { tg.triggerHapticFeedback('selection_change'); return; } catch(e){ /* fallthrough */ }
+      }
+      // Some environments provide an object with methods
+      if (tg.HapticFeedback && typeof tg.HapticFeedback.impactOccurred === 'function'){
+        try { tg.HapticFeedback.impactOccurred(); return; } catch(e){ /* fallthrough */ }
+      }
+      // Older docs mention event-based haptics - attempt generic event trigger if exposed
+      if (typeof tg.triggerEvent === 'function'){
+        try { tg.triggerEvent('web_app_trigger_haptic_feedback', { type: 'selection_change' }); return; } catch(e){ /* fallthrough */ }
+      }
+    }
+  } catch(e){
+    console.warn('Telegram haptic call failed', e);
+  }
+  // Standard web vibration fallback
+  if (navigator && typeof navigator.vibrate === 'function'){
+    try { navigator.vibrate(pattern); } catch(e){ /* ignore */ }
+  }
+}
+
+/**
+ * closeTelegramApp()
+ * - closes the web app if inside Telegram
+ * - safe fallback: attempts window.close (may be blocked)
+ */
+function closeTelegramApp(){
+  try {
+    if (tg && typeof tg.close === 'function'){
+      tg.close();
+      return true;
+    }
+  } catch(e){ console.warn('tg.close() failed', e); }
+  try { window.close(); } catch(e){ /* ignore */ }
+  return false;
+}
+
+/* ---------------------------
    Game state
    --------------------------- */
 const gameState = {
   grid: null,
-  activePiece: null,   // { type, rot, x, y }
+  activePiece: null,
   nextPiece: null,
   score: 0,
   level: 1,
@@ -176,12 +249,10 @@ class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' })
 class GameScene extends Phaser.Scene {
   constructor(){ super({ key:'GameScene' }); }
   create(){
-    // compute board pixel size using CELL/GAP (already computed)
     this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
     this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
     this.gridOrigin = { x: 16, y: 16 };
 
-    // background and grid lines
     const g = this.add.graphics();
     g.fillStyle(0x061426, 1);
     g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
@@ -193,7 +264,6 @@ class GameScene extends Phaser.Scene {
       g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y + GRID_ROWS*(CELL + GAP)));
     }
 
-    // init logical grid + persistent cell sprites
     initGrid();
     this.cellSprites = [];
     for (let r=0; r<GRID_ROWS; r++){
@@ -202,6 +272,18 @@ class GameScene extends Phaser.Scene {
         const x = this.gridOrigin.x + c*(CELL + GAP) + CELL/2;
         const y = this.gridOrigin.y + r*(CELL + GAP) + CELL/2;
         const rect = this.add.rectangle(x, y, CELL, CELL, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
+        rect.setInteractive({ useHandCursor: true });
+        // pointerdown on cell: vibrate + log + optional small visual pop
+        ((rr, cc, node) => {
+          node.on('pointerdown', () => {
+            vibratePreferTelegram(20);
+            logAction('cell_click', { x: cc, y: rr });
+            // small visual flash
+            const orig = node.fillColor;
+            node.fillColor = 0xffffff;
+            this.time.delayedCall(80, ()=> node.fillColor = orig);
+          });
+        })(r, c, rect);
         this.cellSprites[r][c] = rect;
       }
     }
@@ -230,14 +312,12 @@ class GameScene extends Phaser.Scene {
   }
 
   renderGrid(){
-    // locked grid
     for (let r=0; r<GRID_ROWS; r++){
       for (let c=0; c<GRID_COLS; c++){
         const val = gameState.grid[r][c];
         this.cellSprites[r][c].fillColor = val ? colorFromVal(val) : 0x102033;
       }
     }
-    // overlay active piece
     if (gameState.activePiece){
       const cells = getPieceCells(gameState.activePiece);
       cells.forEach(p=>{
@@ -249,19 +329,16 @@ class GameScene extends Phaser.Scene {
   }
 
   setupInput(){
-    // Phaser keyboard handler
     this.input.keyboard.on('keydown', (ev)=>{
       if (!gameState.isPlaying) return;
       handleKey(ev.code);
     });
 
-    // fallback to window keyboard events (avoids focus issues)
     window.addEventListener('keydown', (ev) => {
       if (!gameState.isPlaying) return;
       handleKey(ev.code);
     });
 
-    // touch controls (DOM)
     if (!document.querySelector('.touch-controls')) setupTouchControls(this);
   }
 
@@ -273,7 +350,7 @@ class GameScene extends Phaser.Scene {
 }
 
 /* ---------------------------
-   Key handling (single place)
+   Key handling
    --------------------------- */
 function handleKey(code){
   switch(code){
@@ -288,7 +365,7 @@ function handleKey(code){
 }
 
 /* ---------------------------
-   Piece helper: canonical model & movement
+   Piece helper & movement
    --------------------------- */
 function getPieceCells(piece){
   const states = PIECES[piece.type];
@@ -361,7 +438,6 @@ function hardDrop(){
 function rotatePiece(){
   if (!gameState.activePiece) return;
   const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) };
-  // simple wall-kick attempts
   const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}];
   for (const k of kicks){
     const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy };
@@ -373,7 +449,6 @@ function rotatePiece(){
       return;
     }
   }
-  // rotation blocked
 }
 
 /* ---------------------------
@@ -419,6 +494,9 @@ function clearLines(rows){
   updateUI();
 }
 
+/* ---------------------------
+   Game over / reset
+   --------------------------- */
 async function gameOver(){
   gameState.isPlaying = false;
   logAction('gameover', { score: gameState.score, lines: gameState.lines });
@@ -456,7 +534,7 @@ function colorFromVal(val){
   return map[val] ?? 0x0f172a;
 }
 
-function setupTouchControls(){
+function setupTouchControls(scene){
   if (document.querySelector('.touch-controls')) return;
   const wrapper = document.createElement('div');
   wrapper.classList.add('touch-controls');
@@ -469,10 +547,10 @@ function setupTouchControls(){
   wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
   const ui = $('uiPanel');
   if (ui) ui.append(wrapper);
-  btnLeft.onclick = ()=>{ movePiece(-1); logAction('touch_left'); updateUI(); };
-  btnRight.onclick = ()=>{ movePiece(1); logAction('touch_right'); updateUI(); };
-  btnRotate.onclick = ()=>{ rotatePiece(); logAction('touch_rotate'); updateUI(); };
-  btnDown.onclick = ()=>{ softDrop(); logAction('touch_drop'); updateUI(); };
+  btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(20); logAction('touch_left'); updateUI(); };
+  btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(20); logAction('touch_right'); updateUI(); };
+  btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(20); logAction('touch_rotate'); updateUI(); };
+  btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(20); logAction('touch_drop'); updateUI(); };
 }
 
 /* ---------------------------
@@ -481,7 +559,6 @@ function setupTouchControls(){
 loadAdsGram();
 
 async function handleWatchAd(){
-  // basic client-side limits — server must authoritatively enforce/verify
   if ((clientState.adsToday || 0) >= MAX_SITTINGS_PER_DAY){
     showModal('<div class="small-muted">Daily ad sitting limit reached.</div>'); return;
   }
@@ -491,13 +568,10 @@ async function handleWatchAd(){
 
   showModal('<div class="small-muted">Opening sponsored transmission...</div>');
 
-  // Use AdsGram AdController if present
   if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
     try {
       const result = await AdController.show();
-      // result = ShowPromiseResult per docs
       hideModal();
-      // Send result to backend for validation & reward issuance (server should check with AdsGram if needed)
       const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider:'AdsGram', payload: result });
       if (resp && resp.grantedPercent){
         clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
@@ -511,7 +585,6 @@ async function handleWatchAd(){
       }
       return;
     } catch (err){
-      // AdController.show() can reject on skip / error
       console.warn('AdController.show() rejected', err);
       hideModal();
       showModal('<div class="small-muted">Ad failed / skipped — no reward</div>', ()=> setTimeout(hideModal,900));
@@ -519,7 +592,6 @@ async function handleWatchAd(){
     }
   }
 
-  // Fallback simulated ad (still ask backend to validate)
   await new Promise(res => setTimeout(res, 2400));
   hideModal();
   const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider:'Fallback', adSessionId: generateUUID() });
@@ -594,6 +666,34 @@ async function refreshLeaderboard(){
 }
 
 /* ---------------------------
+   Claim rewards (example flow) - closes webapp in Telegram
+   --------------------------- */
+async function claimRewards(){
+  showModal('<div class="small-muted">Claiming rewards...</div>');
+  try {
+    const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId, userId: clientState.userId });
+    hideModal();
+    if (resp && resp.ok){
+      clientState.gp = resp.gp ?? clientState.gp;
+      clientState.userAU = resp.userAU ?? clientState.userAU;
+      updateUI();
+      showModal('<div class="small-muted">Rewards claimed! Closing...</div>');
+      setTimeout(()=>{
+        hideModal();
+        // Close the Telegram WebApp if present
+        closeTelegramApp();
+      }, 900);
+    } else {
+      showModal('<div class="small-muted">Claim failed — try again later.</div>', ()=> setTimeout(hideModal,1200));
+    }
+  } catch(e){
+    hideModal();
+    console.warn('claimRewards error', e);
+    showModal('<div class="small-muted">Network error — try again later.</div>', ()=> setTimeout(hideModal,1200));
+  }
+}
+
+/* ---------------------------
    Modal / UI helpers
    --------------------------- */
 function showModal(html, onMounted){ const o=$('overlay'); if(!o) { console.log('Modal:', html); return; } o.classList.add('show'); $('#modalContent').innerHTML = html; if(onMounted) setTimeout(onMounted,60); }
@@ -611,12 +711,18 @@ function updateUI(){
     const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0;
     $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN';
   }
+  if ($('ui-username')) {
+    $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest');
+  }
 }
 
 /* ---------------------------
-   Boot & sizing: compute scale to fit #phaserCanvas
+   Boot & sizing
    --------------------------- */
 window.addEventListener('load', async ()=>{
+
+  // init Telegram first so user info is available before client init
+  initTelegram();
 
   // wire UI buttons if present
   if ($('watchAdBtn')) $('watchAdBtn').onclick = handleWatchAd;
@@ -624,6 +730,7 @@ window.addEventListener('load', async ()=>{
   if ($('bindWalletBtn')) $('bindWalletBtn').onclick = bindWallet;
   if ($('showRefBtn')) $('showRefBtn').onclick = ()=> showModal('<div class="small-muted">Invite friends</div>');
   if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
+  if ($('claimRewardBtn')) $('claimRewardBtn').onclick = claimRewards;
 
   // attempt initial client init (best-effort)
   try {
@@ -635,6 +742,8 @@ window.addEventListener('load', async ()=>{
       clientState.userAU = init.userAU ?? clientState.userAU;
       clientState.totalAU = init.totalAU ?? clientState.totalAU;
       clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
+      // If username not set from Telegram, accept backend's user name
+      if (!clientState.username && init.username) clientState.username = init.username;
     }
   } catch(e){ console.warn(e); }
 
@@ -654,14 +763,12 @@ window.addEventListener('load', async ()=>{
   const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
   const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
-  // ensure parent element size doesn't clip (so board sits above panel)
   if (parentEl && parentEl.style){
     parentEl.style.width = canvasWidth + 'px';
     parentEl.style.height = canvasHeight + 'px';
     parentEl.style.minWidth = '320px';
   }
 
-  // create Phaser
   phaserGame = new Phaser.Game({
     type: Phaser.AUTO,
     parent: parentEl,
@@ -671,10 +778,8 @@ window.addEventListener('load', async ()=>{
     scene: [ BootScene, GameScene ]
   });
 
-  // load AdsGram (attempt)
   loadAdsGram();
 
-  // initial UI sync and periodic refresh
   updateUI();
   renderMinersList();
   refreshLeaderboard();
