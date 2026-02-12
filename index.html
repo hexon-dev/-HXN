@@ -5,37 +5,34 @@
   <title>Hexon — HXN Grid Activation</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
-
-  <!-- Telegram Web App script (optional) -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    /* Basic layout + mobile-friendly */
-    html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family: 'Orbitron', sans-serif; color:#E6F7FF; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+    html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family: 'Orbitron', sans-serif; color:#E6F7FF; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; -webkit-tap-highlight-color:transparent; }
     #gameContainer { display:flex; height:100vh; width:100vw; box-sizing:border-box; gap:12px; padding:12px; }
-    #phaserCanvas { flex: 2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; }
-    #uiPanel { flex: 1; min-width: 320px; max-width:420px; padding:14px; box-sizing:border-box; background: linear-gradient(180deg, rgba(8,18,36,0.9), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); overflow:auto; border-radius:12px; }
-    .card { background:rgba(255,255,255,0.03); border-radius:12px; padding:12px; margin-bottom:12px; box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
+    #phaserCanvas { flex:2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; background:transparent; }
+    #uiPanel { flex:1; min-width:320px; max-width:420px; padding:14px; box-sizing:border-box; background: linear-gradient(180deg, rgba(8,18,36,0.9), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); overflow:auto; border-radius:12px; }
+    .card { background:rgba(255,255,255,0.03); border-radius:12px; padding:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.5); }
     .muted { opacity:0.7; font-size:12px; color:#bfeafc; }
     .stat { font-size:20px; font-weight:700; color:#7EE7FF; }
     .small { font-size:13px; }
     .energyBar { width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
     .energyFill { height:100%; width:60%; background:linear-gradient(90deg,#22d3ee,#3b82f6); transition:width .25s ease; }
-    .button { display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,#3b82f6,#22d3ee); color:#021125; font-weight:700; cursor:pointer; margin-top:8px; border:0; }
-    .btn-ghost { background:transparent; border:1px solid rgba(126,231,255,0.12); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .leaderboard { max-height:150px; overflow:auto; }
-    .leader-entry { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed rgba(126,231,255,0.03); }
-    .touch-controls { display:flex; justify-content:space-around; gap:8px; margin-top:8px; }
-    .touch-btn { background:rgba(255,255,255,0.04); padding:12px; border-radius:10px; text-align:center; min-width:56px; cursor:pointer; user-select:none; }
-    .footer { font-size:12px; opacity:0.7; text-align:center; margin-top:8px; color:#9fcbdc; }
+    .button { display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,#3b82f6,#22d3ee); color:#021125; font-weight:700; cursor:pointer; margin-top:8px; border:0; user-select:none; }
+    .btn-ghost { background:transparent; border:1px solid rgba(126,231,255,0.12); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; user-select:none; }
+    input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
+    .small-muted { font-size:12px; color:#9fcbdc; opacity:0.95; }
 
-    /* popup */
-    .overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2147483647; background:rgba(0,0,0,0.55); padding:16px; }
+    /* Inline wallet panel */
+    #walletPanel { display:none; margin-top:10px; background:rgba(255,255,255,0.02); padding:10px; border-radius:10px; }
+    #walletPanel.show { display:block; }
+    .wallet-option { display:flex; justify-content:space-between; align-items:center; padding:8px; border-radius:8px; cursor:pointer; user-select:none; }
+    .wallet-option:hover { background:rgba(255,255,255,0.02); }
+
+    /* overlay for other modals */
+    .overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2147483646; background:rgba(0,0,0,0.55); padding:16px; }
     .overlay.show { display:flex; }
     .modal { background:#061026; padding:18px; border-radius:12px; box-shadow:0 12px 40px rgba(2,6,23,0.7); width:420px; max-width:100%; text-align:left; color:#E6F7FF; }
-    .small-muted { font-size:12px; color:#9fcbdc; opacity:0.95; }
-    .row { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-    input[type="text"], input[type="search"] { background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
 
     @media (max-width:900px){
       #gameContainer { flex-direction:column; padding:10px; }
@@ -48,10 +45,9 @@
 <body>
 
 <div id="gameContainer" role="application" aria-label="Hexon game">
-  <div id="phaserCanvas" aria-hidden="false" role="region" aria-label="Game canvas"></div>
+  <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
 
   <aside id="uiPanel" aria-live="polite" role="complementary" aria-label="Game controls and stats">
-    <!-- header with Telegram / username -->
     <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
       <div>
         <div class="muted small">Player</div>
@@ -91,7 +87,35 @@
           <div id="ui-gp" class="small">0 GP</div>
         </div>
         <div>
-          <button id="bindWalletBtn" class="button" aria-label="Bind wallet">Bind Wallet</button>
+          <button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button>
+        </div>
+      </div>
+
+      <!-- Inline wallet panel (no overlay/modal) -->
+      <div id="walletPanel" aria-live="polite" aria-hidden="true">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div class="small-muted">Connect a wallet</div>
+          <button id="closeWalletPanel" class="btn-ghost" type="button">Close</button>
+        </div>
+
+        <div class="wallet-option" id="opt-phantom" data-w="phantom">
+          <div>Phantom</div><div class="small-muted" id="det-phantom"></div>
+        </div>
+        <div class="wallet-option" id="opt-solflare" data-w="solflare">
+          <div>Solflare</div><div class="small-muted" id="det-solflare"></div>
+        </div>
+        <div class="wallet-option" id="opt-backpack" data-w="backpack">
+          <div>Backpack</div><div class="small-muted" id="det-backpack"></div>
+        </div>
+        <div class="wallet-option" id="opt-wc" data-w="walletconnect">
+          <div>WalletConnect</div><div class="small-muted">Use a compatible mobile wallet</div>
+        </div>
+
+        <div style="height:8px"></div>
+        <div class="small-muted">Manual public key (paste)</div>
+        <div style="display:flex; gap:8px; margin-top:6px;">
+          <input id="manualPublicKey" type="text" placeholder="Paste public key here" />
+          <button id="manualBindBtn" class="button" type="button">Bind</button>
         </div>
       </div>
     </div>
@@ -100,7 +124,7 @@
       <div class="row">
         <div style="flex:1">
           <div class="small muted">Energy</div>
-          <div class="energyBar" title="Energy level"><div id="ui-energyFill" class="energyFill"></div></div>
+          <div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div>
         </div>
         <div style="text-align:right; width:120px;">
           <div class="muted small">Auto Refill</div>
@@ -120,8 +144,8 @@
       </div>
 
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button id="watchAdBtn" class="button" aria-label="Watch ad">Watch Transmission</button>
-        <button id="showRefBtn" class="btn-ghost" aria-label="Share referral">Share Referral</button>
+        <button id="watchAdBtn" class="button">Watch Transmission</button>
+        <button id="showRefBtn" class="btn-ghost">Share Referral</button>
       </div>
     </div>
 
@@ -131,7 +155,7 @@
         <div class="muted small">Loading…</div>
       </div>
       <div style="margin-top:8px;">
-        <button id="openStore" class="button" aria-label="Open miner shop">Open Miner Shop</button>
+        <button id="openStore" class="button">Open Miner Shop</button>
       </div>
     </div>
 
@@ -148,8 +172,8 @@
       </div>
 
       <div style="display:flex; gap:8px; margin-top:10px;">
-        <button id="viewAlloc" class="btn-ghost" aria-label="View allocation">View Allocation</button>
-        <button id="claimRewardBtn" class="button" aria-label="Claim rewards and close">Claim & Close</button>
+        <button id="viewAlloc" class="btn-ghost">View Allocation</button>
+        <button id="claimRewardBtn" class="button">Claim & Close</button>
       </div>
     </div>
 
@@ -166,242 +190,145 @@
     </div>
 
     <div class="footer muted small">Pre-launch • Season active • <span id="daysLeft">74</span> days left</div>
-    <div style="height:12px"></div>
   </aside>
 </div>
 
-<!-- Overlay + modal (present in DOM) -->
+<!-- Keep overlay for other main.js modals (shop/ads etc) -->
 <div id="overlay" class="overlay" aria-hidden="true">
-  <div class="modal" id="modalContent" role="dialog" aria-modal="true" aria-label="Dialog">
-    <!-- main.js can inject into this; fallback HTML will populate it when needed -->
-  </div>
+  <div class="modal" id="modalContent" role="dialog" aria-modal="true"></div>
 </div>
 
-<!-- Wallet picker template (used by the inline script to open the modal immediately) -->
-<template id="walletPickerTemplate">
-  <div style="text-align:left;">
-    <h3 style="margin:0 0 8px 0">Connect Wallet</h3>
-    <div class="small-muted" style="margin-bottom:10px">Choose a wallet to connect — Phantom, Solflare, Backpack, WalletConnect, or paste your public key.</div>
-
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="button wp-btn" data-w="phantom" type="button">Phantom</button>
-      <button class="button wp-btn" data-w="solflare" type="button">Solflare</button>
-      <button class="button wp-btn" data-w="backpack" type="button">Backpack</button>
-      <button class="button wp-btn" data-w="walletconnect" type="button">WalletConnect</button>
-      <button class="btn-ghost wp-btn" data-w="other" type="button">Other (Coinbase, Trust...)</button>
-
-      <div style="margin-top:6px">
-        <input id="manualPublicKey" placeholder="Paste public key here" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" />
-        <div style="height:6px"></div>
-        <button id="manualBindBtn" class="button" type="button">Bind Public Key</button>
-      </div>
-    </div>
-
-    <div style="height:10px"></div>
-    <div style="text-align:right;">
-      <button id="closeWalletPicker" class="btn-ghost" type="button">Close</button>
-    </div>
-  </div>
-</template>
-
-<!-- Phaser & game code (deferred) -->
-<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" defer></script>
-
-<!-- Inline helper script to guarantee modal opens from DOM immediately -->
+<!-- Boot-time inline script to wire Bind Wallet to the inline panel and avoid main.js modal -->
 <script>
-(function(){
-  // Safe DOM-ready wiring (runs before main.js loads)
-  function ensureOverlay() {
-    const o = document.getElementById('overlay');
-    if (!o) return null;
-    return o;
-  }
-
-  function openOverlayWithContent(htmlOrNode, onMounted) {
-    const o = ensureOverlay();
-    if (!o) return;
-    const content = document.getElementById('modalContent');
-    if (!content) return;
-    if (typeof htmlOrNode === 'string') content.innerHTML = htmlOrNode;
-    else {
-      content.innerHTML = '';
-      content.appendChild(htmlOrNode);
-    }
-    o.classList.add('show');
-    o.style.display = 'flex';
-    o.setAttribute('aria-hidden', 'false');
-    // attach click-outside to close
-    o.onclick = (ev) => { if (ev.target === o) closeOverlay(); };
-    // small delay for elements to be present
-    setTimeout(()=> { if (typeof onMounted === 'function') onMounted(); }, 50);
-  }
-
-  function closeOverlay() {
-    const o = ensureOverlay();
-    if (!o) return;
-    o.classList.remove('show');
-    o.style.display = 'none';
-    o.setAttribute('aria-hidden','true');
-    const content = document.getElementById('modalContent');
-    if (content) content.innerHTML = '';
-  }
-
-  function bindWalletPickerHandlers(modalRoot) {
-    // wallet button clicks - prefer main.js functions if available, otherwise provide useful fallbacks
-    modalRoot.querySelectorAll('.wp-btn').forEach(btn=>{
-      btn.addEventListener('click', async (ev)=>{
-        const w = btn.getAttribute('data-w');
-        // If main.js exposes a connector helper, use it (preferred)
-        if (window.showWalletPicker && typeof window.showWalletPicker === 'function') {
-          // defer to main.js implementation
-          closeOverlay();
-          try { window.showWalletPicker(); } catch(e){ console.warn(e); }
-          return;
-        }
-
-        // Otherwise, call known global helpers if they exist
-        if (w === 'phantom' && window.connectWithPhantom && typeof window.connectWithPhantom === 'function') {
-          closeOverlay();
-          try { window.connectWithPhantom(); } catch(e){ console.warn(e); }
-          return;
-        }
-        if (w === 'solflare' && window.connectWithSolflare && typeof window.connectWithSolflare === 'function') {
-          closeOverlay();
-          try { window.connectWithSolflare(); } catch(e){ console.warn(e); }
-          return;
-        }
-        if (w === 'backpack' && window.connectWithBackpack && typeof window.connectWithBackpack === 'function') {
-          closeOverlay();
-          try { window.connectWithBackpack(); } catch(e){ console.warn(e); }
-          return;
-        }
-        if (w === 'walletconnect' && window.connectWithWalletConnect && typeof window.connectWithWalletConnect === 'function') {
-          closeOverlay();
-          try { window.connectWithWalletConnect(); } catch(e){ console.warn(e); }
-          return;
-        }
-        if (w === 'other' && window.showOtherWalletOptions && typeof window.showOtherWalletOptions === 'function') {
-          closeOverlay();
-          try { window.showOtherWalletOptions(); } catch(e){ console.warn(e); }
-          return;
-        }
-
-        // Fallback: open deep-link pages for each wallet type
-        if (w === 'phantom') {
-          window.open('https://phantom.app/', '_blank');
-          return;
-        }
-        if (w === 'solflare') {
-          window.open('https://solflare.com/', '_blank');
-          return;
-        }
-        if (w === 'backpack') {
-          window.open('https://backpack.app/', '_blank');
-          return;
-        }
-        if (w === 'walletconnect') {
-          alert('Use WalletConnect in your mobile wallet, then paste the returned public key here.');
-          return;
-        }
-      });
-    });
-
-    // manual bind button
-    const manualBtn = modalRoot.querySelector('#manualBindBtn');
-    if (manualBtn) {
-      manualBtn.addEventListener('click', async ()=>{
-        const pkInput = modalRoot.querySelector('#manualPublicKey');
-        if (!pkInput) return;
-        const pk = (pkInput.value || '').trim();
-        if (!pk || pk.length < 20) {
-          // show a tiny inline feedback
-          manualBtn.textContent = 'Invalid key';
-          setTimeout(()=> manualBtn.textContent = 'Bind Public Key', 900);
-          return;
-        }
-        // prefer main.js finalizeBind if available
-        if (window.finalizeBind && typeof window.finalizeBind === 'function') {
-          manualBtn.textContent = 'Binding…';
-          try {
-            const ok = await window.finalizeBind(pk, 'manual');
-            manualBtn.textContent = 'Bind Public Key';
-            if (ok) closeOverlay();
-            return;
-          } catch(e){
-            manualBtn.textContent = 'Bind Public Key';
-            console.warn(e);
-            alert('Bind failed — try again');
-            return;
-          }
-        }
-
-        // fallback: save locally & update UI (best-effort)
-        try {
-          localStorage.setItem('hexon_bound_wallet', pk);
-          localStorage.setItem('hexon_bound_provider', 'manual');
-          const wEl = document.getElementById('ui-wallet');
-          const pEl = document.getElementById('ui-provider');
-          if (wEl) wEl.textContent = pk;
-          if (pEl) pEl.textContent = 'manual';
-          closeOverlay();
-          alert('Public key saved locally. Server bind skipped (main.js not available).');
-        } catch(e){
-          console.warn(e);
-          alert('Unable to save key locally.');
-        }
-      });
+  (function(){
+    function detectInjectedProviders(){
+      return {
+        phantom: Boolean(window.solana && window.solana.isPhantom),
+        solflare: Boolean(window.solflare || (window.solana && window.solana.isSolflare)),
+        backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack))
+      };
     }
 
-    // close button
-    const closeBtn = modalRoot.querySelector('#closeWalletPicker');
-    if (closeBtn) closeBtn.addEventListener('click', closeOverlay);
-  }
+    function setDetectionBadges(){
+      const d = detectInjectedProviders();
+      if (d.phantom) document.getElementById('det-phantom').textContent = '• detected';
+      if (d.solflare) document.getElementById('det-solflare').textContent = '• detected';
+      if (d.backpack) document.getElementById('det-backpack').textContent = '• detected';
+    }
 
-  // when user clicks Bind Wallet, open the modal using the template
-  function openWalletModalFromHTML() {
-    const tpl = document.getElementById('walletPickerTemplate');
-    if (!tpl) return;
-    const clone = tpl.content.cloneNode(true);
-    // attach it to modal
-    openOverlayWithContent(clone, ()=> {
-      const modalRoot = document.getElementById('modalContent');
-      if (modalRoot) bindWalletPickerHandlers(modalRoot);
-    });
-  }
-
-  // wire the visible bind button early
-  document.addEventListener('DOMContentLoaded', ()=>{
+    // Toggle inline wallet panel
+    const walletPanel = document.getElementById('walletPanel');
     const bindBtn = document.getElementById('bindWalletBtn');
-    if (bindBtn) {
-      bindBtn.addEventListener('click', (ev)=>{
-        ev.preventDefault();
-        // If main.js exposes showWalletPicker prefer to call it (it may provide richer UX), otherwise open our HTML modal
-        if (window.showWalletPicker && typeof window.showWalletPicker === 'function') {
-          try { window.showWalletPicker(); return; } catch(e){ console.warn(e); }
-        }
-        openWalletModalFromHTML();
-      });
+    const closePanelBtn = document.getElementById('closeWalletPanel');
+
+    function showWalletPanel(){
+      if (!walletPanel) return;
+      walletPanel.classList.add('show');
+      walletPanel.setAttribute('aria-hidden','false');
+      // update detection badges
+      setDetectionBadges();
+    }
+    function hideWalletPanel(){
+      if (!walletPanel) return;
+      walletPanel.classList.remove('show');
+      walletPanel.setAttribute('aria-hidden','true');
     }
 
-    // if modal already visible for some reason, wire handlers
-    const modalRoot = document.getElementById('modalContent');
-    if (modalRoot && modalRoot.children.length) bindWalletPickerHandlers(modalRoot);
+    // Prevent main.js's modal listener by intercepting pointerdown in capture phase.
+    // This stops bubble-phase showWalletPicker handler from running (main.js attaches during load).
+    function interceptBindEvent(ev){
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      // toggle inline panel
+      if (walletPanel && walletPanel.classList.contains('show')) hideWalletPanel();
+      else showWalletPanel();
+      return false;
+    }
 
-    // quick fill of session/wallet placeholders from localStorage until main.js updates them
-    try {
-      const sid = localStorage.getItem('hexon_session');
-      if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid;
-      const wallet = localStorage.getItem('hexon_bound_wallet');
-      if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet;
-      const provider = localStorage.getItem('hexon_bound_provider');
-      if (provider && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = provider;
-    } catch(e){}
-  });
-})();
+    document.addEventListener('DOMContentLoaded', ()=>{
+      // attach capture listener (runs before bubble listeners)
+      if (bindBtn){
+        bindBtn.addEventListener('pointerdown', interceptBindEvent, { capture: true, passive: false });
+        bindBtn.addEventListener('click', function(e){ /* also keep click safe if pointerdown missed */ e.preventDefault(); e.stopImmediatePropagation(); showWalletPanel(); }, { passive:false });
+        bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showWalletPanel(); } });
+      }
+      if (closePanelBtn) closePanelBtn.addEventListener('click', hideWalletPanel);
+
+      // wallet option button handlers (prefer main.js connectors if available)
+      const map = {
+        'opt-phantom': async ()=> {
+          if (typeof window.connectWithPhantom === 'function') return window.connectWithPhantom();
+          // fallback deep-link
+          location.assign('https://phantom.app/');
+        },
+        'opt-solflare': async ()=> {
+          if (typeof window.connectWithSolflare === 'function') return window.connectWithSolflare();
+          location.assign('https://solflare.com/');
+        },
+        'opt-backpack': async ()=> {
+          if (typeof window.connectWithBackpack === 'function') return window.connectWithBackpack();
+          location.assign('https://backpack.app/');
+        },
+        'opt-wc': async ()=> {
+          if (typeof window.connectWithWalletConnect === 'function') return window.connectWithWalletConnect();
+          alert('Open WalletConnect in your wallet app, then paste the returned public key in the field below.');
+        }
+      };
+
+      Object.keys(map).forEach(id=>{
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await map[id](); } catch(e){ console.warn(e); alert('Connection attempt failed'); } }, { passive:false });
+      });
+
+      // manual bind button
+      const manualBtn = document.getElementById('manualBindBtn');
+      if (manualBtn){
+        manualBtn.addEventListener('pointerdown', async (ev)=>{
+          ev.preventDefault(); ev.stopPropagation();
+          const pk = (document.getElementById('manualPublicKey').value || '').trim();
+          if (!pk || pk.length < 20){ manualBtn.textContent = 'Invalid'; setTimeout(()=> manualBtn.textContent = 'Bind', 900); return; }
+          // prefer main.js finalizeBind if available
+          if (typeof window.finalizeBind === 'function'){
+            manualBtn.textContent = 'Binding…';
+            try {
+              const ok = await window.finalizeBind(pk, 'manual');
+              manualBtn.textContent = 'Bind';
+              if (ok) hideWalletPanel();
+              return;
+            } catch(e){ console.warn('finalizeBind error', e); manualBtn.textContent = 'Bind'; alert('Bind failed'); return; }
+          }
+          // fallback: store locally and update UI
+          try {
+            localStorage.setItem('hexon_bound_wallet', pk);
+            localStorage.setItem('hexon_bound_provider', 'manual');
+            const wEl = document.getElementById('ui-wallet');
+            const pEl = document.getElementById('ui-provider');
+            if (wEl) wEl.textContent = pk;
+            if (pEl) pEl.textContent = 'manual';
+            hideWalletPanel();
+            alert('Public key saved locally (no server bind performed).');
+          } catch(e){ console.warn(e); alert('Unable to save locally'); }
+        }, { passive:false });
+      }
+
+      // quick-fill placeholders from localStorage until main.js updates UI
+      try {
+        const sid = localStorage.getItem('hexon_session');
+        if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid;
+        const wallet = localStorage.getItem('hexon_bound_wallet');
+        if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet;
+        const prov = localStorage.getItem('hexon_bound_provider');
+        if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov;
+      } catch(e){}
+    });
+  })();
 </script>
 
-<!-- your game file (main.js) — must be loaded after Telegram & Phaser -->
-<script src="./main.js" defer></script>
+<!-- phaser lib (deferred) -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" defer></script>
 
+<!-- your main game file -->
+<script src="./main.js" defer></script>
 </body>
 </html>
