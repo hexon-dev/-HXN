@@ -55,6 +55,7 @@
     .wallet-option{ display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:10px; cursor:pointer; user-select:none; }
     .wallet-option:hover{ background:rgba(255,255,255,0.02); }
 
+    /* bottom-sheet overlay (used inline) */
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
     .overlay.show{ display:flex; }
 
@@ -74,9 +75,24 @@
 
     .sheet-header{ padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .sheet-title{ font-weight:700; font-size:16px; color:#E6F7FF; }
-    .sheet-body{ padding:12px 16px; overflow:auto; -webkit-overflow-scrolling:touch; }
-
+    .sheet-body{ padding:12px 16px; overflow:auto; -webkit-overflow-scrolling:touch; max-height:60vh; }
     .sheet-actions{ padding:12px 16px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent); }
+
+    /* minimal toast (non-modal) */
+    .toast {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 16px;
+      background: rgba(3,10,18,0.85);
+      color: #E6F7FF;
+      padding: 8px 12px;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      font-size: 13px;
+      z-index: 100000;
+      display: none;
+    }
 
     @media (max-width:900px){
       #gameContainer{ flex-direction:column; padding:10px; }
@@ -209,17 +225,18 @@
   </aside>
 </div>
 
-<!-- overlay bottom-sheet for wallet picker (matches main.js fallback) -->
+<!-- overlay bottom-sheet for wallet picker + all inline dialogs -->
 <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
-  <div class="bottom-sheet" role="document" aria-label="Wallet selector">
+  <div class="bottom-sheet" role="document" aria-label="Inline sheet">
     <div class="sheet-header">
       <div class="sheet-title">Connect Wallet</div>
       <div>
-        <button id="sheetClose" class="btn-ghost" aria-label="Close wallet selector">Close</button>
+        <button id="sheetClose" class="btn-ghost" aria-label="Close sheet">Close</button>
       </div>
     </div>
 
     <div class="sheet-body" id="sheetBody" tabindex="0">
+      <!-- default wallet content (main.js may overwrite sheetBody innerHTML when used) -->
       <div class="small-muted" style="margin-bottom:10px">Choose a wallet or paste your public key. In the Telegram mini app we open deep-links using the WebApp API when available.</div>
 
       <div class="wallet-option" id="opt-phantom" tabindex="0" role="button" aria-pressed="false">
@@ -247,11 +264,14 @@
       </div>
     </div>
 
-    <div class="sheet-actions">
+    <div class="sheet-actions" id="sheetActions">
       <button id="sheetCancel" class="btn-ghost" type="button">Cancel</button>
     </div>
   </div>
 </div>
+
+<!-- toast (non-modal) -->
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <!-- bottom-sheet helper (keeps behavior aligned with main.js) -->
 <script>
@@ -273,14 +293,24 @@
   const sheetClose = document.getElementById('sheetClose');
   const sheetCancel = document.getElementById('sheetCancel');
   const bindBtn = document.getElementById('bindWalletBtn');
+  const sheetBody = document.getElementById('sheetBody');
+  const sheetTitle = document.querySelector('.sheet-title');
+  const sheetActions = document.getElementById('sheetActions');
 
-  function showSheet(){
+  function showSheet(opts = {}) {
+    // opts: { title, bodyHtml, actionsHtml, onMounted }
     if (!overlay) return;
+    if (opts.title !== undefined && sheetTitle) sheetTitle.textContent = opts.title;
+    if (opts.bodyHtml !== undefined && sheetBody) sheetBody.innerHTML = opts.bodyHtml;
+    if (opts.actionsHtml !== undefined && sheetActions) sheetActions.innerHTML = opts.actionsHtml;
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden','false');
     try { const tg = tgInstance(); if (tg && typeof tg.expand === 'function') tg.expand(); } catch(e){}
-    const bodyEl = document.getElementById('sheetBody');
-    if (bodyEl) bodyEl.focus();
+    try { if (sheetBody) sheetBody.focus(); } catch(e){}
+    if (typeof opts.onMounted === 'function') {
+      setTimeout(()=> { try { opts.onMounted(); } catch(e){ console.warn('sheet onMounted failed', e); } }, 50);
+    }
+    // ensure detection badges updated when showing sheet
     setDetectionBadges();
   }
 
@@ -288,6 +318,15 @@
     if (!overlay) return;
     overlay.classList.remove('show');
     overlay.setAttribute('aria-hidden','true');
+  }
+
+  function setDetectionBadges(){
+    const d = detectInjectedProviders();
+    try {
+      document.getElementById('det-phantom').textContent = d.phantom ? '• detected' : '';
+      document.getElementById('det-solflare').textContent = d.solflare ? '• detected' : '';
+      document.getElementById('det-backpack').textContent = d.backpack ? '• detected' : '';
+    } catch(e){}
   }
 
   function buildCleanRedirect(){
@@ -311,18 +350,10 @@
       backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack))
     };
   }
-  function setDetectionBadges(){
-    const d = detectInjectedProviders();
-    try {
-      document.getElementById('det-phantom').textContent = d.phantom ? '• detected' : '';
-      document.getElementById('det-solflare').textContent = d.solflare ? '• detected' : '';
-      document.getElementById('det-backpack').textContent = d.backpack ? '• detected' : '';
-    } catch(e){}
-  }
 
+  // optionMap calls into main.js helpers if available (preferred)
   const optionMap = {
     'opt-phantom': async ()=> {
-      // If main.js exposes connectWithPhantom, prefer it — keeps everything aligned
       if (typeof window.connectWithPhantom === 'function') {
         try { await window.connectWithPhantom(); hideSheet(); return; } catch(e){ console.warn('connectWithPhantom failed', e); }
       }
@@ -371,16 +402,16 @@
       if (wEl) wEl.textContent = publicKey;
       if (pEl) pEl.textContent = 'manual';
       hideSheet();
-      alert('Public key stored locally (no server bind performed).');
+      showToast('Public key stored locally (no server bind performed).', 2000);
     } catch(e){ console.warn(e); alert('Unable to save locally'); }
   }
 
   function interceptBind(ev){
     ev.preventDefault();
     ev.stopImmediatePropagation();
-    // If main.js provides _hexon_openWalletSheet, call that (keeps both layers in sync).
     if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return false; } catch(e){} }
-    showSheet();
+    // default: show the inline sheet (wallet content already present in DOM)
+    showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML, onMounted: ()=>{} });
     return false;
   }
 
@@ -388,14 +419,21 @@
     if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheet(); }
   }
 
+  // toast helper
+  const toastEl = document.getElementById('toast');
+  function showToast(msg, ms = 2000){
+    if (!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.style.display = 'block';
+    setTimeout(()=> { try { toastEl.style.display = 'none'; } catch(e){} }, ms);
+  }
+
   document.addEventListener('DOMContentLoaded', ()=>{
+    // Bind button interception (keeps index.html UI binding consistent)
     if (bindBtn){
       bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false });
-      bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); 
-        if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return; } catch(e){} }
-        showSheet(); 
-      }, { passive:false });
-      bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheet(); } });
+      bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return; } catch(e){} } showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML }); }, { passive:false });
+      bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML }); } });
     }
 
     if (sheetClose) sheetClose.addEventListener('click', hideSheet);
@@ -406,7 +444,7 @@
     Object.keys(optionMap).forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-      el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await optionMap[id](); } catch(e){ console.warn(e); alert('Connection failed'); } }, { passive:false });
+      el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await optionMap[id](); } catch(e){ console.warn(e); showToast('Connection failed', 1200); } }, { passive:false });
       el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
     });
 
@@ -429,8 +467,11 @@
   });
 
   // expose helpers so main.js can call into this sheet
-  window._hexon_openWalletSheet = showSheet;
+  window._hexon_openWalletSheet = ()=> showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML });
   window._hexon_closeWalletSheet = hideSheet;
+  window._hexon_showSheet = showSheet;   // generic
+  window._hexon_hideSheet = hideSheet;
+  window._hexon_showToast = (m,t)=> showToast(m,t);
 })();
 </script>
 
