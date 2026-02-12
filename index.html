@@ -8,7 +8,7 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family: 'Orbitron', sans-serif; color:#E6F7FF; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; -webkit-tap-highlight-color:transparent; }
+    html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family:'Orbitron',sans-serif; color:#E6F7FF; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; -webkit-tap-highlight-color:transparent; }
     #gameContainer { display:flex; height:100vh; width:100vw; box-sizing:border-box; gap:12px; padding:12px; }
     #phaserCanvas { flex:2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; background:transparent; }
     #uiPanel { flex:1; min-width:320px; max-width:420px; padding:14px; box-sizing:border-box; background: linear-gradient(180deg, rgba(8,18,36,0.9), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); overflow:auto; border-radius:12px; }
@@ -198,137 +198,223 @@
   <div class="modal" id="modalContent" role="dialog" aria-modal="true"></div>
 </div>
 
-<!-- Boot-time inline script to wire Bind Wallet to the inline panel and avoid main.js modal -->
+<!-- Inline script: Telegram-friendly external opening + inline wallet panel -->
 <script>
-  (function(){
-    function detectInjectedProviders(){
-      return {
-        phantom: Boolean(window.solana && window.solana.isPhantom),
-        solflare: Boolean(window.solflare || (window.solana && window.solana.isSolflare)),
-        backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack))
-      };
-    }
+(function(){
+  // helper: safe access to Telegram WebApp instance
+  function tgInstance(){
+    try { return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; } catch(e){ return null; }
+  }
 
-    function setDetectionBadges(){
-      const d = detectInjectedProviders();
-      if (d.phantom) document.getElementById('det-phantom').textContent = '• detected';
-      if (d.solflare) document.getElementById('det-solflare').textContent = '• detected';
-      if (d.backpack) document.getElementById('det-backpack').textContent = '• detected';
+  // Build a clean redirect path used by phantom deep link (same-origin, no query/hash)
+  function buildCleanRedirect(){
+    try {
+      const origin = window.location.origin.replace(/\/+$/, '');
+      return origin + window.location.pathname;
+    } catch(e){
+      return window.location.origin + '/';
     }
+  }
 
-    // Toggle inline wallet panel
-    const walletPanel = document.getElementById('walletPanel');
-    const bindBtn = document.getElementById('bindWalletBtn');
-    const closePanelBtn = document.getElementById('closeWalletPanel');
-
-    function showWalletPanel(){
-      if (!walletPanel) return;
-      walletPanel.classList.add('show');
-      walletPanel.setAttribute('aria-hidden','false');
-      // update detection badges
-      setDetectionBadges();
+  // Safe external opener that prefers Telegram WebApp methods when present
+  function openExternal(url){
+    const tg = tgInstance();
+    if (tg){
+      try {
+        // Many Telegram WebApp versions implement openUrl or openLink — try both.
+        if (typeof tg.openUrl === 'function') { tg.openUrl(url); return; }
+        if (typeof tg.openLink === 'function') { tg.openLink(url); return; }
+        if (typeof tg.openPopup === 'function') { tg.openPopup(url); return; }
+      } catch(e){ console.warn('tg open function failed', e); }
+      // fallthrough to assign
     }
-    function hideWalletPanel(){
-      if (!walletPanel) return;
-      walletPanel.classList.remove('show');
-      walletPanel.setAttribute('aria-hidden','true');
-    }
+    // General fallback
+    try { window.location.assign(url); } catch(e){ try { window.open(url, '_blank'); } catch(e2){ console.warn('openExternal fallback failed', e2); } }
+  }
 
-    // Prevent main.js's modal listener by intercepting pointerdown in capture phase.
-    // This stops bubble-phase showWalletPicker handler from running (main.js attaches during load).
-    function interceptBindEvent(ev){
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      // toggle inline panel
+  // Compose Phantom deep link identical to main.js approach
+  function phantomDeepLink(){
+    const origin = window.location.origin.replace(/\/+$/, '');
+    const app_url = encodeURIComponent(origin);
+    const redirect_link = encodeURIComponent(buildCleanRedirect());
+    return `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
+  }
+
+  // Compose Solflare deep link used earlier
+  function solflareDeepLink(){
+    const cleanRedirect = encodeURIComponent(buildCleanRedirect());
+    return `https://solflare.com/access?redirect=${cleanRedirect}`;
+  }
+
+  // Backpack fallback
+  function backpackDeepLink(){
+    return 'https://backpack.app/';
+  }
+
+  // Toggle & wiring for inline panel
+  const walletPanel = document.getElementById('walletPanel');
+  const bindBtn = document.getElementById('bindWalletBtn');
+  const closePanelBtn = document.getElementById('closeWalletPanel');
+
+  function showWalletPanel(){
+    if (!walletPanel) return;
+    walletPanel.classList.add('show');
+    walletPanel.setAttribute('aria-hidden','false');
+    setDetectionBadges();
+  }
+  function hideWalletPanel(){
+    if (!walletPanel) return;
+    walletPanel.classList.remove('show');
+    walletPanel.setAttribute('aria-hidden','true');
+  }
+
+  // Show small "detected" badges for injected wallets (useful outside Telegram)
+  function detectInjectedProviders(){
+    return {
+      phantom: Boolean(window.solana && window.solana.isPhantom),
+      solflare: Boolean(window.solflare || (window.solana && window.solana.isSolflare)),
+      backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack))
+    };
+  }
+  function setDetectionBadges(){
+    const d = detectInjectedProviders();
+    try {
+      document.getElementById('det-phantom').textContent = d.phantom ? '• detected' : '';
+      document.getElementById('det-solflare').textContent = d.solflare ? '• detected' : '';
+      document.getElementById('det-backpack').textContent = d.backpack ? '• detected' : '';
+    } catch(e){}
+  }
+
+  // Intercept capture-phase so main.js won't open its modal (if it attaches later)
+  function interceptBindEvent(ev){
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    const tg = tgInstance();
+    // If inside Telegram prefer to immediately open a safe deep-link chooser for mobile wallets
+    if (tg){
+      // show a tiny inline chooser, but call deep-links via openExternal (which uses tg methods)
+      showWalletPanel();
+      return false;
+    } else {
+      // outside Telegram, show inline panel as usual
       if (walletPanel && walletPanel.classList.contains('show')) hideWalletPanel();
       else showWalletPanel();
       return false;
     }
+  }
 
-    document.addEventListener('DOMContentLoaded', ()=>{
-      // attach capture listener (runs before bubble listeners)
-      if (bindBtn){
-        bindBtn.addEventListener('pointerdown', interceptBindEvent, { capture: true, passive: false });
-        bindBtn.addEventListener('click', function(e){ /* also keep click safe if pointerdown missed */ e.preventDefault(); e.stopImmediatePropagation(); showWalletPanel(); }, { passive:false });
-        bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showWalletPanel(); } });
+  // Map wallet option actions to appropriate behavior
+  const optionMap = {
+    'opt-phantom': async ()=> {
+      // If your main.js provided an injected connector, prefer it
+      if (typeof window.connectWithPhantom === 'function') {
+        try { await window.connectWithPhantom(); return; } catch(e){ console.warn('connectWithPhantom failed', e); }
       }
-      if (closePanelBtn) closePanelBtn.addEventListener('click', hideWalletPanel);
-
-      // wallet option button handlers (prefer main.js connectors if available)
-      const map = {
-        'opt-phantom': async ()=> {
-          if (typeof window.connectWithPhantom === 'function') return window.connectWithPhantom();
-          // fallback deep-link
-          location.assign('https://phantom.app/');
-        },
-        'opt-solflare': async ()=> {
-          if (typeof window.connectWithSolflare === 'function') return window.connectWithSolflare();
-          location.assign('https://solflare.com/');
-        },
-        'opt-backpack': async ()=> {
-          if (typeof window.connectWithBackpack === 'function') return window.connectWithBackpack();
-          location.assign('https://backpack.app/');
-        },
-        'opt-wc': async ()=> {
-          if (typeof window.connectWithWalletConnect === 'function') return window.connectWithWalletConnect();
-          alert('Open WalletConnect in your wallet app, then paste the returned public key in the field below.');
-        }
-      };
-
-      Object.keys(map).forEach(id=>{
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await map[id](); } catch(e){ console.warn(e); alert('Connection attempt failed'); } }, { passive:false });
-      });
-
-      // manual bind button
-      const manualBtn = document.getElementById('manualBindBtn');
-      if (manualBtn){
-        manualBtn.addEventListener('pointerdown', async (ev)=>{
-          ev.preventDefault(); ev.stopPropagation();
-          const pk = (document.getElementById('manualPublicKey').value || '').trim();
-          if (!pk || pk.length < 20){ manualBtn.textContent = 'Invalid'; setTimeout(()=> manualBtn.textContent = 'Bind', 900); return; }
-          // prefer main.js finalizeBind if available
-          if (typeof window.finalizeBind === 'function'){
-            manualBtn.textContent = 'Binding…';
-            try {
-              const ok = await window.finalizeBind(pk, 'manual');
-              manualBtn.textContent = 'Bind';
-              if (ok) hideWalletPanel();
-              return;
-            } catch(e){ console.warn('finalizeBind error', e); manualBtn.textContent = 'Bind'; alert('Bind failed'); return; }
-          }
-          // fallback: store locally and update UI
-          try {
-            localStorage.setItem('hexon_bound_wallet', pk);
-            localStorage.setItem('hexon_bound_provider', 'manual');
-            const wEl = document.getElementById('ui-wallet');
-            const pEl = document.getElementById('ui-provider');
-            if (wEl) wEl.textContent = pk;
-            if (pEl) pEl.textContent = 'manual';
-            hideWalletPanel();
-            alert('Public key saved locally (no server bind performed).');
-          } catch(e){ console.warn(e); alert('Unable to save locally'); }
-        }, { passive:false });
+      // otherwise deep-link using Telegram-friendly openExternal
+      openExternal(phantomDeepLink());
+    },
+    'opt-solflare': async ()=> {
+      if (typeof window.connectWithSolflare === 'function') {
+        try { await window.connectWithSolflare(); return; } catch(e){ console.warn('connectWithSolflare failed', e); }
       }
+      openExternal(solflareDeepLink());
+    },
+    'opt-backpack': async ()=> {
+      if (typeof window.connectWithBackpack === 'function') {
+        try { await window.connectWithBackpack(); return; } catch(e){ console.warn('connectWithBackpack failed', e); }
+      }
+      openExternal(backpackDeepLink());
+    },
+    'opt-wc': async ()=> {
+      if (typeof window.connectWithWalletConnect === 'function') {
+        try { await window.connectWithWalletConnect(); return; } catch(e){ console.warn('connectWithWalletConnect failed', e); alert('WalletConnect failed'); return; }
+      }
+      // WalletConnect requires the user's wallet app. Provide brief instructions for Telegram (which blocks QR popouts)
+      const tg = tgInstance();
+      if (tg) {
+        // Suggest to open wallet app and use WalletConnect; provide copyable text
+        const msg = 'Open your mobile wallet (Coinbase/Trust/etc.) and choose WalletConnect. Then paste the returned public key into the Hexon UI.';
+        alert(msg);
+      } else {
+        alert('Open your wallet app and choose WalletConnect, or install a WalletConnect-compatible wallet.');
+      }
+    }
+  };
 
-      // quick-fill placeholders from localStorage until main.js updates UI
+  // manualBind uses finalizeBind (if available) or falls back to localStorage
+  async function manualBind(publicKey){
+    if (!publicKey || publicKey.length < 20) { alert('Invalid public key'); return; }
+    if (typeof window.finalizeBind === 'function'){
       try {
-        const sid = localStorage.getItem('hexon_session');
-        if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid;
-        const wallet = localStorage.getItem('hexon_bound_wallet');
-        if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet;
-        const prov = localStorage.getItem('hexon_bound_provider');
-        if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov;
-      } catch(e){}
+        const ok = await window.finalizeBind(publicKey, 'manual');
+        if (ok) hideWalletPanel();
+        return;
+      } catch(e){ console.warn('finalizeBind failed', e); alert('Server bind failed'); return; }
+    }
+    // fallback: local save + UI update
+    try {
+      localStorage.setItem('hexon_bound_wallet', publicKey);
+      localStorage.setItem('hexon_bound_provider', 'manual');
+      const wEl = document.getElementById('ui-wallet');
+      const pEl = document.getElementById('ui-provider');
+      if (wEl) wEl.textContent = publicKey;
+      if (pEl) pEl.textContent = 'manual';
+      hideWalletPanel();
+      alert('Public key stored locally (no server bind).');
+    } catch(e){ console.warn(e); alert('Unable to save locally'); }
+  }
+
+  // Wire everything once DOM is ready
+  document.addEventListener('DOMContentLoaded', ()=>{
+    // Attach the capture-phase interceptor to override any modal-launching handlers in main.js
+    if (bindBtn){
+      bindBtn.addEventListener('pointerdown', interceptBindEvent, { capture:true, passive:false });
+      // Keep a click fallback
+      bindBtn.addEventListener('click', function(e){ e.preventDefault(); e.stopImmediatePropagation(); showWalletPanel(); }, { passive:false });
+      bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showWalletPanel(); } });
+    }
+    if (closePanelBtn) closePanelBtn.addEventListener('click', hideWalletPanel);
+
+    // Attach handlers for each wallet-option — prefer main.js functions when available, otherwise deep-link via Telegram-friendly openExternal
+    Object.keys(optionMap).forEach(id=>{
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await optionMap[id](); } catch(e){ console.warn(e); alert('Connection attempt failed'); } }, { passive:false });
+      // keyboard accessibility
+      el.tabIndex = 0;
+      el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
     });
-  })();
+
+    // manual bind handler
+    const manualBtn = document.getElementById('manualBindBtn');
+    if (manualBtn){
+      manualBtn.addEventListener('pointerdown', async (ev)=> {
+        ev.preventDefault(); ev.stopPropagation();
+        const pk = (document.getElementById('manualPublicKey').value || '').trim();
+        await manualBind(pk);
+      }, { passive:false });
+    }
+
+    // small detection badges
+    setDetectionBadges();
+
+    // quick-fill placeholders from localStorage until main.js updates UI
+    try {
+      const sid = localStorage.getItem('hexon_session');
+      if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid;
+      const wallet = localStorage.getItem('hexon_bound_wallet');
+      if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet;
+      const prov = localStorage.getItem('hexon_bound_provider');
+      if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov;
+    } catch(e){}
+  });
+})();
 </script>
 
 <!-- phaser lib (deferred) -->
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" defer></script>
 
-<!-- your main game file -->
+<!-- your main game file (deferred) -->
 <script src="./main.js" defer></script>
 </body>
 </html>
