@@ -8,37 +8,86 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family:'Orbitron',sans-serif; color:#E6F7FF; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; -webkit-tap-highlight-color:transparent; }
-    #gameContainer { display:flex; height:100vh; width:100vw; box-sizing:border-box; gap:12px; padding:12px; }
-    #phaserCanvas { flex:2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; background:transparent; }
-    #uiPanel { flex:1; min-width:320px; max-width:420px; padding:14px; box-sizing:border-box; background: linear-gradient(180deg, rgba(8,18,36,0.9), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); overflow:auto; border-radius:12px; }
-    .card { background:rgba(255,255,255,0.03); border-radius:12px; padding:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.5); }
-    .muted { opacity:0.7; font-size:12px; color:#bfeafc; }
-    .stat { font-size:20px; font-weight:700; color:#7EE7FF; }
-    .small { font-size:13px; }
-    .energyBar { width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
-    .energyFill { height:100%; width:60%; background:linear-gradient(90deg,#22d3ee,#3b82f6); transition:width .25s ease; }
-    .button { display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,#3b82f6,#22d3ee); color:#021125; font-weight:700; cursor:pointer; margin-top:8px; border:0; user-select:none; }
-    .btn-ghost { background:transparent; border:1px solid rgba(126,231,255,0.12); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; user-select:none; }
+    :root{
+      --bg-top: #071027;
+      --bg-btm: #000;
+      --panel-bg: rgba(8,18,36,0.9);
+      --muted: #bfeafc;
+      --accent-from: #3b82f6;
+      --accent-to: #22d3ee;
+      --card-bg: rgba(255,255,255,0.03);
+    }
+
+    html,body{
+      height:100%;
+      margin:0;
+      font-family:'Orbitron',sans-serif;
+      background: radial-gradient(circle at top,var(--bg-top),var(--bg-btm));
+      color:#E6F7FF;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      -webkit-tap-highlight-color:transparent;
+      -webkit-touch-callout:none;
+      box-sizing:border-box;
+    }
+
+    /* Layout */
+    #gameContainer{ display:flex; gap:12px; padding:12px; height:100dvh; box-sizing:border-box; }
+    /* Use 100dvh where supported to reduce iOS viewport issues; fallbacks are okay */
+    @supports not (height: 100dvh) { #gameContainer { height:100vh; } }
+
+    #phaserCanvas{ flex:2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; }
+    #uiPanel{ flex:1; min-width:320px; max-width:420px; padding:14px; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); border-radius:12px; overflow:auto; box-sizing:border-box; }
+
+    .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.5); }
+    .muted{ color:var(--muted); opacity:.8; font-size:12px; }
+    .stat{ font-size:20px; font-weight:700; color:#7EE7FF; }
+    .small{ font-size:13px; }
+    .small-muted{ font-size:12px; color:#9fcbdc; opacity:.95; }
+
+    .energyBar{ width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
+    .energyFill{ height:100%; width:60%; background:linear-gradient(90deg,var(--accent-to),var(--accent-from)); transition:width .25s ease; }
+
+    .button{ display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; cursor:pointer; border:0; user-select:none; }
+    .btn-ghost{ background:transparent; border:1px solid rgba(126,231,255,0.12); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; }
+
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
-    .small-muted { font-size:12px; color:#9fcbdc; opacity:0.95; }
 
-    /* Inline wallet panel */
-    #walletPanel { display:none; margin-top:10px; background:rgba(255,255,255,0.02); padding:10px; border-radius:10px; }
-    #walletPanel.show { display:block; }
-    .wallet-option { display:flex; justify-content:space-between; align-items:center; padding:8px; border-radius:8px; cursor:pointer; user-select:none; }
-    .wallet-option:hover { background:rgba(255,255,255,0.02); }
+    /* small inline wallet hint (removed earlier) kept for graceful fallback */
+    .wallet-option{ display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:10px; cursor:pointer; user-select:none; }
+    .wallet-option:hover{ background:rgba(255,255,255,0.02); }
 
-    /* overlay for other modals */
-    .overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2147483646; background:rgba(0,0,0,0.55); padding:16px; }
-    .overlay.show { display:flex; }
-    .modal { background:#061026; padding:18px; border-radius:12px; box-shadow:0 12px 40px rgba(2,6,23,0.7); width:420px; max-width:100%; text-align:left; color:#E6F7FF; }
+    /* overlay / bottom-sheet */
+    .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
+    .overlay.show{ display:flex; }
 
+    .bottom-sheet{
+      width:100%;
+      max-width:720px;
+      border-radius:14px;
+      background:linear-gradient(180deg,#071423,#03101a);
+      box-shadow:0 20px 60px rgba(0,0,0,0.6);
+      transform:translateY(0);
+      transition:transform .22s cubic-bezier(.2,.9,.3,1);
+      overflow:hidden;
+      /* compute height to avoid leaving sheet taller than viewport; respect safe area */
+      max-height: min(86vh, calc(100vh - 96px));
+      display:flex;
+      flex-direction:column;
+    }
+
+    .sheet-header{ padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .sheet-title{ font-weight:700; font-size:16px; color:#E6F7FF; }
+    .sheet-body{ padding:12px 16px; overflow:auto; -webkit-overflow-scrolling:touch; }
+
+    .sheet-actions{ padding:12px 16px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent); }
+
+    /* responsive */
     @media (max-width:900px){
-      #gameContainer { flex-direction:column; padding:10px; }
-      #phaserCanvas { height:55vh; min-height:360px; order:1; }
-      #uiPanel { height:45vh; max-width:none; min-width:100%; overflow:auto; order:2; margin-top:10px; }
-      .modal { width:95%; }
+      #gameContainer{ flex-direction:column; padding:10px; }
+      #phaserCanvas{ order:1; height:56dvh; min-height:320px; }
+      #uiPanel{ order:2; height:44dvh; min-height:180px; }
+      .bottom-sheet{ max-height:88vh; border-radius:12px 12px 0 0; }
     }
   </style>
 </head>
@@ -90,38 +139,10 @@
           <button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button>
         </div>
       </div>
-
-      <!-- Inline wallet panel (no overlay/modal) -->
-      <div id="walletPanel" aria-live="polite" aria-hidden="true">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <div class="small-muted">Connect a wallet</div>
-          <button id="closeWalletPanel" class="btn-ghost" type="button">Close</button>
-        </div>
-
-        <div class="wallet-option" id="opt-phantom" data-w="phantom">
-          <div>Phantom</div><div class="small-muted" id="det-phantom"></div>
-        </div>
-        <div class="wallet-option" id="opt-solflare" data-w="solflare">
-          <div>Solflare</div><div class="small-muted" id="det-solflare"></div>
-        </div>
-        <div class="wallet-option" id="opt-backpack" data-w="backpack">
-          <div>Backpack</div><div class="small-muted" id="det-backpack"></div>
-        </div>
-        <div class="wallet-option" id="opt-wc" data-w="walletconnect">
-          <div>WalletConnect</div><div class="small-muted">Use a compatible mobile wallet</div>
-        </div>
-
-        <div style="height:8px"></div>
-        <div class="small-muted">Manual public key (paste)</div>
-        <div style="display:flex; gap:8px; margin-top:6px;">
-          <input id="manualPublicKey" type="text" placeholder="Paste public key here" />
-          <button id="manualBindBtn" class="button" type="button">Bind</button>
-        </div>
-      </div>
     </div>
 
     <div class="card">
-      <div class="row">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
         <div style="flex:1">
           <div class="small muted">Energy</div>
           <div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div>
@@ -193,82 +214,111 @@
   </aside>
 </div>
 
-<!-- Keep overlay for other main.js modals (shop/ads etc) -->
-<div id="overlay" class="overlay" aria-hidden="true">
-  <div class="modal" id="modalContent" role="dialog" aria-modal="true"></div>
+<!-- overlay + bottom-sheet for wallet picker (always inside DOM) -->
+<div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
+  <div class="bottom-sheet" role="document" aria-label="Wallet selector">
+    <div class="sheet-header">
+      <div class="sheet-title">Connect Wallet</div>
+      <div>
+        <button id="sheetClose" class="btn-ghost" aria-label="Close wallet selector">Close</button>
+      </div>
+    </div>
+
+    <div class="sheet-body" id="sheetBody" tabindex="0">
+      <div class="small-muted" style="margin-bottom:10px">Choose a wallet or paste your public key. In the Telegram mini app we open deep-links using the WebApp API when available.</div>
+
+      <div class="wallet-option" id="opt-phantom" tabindex="0" role="button" aria-pressed="false">
+        <div>Phantom</div><div class="small-muted" id="det-phantom"></div>
+      </div>
+
+      <div class="wallet-option" id="opt-solflare" tabindex="0" role="button" aria-pressed="false">
+        <div>Solflare</div><div class="small-muted" id="det-solflare"></div>
+      </div>
+
+      <div class="wallet-option" id="opt-backpack" tabindex="0" role="button" aria-pressed="false">
+        <div>Backpack</div><div class="small-muted" id="det-backpack"></div>
+      </div>
+
+      <div class="wallet-option" id="opt-wc" tabindex="0" role="button" aria-pressed="false">
+        <div>WalletConnect</div><div class="small-muted">Use a compatible mobile wallet</div>
+      </div>
+
+      <div style="height:12px"></div>
+
+      <div class="small-muted">Manual public key</div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <input id="manualPublicKey" type="text" inputmode="text" placeholder="Paste public key here" aria-label="Public key" />
+        <button id="manualBindBtn" class="button" type="button">Bind</button>
+      </div>
+    </div>
+
+    <div class="sheet-actions">
+      <button id="sheetCancel" class="btn-ghost" type="button">Cancel</button>
+    </div>
+  </div>
 </div>
 
-<!-- Inline script: Telegram-friendly external opening + inline wallet panel -->
+<!-- small inline helper script (Telegram-compatible deep-link + bottom-sheet wiring) -->
 <script>
 (function(){
-  // helper: safe access to Telegram WebApp instance
-  function tgInstance(){
-    try { return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; } catch(e){ return null; }
-  }
+  // safe tg instance
+  function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
 
-  // Build a clean redirect path used by phantom deep link (same-origin, no query/hash)
-  function buildCleanRedirect(){
-    try {
-      const origin = window.location.origin.replace(/\/+$/, '');
-      return origin + window.location.pathname;
-    } catch(e){
-      return window.location.origin + '/';
-    }
-  }
-
-  // Safe external opener that prefers Telegram WebApp methods when present
+  // open external URL using Telegram WebApp when available (safe) then fallback to normal navigation
   function openExternal(url){
     const tg = tgInstance();
     if (tg){
       try {
-        // Many Telegram WebApp versions implement openUrl or openLink — try both.
-        if (typeof tg.openUrl === 'function') { tg.openUrl(url); return; }
-        if (typeof tg.openLink === 'function') { tg.openLink(url); return; }
-        if (typeof tg.openPopup === 'function') { tg.openPopup(url); return; }
-      } catch(e){ console.warn('tg open function failed', e); }
-      // fallthrough to assign
+        if (typeof tg.openUrl === 'function'){ tg.openUrl(url); return; }
+        if (typeof tg.openLink === 'function'){ tg.openLink(url); return; }
+        // some builds provide openPopup
+        if (typeof tg.openPopup === 'function'){ tg.openPopup(url); return; }
+      } catch(e){ console.warn('tg.open* failed', e); }
     }
-    // General fallback
+    // fallback to assign (works in Safari)
     try { window.location.assign(url); } catch(e){ try { window.open(url, '_blank'); } catch(e2){ console.warn('openExternal fallback failed', e2); } }
   }
 
-  // Compose Phantom deep link identical to main.js approach
-  function phantomDeepLink(){
-    const origin = window.location.origin.replace(/\/+$/, '');
-    const app_url = encodeURIComponent(origin);
-    const redirect_link = encodeURIComponent(buildCleanRedirect());
-    return `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
-  }
-
-  // Compose Solflare deep link used earlier
-  function solflareDeepLink(){
-    const cleanRedirect = encodeURIComponent(buildCleanRedirect());
-    return `https://solflare.com/access?redirect=${cleanRedirect}`;
-  }
-
-  // Backpack fallback
-  function backpackDeepLink(){
-    return 'https://backpack.app/';
-  }
-
-  // Toggle & wiring for inline panel
-  const walletPanel = document.getElementById('walletPanel');
+  // bottom-sheet controls
+  const overlay = document.getElementById('overlay');
+  const sheetClose = document.getElementById('sheetClose');
+  const sheetCancel = document.getElementById('sheetCancel');
   const bindBtn = document.getElementById('bindWalletBtn');
-  const closePanelBtn = document.getElementById('closeWalletPanel');
 
-  function showWalletPanel(){
-    if (!walletPanel) return;
-    walletPanel.classList.add('show');
-    walletPanel.setAttribute('aria-hidden','false');
+  function showSheet(){
+    if (!overlay) return;
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden','false');
+    // try to expand Telegram window if available (improves view in miniapp)
+    try { const tg = tgInstance(); if (tg && typeof tg.expand === 'function') tg.expand(); } catch(e){}
+    // focus body to allow keyboard scroll
+    const bodyEl = document.getElementById('sheetBody');
+    if (bodyEl) bodyEl.focus();
     setDetectionBadges();
   }
-  function hideWalletPanel(){
-    if (!walletPanel) return;
-    walletPanel.classList.remove('show');
-    walletPanel.setAttribute('aria-hidden','true');
+
+  function hideSheet(){
+    if (!overlay) return;
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden','true');
   }
 
-  // Show small "detected" badges for injected wallets (useful outside Telegram)
+  // Compose deep-links similar to main.js' behavior
+  function buildCleanRedirect(){
+    try { return window.location.origin.replace(/\/+$/,'') + window.location.pathname; } catch(e){ return window.location.origin + '/'; }
+  }
+  function phantomDeepLink(){
+    const origin = encodeURIComponent(window.location.origin.replace(/\/+$/,''));
+    const redirect = encodeURIComponent(buildCleanRedirect());
+    return `https://phantom.app/ul/v1/connect?app_url=${origin}&redirect_link=${redirect}`;
+  }
+  function solflareDeepLink(){
+    const redirect = encodeURIComponent(buildCleanRedirect());
+    return `https://solflare.com/access?redirect=${redirect}`;
+  }
+  function backpackDeepLink(){ return 'https://backpack.app/'; }
+
+  // detect injected providers for badges
   function detectInjectedProviders(){
     return {
       phantom: Boolean(window.solana && window.solana.isPhantom),
@@ -285,73 +335,51 @@
     } catch(e){}
   }
 
-  // Intercept capture-phase so main.js won't open its modal (if it attaches later)
-  function interceptBindEvent(ev){
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-    const tg = tgInstance();
-    // If inside Telegram prefer to immediately open a safe deep-link chooser for mobile wallets
-    if (tg){
-      // show a tiny inline chooser, but call deep-links via openExternal (which uses tg methods)
-      showWalletPanel();
-      return false;
-    } else {
-      // outside Telegram, show inline panel as usual
-      if (walletPanel && walletPanel.classList.contains('show')) hideWalletPanel();
-      else showWalletPanel();
-      return false;
-    }
-  }
-
-  // Map wallet option actions to appropriate behavior
+  // map option ids to behaviors (prefer your injected connectors, otherwise deep-link/openExternal)
   const optionMap = {
     'opt-phantom': async ()=> {
-      // If your main.js provided an injected connector, prefer it
       if (typeof window.connectWithPhantom === 'function') {
-        try { await window.connectWithPhantom(); return; } catch(e){ console.warn('connectWithPhantom failed', e); }
+        try { await window.connectWithPhantom(); hideSheet(); return; } catch(e){ console.warn('connectWithPhantom failed', e); }
       }
-      // otherwise deep-link using Telegram-friendly openExternal
       openExternal(phantomDeepLink());
     },
     'opt-solflare': async ()=> {
       if (typeof window.connectWithSolflare === 'function') {
-        try { await window.connectWithSolflare(); return; } catch(e){ console.warn('connectWithSolflare failed', e); }
+        try { await window.connectWithSolflare(); hideSheet(); return; } catch(e){ console.warn('connectWithSolflare failed', e); }
       }
       openExternal(solflareDeepLink());
     },
     'opt-backpack': async ()=> {
       if (typeof window.connectWithBackpack === 'function') {
-        try { await window.connectWithBackpack(); return; } catch(e){ console.warn('connectWithBackpack failed', e); }
+        try { await window.connectWithBackpack(); hideSheet(); return; } catch(e){ console.warn('connectWithBackpack failed', e); }
       }
       openExternal(backpackDeepLink());
     },
     'opt-wc': async ()=> {
       if (typeof window.connectWithWalletConnect === 'function') {
-        try { await window.connectWithWalletConnect(); return; } catch(e){ console.warn('connectWithWalletConnect failed', e); alert('WalletConnect failed'); return; }
+        try { await window.connectWithWalletConnect(); hideSheet(); return; } catch(e){ console.warn('connectWithWalletConnect failed', e); alert('WalletConnect attempt failed'); return; }
       }
-      // WalletConnect requires the user's wallet app. Provide brief instructions for Telegram (which blocks QR popouts)
       const tg = tgInstance();
       if (tg) {
-        // Suggest to open wallet app and use WalletConnect; provide copyable text
-        const msg = 'Open your mobile wallet (Coinbase/Trust/etc.) and choose WalletConnect. Then paste the returned public key into the Hexon UI.';
+        // Telegram blocks some popups; provide instruction
+        const msg = 'Open your mobile wallet (Coinbase Wallet / Trust Wallet / Exodus) and choose WalletConnect. Then paste the returned public key into Hexon.';
         alert(msg);
       } else {
-        alert('Open your wallet app and choose WalletConnect, or install a WalletConnect-compatible wallet.');
+        alert('Open your wallet app and choose WalletConnect, or use a WalletConnect-enabled wallet.');
       }
     }
   };
 
-  // manualBind uses finalizeBind (if available) or falls back to localStorage
+  // manual bind: prefer finalizeBind from main.js; otherwise local save
   async function manualBind(publicKey){
-    if (!publicKey || publicKey.length < 20) { alert('Invalid public key'); return; }
+    if (!publicKey || publicKey.length < 20){ alert('Invalid public key'); return; }
     if (typeof window.finalizeBind === 'function'){
       try {
         const ok = await window.finalizeBind(publicKey, 'manual');
-        if (ok) hideWalletPanel();
+        if (ok) hideSheet();
         return;
       } catch(e){ console.warn('finalizeBind failed', e); alert('Server bind failed'); return; }
     }
-    // fallback: local save + UI update
     try {
       localStorage.setItem('hexon_bound_wallet', publicKey);
       localStorage.setItem('hexon_bound_provider', 'manual');
@@ -359,46 +387,55 @@
       const pEl = document.getElementById('ui-provider');
       if (wEl) wEl.textContent = publicKey;
       if (pEl) pEl.textContent = 'manual';
-      hideWalletPanel();
-      alert('Public key stored locally (no server bind).');
+      hideSheet();
+      alert('Public key stored locally (no server bind performed).');
     } catch(e){ console.warn(e); alert('Unable to save locally'); }
   }
 
-  // Wire everything once DOM is ready
-  document.addEventListener('DOMContentLoaded', ()=>{
-    // Attach the capture-phase interceptor to override any modal-launching handlers in main.js
-    if (bindBtn){
-      bindBtn.addEventListener('pointerdown', interceptBindEvent, { capture:true, passive:false });
-      // Keep a click fallback
-      bindBtn.addEventListener('click', function(e){ e.preventDefault(); e.stopImmediatePropagation(); showWalletPanel(); }, { passive:false });
-      bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showWalletPanel(); } });
-    }
-    if (closePanelBtn) closePanelBtn.addEventListener('click', hideWalletPanel);
+  // Intercept bind clicks (capture) so main.js can't open its own modal in bubble phase
+  function interceptBind(ev){
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    showSheet();
+    return false;
+  }
 
-    // Attach handlers for each wallet-option — prefer main.js functions when available, otherwise deep-link via Telegram-friendly openExternal
-    Object.keys(optionMap).forEach(id=>{
+  // keyboard: Esc closes sheet
+  function onKeyDown(e){
+    if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheet(); }
+  }
+
+  // wire UI after DOM ready
+  document.addEventListener('DOMContentLoaded', ()=>{
+    // attach capture-phase listener to Bind button
+    if (bindBtn){
+      bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false });
+      bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); showSheet(); }, { passive:false });
+      bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheet(); } });
+    }
+
+    if (sheetClose) sheetClose.addEventListener('click', hideSheet);
+    if (sheetCancel) sheetCancel.addEventListener('click', hideSheet);
+
+    // overlay click outside to close (only when clicking backdrop)
+    overlay.addEventListener('pointerdown', (ev)=>{ if (ev.target === overlay) hideSheet(); });
+
+    // wire option selectors
+    Object.keys(optionMap).forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-      el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await optionMap[id](); } catch(e){ console.warn(e); alert('Connection attempt failed'); } }, { passive:false });
-      // keyboard accessibility
-      el.tabIndex = 0;
+      el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await optionMap[id](); } catch(e){ console.warn(e); alert('Connection failed'); } }, { passive:false });
       el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
     });
 
-    // manual bind handler
+    // manual bind
     const manualBtn = document.getElementById('manualBindBtn');
     if (manualBtn){
-      manualBtn.addEventListener('pointerdown', async (ev)=> {
-        ev.preventDefault(); ev.stopPropagation();
-        const pk = (document.getElementById('manualPublicKey').value || '').trim();
-        await manualBind(pk);
-      }, { passive:false });
+      manualBtn.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); const pk = (document.getElementById('manualPublicKey').value||'').trim(); await manualBind(pk); }, { passive:false });
     }
 
-    // small detection badges
+    // show detection badges and quick-fill session/wallet placeholders
     setDetectionBadges();
-
-    // quick-fill placeholders from localStorage until main.js updates UI
     try {
       const sid = localStorage.getItem('hexon_session');
       if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid;
@@ -407,14 +444,21 @@
       const prov = localStorage.getItem('hexon_bound_provider');
       if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov;
     } catch(e){}
+
+    // keyboard close
+    document.addEventListener('keydown', onKeyDown);
   });
+
+  // expose helpers for debugging if needed
+  window._hexon_openWalletSheet = showSheet;
+  window._hexon_closeWalletSheet = hideSheet;
 })();
 </script>
 
 <!-- phaser lib (deferred) -->
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" defer></script>
 
-<!-- your main game file (deferred) -->
+<!-- main game file (deferred) -->
 <script src="./main.js" defer></script>
 </body>
 </html>
