@@ -11,7 +11,7 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-const API_BASE = 'https://api.yourdomain.com'; // <-- change to your backend
+const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // <-- change to your backend
 const DAILY_EMISSION_CAP = 1250000;
 const GAME_ALLOCATION = 150_000_000;
 
