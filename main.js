@@ -1,6 +1,8 @@
 /* main.js
    Hexon — Phaser 3 Tetris engine (redraft to match FastAPI server)
    - Multi-wallet support added (Phantom, Solflare, Backpack, WalletConnect scaffold, Coinbase/Trust advice)
+   - Wallet picker always shows a selectable list (detects injected providers)
+   - Manual public-key paste fallback
    - Adopt server sessionId
    - GETs automatically append sessionId query param
    - shop_items mapping (snake_case -> client fields)
@@ -275,9 +277,6 @@ async function showAdAndVerify(){
 
 /* ---------------------------
    Miner shop (UI + backend)
-   - fetch /shop/items (GET)
-   - buy: /shop/buy (POST { sessionId, itemId })
-   - maps server snake_case fields to client fields
 */
 async function fetchShopItems(){
   try {
@@ -368,9 +367,10 @@ async function purchaseMiner(itemId){
      * Solflare
      * Backpack
      * WalletConnect (scaffold + helper instructions)
-     * Coinbase/Trust (deep-link instructions)
+     * Coinbase/Trust (deep-link / manual)
    - All flows include referral when binding
    - Deep-links use a clean redirect for iOS Phantom behavior
+   - Provides manual public-key paste fallback
 */
 
 /* create a clean redirect path on the same origin (no query/hash) */
@@ -395,12 +395,12 @@ function detectInjectedProviders(){
   return providers;
 }
 
-/* Wallet picker UI (modal) */
+/* Wallet picker UI (modal) - always shows a list, even if no injected providers detected */
 function showWalletPicker(){
   const detected = detectInjectedProviders();
   const html = [
     '<div style="text-align:left;"><h3>Connect Wallet</h3>',
-    '<div class="small-muted">Choose a wallet to connect — we support Phantom, Solflare, Backpack and WalletConnect.</div>',
+    '<div class="small-muted">Choose a wallet to connect — Phantom, Solflare, Backpack, WalletConnect, or paste your public key.</div>',
     '<div style="height:12px"></div>'
   ];
 
@@ -421,6 +421,9 @@ function showWalletPicker(){
   // Coinbase/Trust (deep-link / wallet chooser)
   buttons.push(`<button class="btn-ghost wallet-btn" data-w="other">Other (Coinbase, Trust, etc.)</button>`);
 
+  // Manual paste option
+  buttons.push(`<div style="margin-top:10px"><input id="manualPublicKey" placeholder="Paste public key here" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" /><div style="height:6px"></div><button id="manualBindBtn" class="button">Bind Public Key</button></div>`);
+
   html.push(`<div style="display:flex;flex-direction:column;gap:8px;">${buttons.join('')}</div>`);
   html.push('<div style="height:12px"></div><button id="closeWalletPicker" class="btn-ghost">Close</button></div>');
 
@@ -439,6 +442,18 @@ function showWalletPicker(){
         }
       };
     });
+    const manual = $('#manualBindBtn');
+    if (manual) manual.onclick = async ()=> {
+      const pkBox = $('#manualPublicKey');
+      if (!pkBox) return;
+      const pk = pkBox.value && pkBox.value.trim();
+      if (!pk || pk.length < 20) { showModal('<div class="small-muted">Invalid public key</div>', ()=> setTimeout(hideModal,900)); return; }
+      showModal('<div class="small-muted">Binding public key...</div>');
+      const ok = await finalizeBind(pk, 'manual');
+      if (!ok) {
+        // finalizeBind will display error modal
+      }
+    };
     const close = $('#closeWalletPicker'); if (close) close.onclick = hideModal;
   });
 }
@@ -464,7 +479,10 @@ function showOtherWalletOptions(){
 
 /* Generic helper used by many wallet flows to finalize server bind */
 async function finalizeBind(publicKey, providerName){
-  if (!publicKey) return false;
+  if (!publicKey) {
+    showModal('<div class="small-muted">No public key provided</div>', ()=> setTimeout(hideModal,900));
+    return false;
+  }
   clientState.walletProvider = providerName || clientState.walletProvider || null;
   const ok = await bindWalletWithPublicKey(publicKey);
   if (ok){
@@ -525,7 +543,6 @@ async function connectWithPhantom(){
 
 /* ---------------------------
    Solflare connector (injected detection + deep-link fallback)
-   - Many Solflare users have an injected `window.solflare` or `window.solana` with isSolflare
 */
 function openSolflareDeepLink(){
   try {
@@ -543,12 +560,10 @@ async function connectWithSolflare(){
   try {
     if (window.solflare && typeof window.solflare.connect === 'function'){
       const resp = await window.solflare.connect();
-      // Solflare may return publicKey similarly
       const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
       await finalizeBind(publicKey, 'solflare');
       return;
     } else if (window.solana && window.solana.isSolflare){
-      // provider is on window.solana but flagged as Solflare
       try {
         const r = await window.solana.connect();
         const publicKey = (r && r.publicKey && typeof r.publicKey.toString === 'function') ? r.publicKey.toString() : (r && r.publicKey) || (r && r);
@@ -602,7 +617,6 @@ async function connectWithBackpack(){
      (WalletConnect v2 + Solana Wallet Adapter or a specific bridge). Here we provide a safe
      scaffold: try to dynamically load a connector (if you add one), otherwise show instructions
      and a QR / deep-link path for the user to open their wallet.
-   - Replace the loader with your preferred WalletConnect/Solana integration for production.
 */
 function showWalletConnectInstructions(qrOrLinkText){
   const html = `<div style="text-align:left">
@@ -634,7 +648,7 @@ async function connectWithWalletConnect(){
 
     // Otherwise, attempt to inject a placeholder script that your app can later implement.
     // We avoid adding a concrete WalletConnect package here to keep the file resilient.
-    showWalletConnectInstructions('No WalletConnect helper found on this page. To enable WalletConnect integrate a WalletConnect-Solana adapter or use the app chooser in the wallet. For now, open your Wallet app and choose WalletConnect, then paste the returned public key into the web UI (if available).');
+    showWalletConnectInstructions('No WalletConnect helper found on this page. To enable WalletConnect integrate a WalletConnect-Solana adapter or use the app chooser in the wallet. For now, open your Wallet app and choose WalletConnect, then paste the returned public key into the web UI (in the Connect Wallet flow).');
 
   } catch (e) {
     console.warn('connectWithWalletConnect failed', e);
