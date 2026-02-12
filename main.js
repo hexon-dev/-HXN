@@ -1,11 +1,9 @@
 /* main.js
    Hexon — Phaser 3 Tetris engine (redraft to match FastAPI server)
-   - Multi-wallet support (Phantom, Solflare, Backpack, WalletConnect scaffold, Coinbase/Trust advice)
-   - Wallet picker always shows selectable list (detects injected providers)
-   - Manual public-key paste fallback
-   - Robust modal handling (fixes modal not appearing in WebViews / Telegram)
-   - Adopt server sessionId, persist session and bound wallet locally
-   - Defensive API handling and fallbacks
+   - Multi-wallet support (Phantom, Solflare, Backpack, WalletConnect scaffold)
+   - Wallet picker integrates with index.html sheet (index.html calls into window.* functions)
+   - Robust, separate modal overlay (does not clash with the bottom-sheet overlay in index.html)
+   - Matches FastAPI endpoints in server.py exactly
 */
 
 'use strict';
@@ -13,7 +11,7 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // <-- change to your backend
+const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // <-- preserve as requested
 const DAILY_EMISSION_CAP = 1250000;
 const GAME_ALLOCATION = 150_000_000;
 
@@ -78,7 +76,7 @@ let clientState = {
   actionLog: []
 };
 
-// ensure initial sessionId is persisted
+// persist initial session id
 saveSessionToStorage(clientState.sessionId);
 
 function generateUUID(){
@@ -99,7 +97,7 @@ function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if
 /* ---------------------------
    API helper (auto-attach sessionId to GETs)
 */
-async function api(path, method='GET', body=null){
+async function api(path, method='GET', body=null, optsExtra={}){
   try {
     let url = API_BASE + path;
     if (method.toUpperCase() === 'GET') {
@@ -109,19 +107,21 @@ async function api(path, method='GET', body=null){
       }
     }
 
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, optsExtra.headers || {});
     if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
 
-    const opts = { method, headers };
-    if (body !== null && body !== undefined) {
-      opts.body = (typeof body === 'string') ? body : JSON.stringify(body);
+    const fetchOpts = { method, headers, ...optsExtra };
+    if (body !== null && body !== undefined){
+      fetchOpts.body = (typeof body === 'string') ? body : JSON.stringify(body);
     }
 
-    const res = await fetch(url, opts);
+    const res = await fetch(url, fetchOpts);
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch (err) { json = text || null; }
+
     if (!res.ok) {
+      // return JSON body on errors too for app-level handling
       console.warn('API non-ok', res.status, path, json);
       return json;
     }
@@ -180,7 +180,6 @@ function initTelegram(){
     }
   } catch (e) { console.warn('initTelegram error', e); }
 }
-
 function vibratePreferTelegram(pattern=20){
   try {
     if (tg){
@@ -191,7 +190,6 @@ function vibratePreferTelegram(pattern=20){
   } catch(e){ console.warn('Telegram haptic call failed', e); }
   if (navigator && typeof navigator.vibrate === 'function'){ try { navigator.vibrate(pattern); } catch(e){} }
 }
-
 function closeTelegramApp(){
   try {
     if (tg && typeof tg.close === 'function'){ tg.close(); return true; }
@@ -250,6 +248,7 @@ async function showAdAndVerify(){
         return;
       }
     } else {
+      // fallback: simulate a short ad delay for UX
       await new Promise(res => setTimeout(res, 2400));
     }
 
@@ -356,13 +355,19 @@ async function purchaseMiner(itemId){
 /* ---------------------------
    Wallet support (multi-wallet)
    - Phantom, Solflare, Backpack, WalletConnect scaffold, manual public-key
+   - NOTE: index.html bottom-sheet expects the following global functions:
+       window.connectWithPhantom()
+       window.connectWithSolflare()
+       window.connectWithBackpack()
+       window.connectWithWalletConnect()
+       window.finalizeBind(publicKey, providerName)
 */
 
 /* create a clean redirect path on the same origin (no query/hash) */
 function buildCleanRedirect(){
   try {
     const origin = window.location.origin.replace(/\/+$/, '');
-    return origin + '/';
+    return origin + window.location.pathname;
   } catch (e) {
     return window.location.origin + '/';
   }
@@ -380,22 +385,35 @@ function detectInjectedProviders(){
 
 /* ---------------------------
    Modal utilities (robust)
-   - ensures overlay exists, high z-index, aria attributes, click-outside behavior
+   - Uses a dedicated modal overlay element with id `modalOverlay`
+   - This avoids colliding with the bottom-sheet `overlay` present in index.html
 */
-function ensureOverlay(){
-  let o = $('overlay');
+function ensureModalOverlay(){
+  let o = $('modalOverlay');
   if (!o){
     o = document.createElement('div');
-    o.id = 'overlay';
-    o.className = 'overlay';
-    o.style.position = 'fixed';
-    o.style.inset = '0';
-    o.style.display = 'none';
-    o.style.alignItems = 'center';
-    o.style.justifyContent = 'center';
-    o.style.zIndex = String(2147483647); // very high z-index for in-app browsers
-    o.style.background = 'rgba(0,0,0,0.45)';
-    o.innerHTML = `<div class="modal" id="modalContent" role="dialog" aria-modal="true"></div>`;
+    o.id = 'modalOverlay';
+    o.className = 'modal-overlay';
+    Object.assign(o.style, {
+      position: 'fixed',
+      inset: '0',
+      display: 'none',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: String(2147483650), // very high
+      background: 'rgba(0,0,0,0.45)'
+    });
+    const inner = document.createElement('div');
+    inner.id = 'modalContent';
+    inner.className = 'modal';
+    inner.setAttribute('role','dialog');
+    inner.setAttribute('aria-modal','true');
+    inner.style.maxWidth = '720px';
+    inner.style.width = '92%';
+    inner.style.padding = '12px';
+    inner.style.borderRadius = '12px';
+    inner.style.background = 'linear-gradient(180deg,#071423,#03101a)';
+    o.appendChild(inner);
     document.body.appendChild(o);
   }
   return o;
@@ -403,25 +421,23 @@ function ensureOverlay(){
 
 function showModal(html, onMounted){
   try {
-    const o = ensureOverlay();
+    const o = ensureModalOverlay();
     o.style.display = 'flex';
     o.classList.add('show');
-    o.setAttribute('aria-hidden', 'false');
+    o.setAttribute('aria-hidden','false');
     const content = $('#modalContent');
     if (!content){
       console.warn('Modal content missing');
       return;
     }
     content.innerHTML = html;
-    // prevent underlying gestures from closing the Telegram WebApp unexpectedly
     setTimeout(()=> {
       if (typeof onMounted === 'function') {
         try { onMounted(); } catch(e){ console.warn('onMounted failed', e); }
       }
     }, 50);
 
-    // click outside to close (but only if user taps outside the dialog)
-    // remove previous handler to avoid duplicates
+    // click outside to close
     o.onclick = (ev) => {
       if (ev.target === o){
         hideModal();
@@ -437,13 +453,12 @@ function showModal(html, onMounted){
 
 function hideModal(){
   try {
-    const o = ensureOverlay();
+    const o = ensureModalOverlay();
     o.classList.remove('show');
     o.style.display = 'none';
     o.setAttribute('aria-hidden','true');
     const content = $('#modalContent');
     if (content) content.innerHTML = '';
-    // return focus to main UI
     try { const b = document.activeElement; if (b) b.blur(); } catch(e){}
   } catch(e){ console.warn('hideModal error', e); }
 }
@@ -451,7 +466,8 @@ function hideModal(){
 function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
 /* ---------------------------
-   Wallet picker (fixed behavior)
+   Wallet picker (fallback modal - index.html bottom-sheet will be used in many flows)
+   Kept for contexts where the bottom-sheet isn't present.
 */
 function showWalletPicker(){
   const detected = detectInjectedProviders();
@@ -473,20 +489,13 @@ function showWalletPicker(){
   ].join('');
 
   showModal(html, ()=> {
-    // attach wallet button handlers - DO NOT hide modal immediately (wait until action completes)
     const buttons = document.querySelectorAll('.wallet-btn');
     buttons.forEach(btn => {
       btn.onclick = async (ev) => {
         const w = btn.getAttribute('data-w');
         try {
           if (w === 'phantom') {
-            // If injected Phantom -> try connect, otherwise deep-link
-            if (tg) {
-              // Telegram: deep-link only
-              showModal('<div class="small-muted">Opening Phantom... you will be returned when complete.</div>');
-              openPhantomDeepLink();
-              return;
-            }
+            if (tg) { showModal('<div class="small-muted">Opening Phantom... you will be returned when complete.</div>'); openPhantomDeepLink(); return; }
             if (window.solana && window.solana.isPhantom) {
               try {
                 const resp = await window.solana.connect();
@@ -502,7 +511,6 @@ function showWalletPicker(){
                 return;
               }
             } else {
-              // deep-link
               showModal('<div class="small-muted">Opening Phantom app — you will be returned when complete.</div>');
               openPhantomDeepLink();
               return;
@@ -537,7 +545,6 @@ function showWalletPicker(){
             return;
           } else if (w === 'walletconnect') {
             showWalletConnectInstructions('Attempting WalletConnect — follow your wallet app to complete. If your app returns a public key, paste it using the "Bind Public Key" input.');
-            // leave modal open so user can follow instructions and paste key
             return;
           } else if (w === 'other') {
             showOtherWalletOptions();
@@ -581,13 +588,13 @@ function showOtherWalletOptions(){
     <div style="height:8px"></div><button id="closeOther" class="btn-ghost">Close</button>
   </div>`;
   showModal(html, ()=>{
-    const a = $('#openWalletConnectFromOther'); if (a) a.onclick = ()=> { connectWithWalletConnect(); showWalletPicker(); };
+    const a = $('#openWalletConnectFromOther'); if (a) a.onclick = ()=> { connectWithWalletConnect(); hideModal(); };
     const i = $('#openInstallWallet'); if (i) i.onclick = ()=> { try { window.open('https://www.trustwallet.com/', '_blank'); } catch(e){ console.warn(e); } };
     const c = $('#closeOther'); if (c) c.onclick = hideModal;
   });
 }
 
-/* Generic helper to finalize bind */
+/* Generic helper to finalize bind (global entrypoint used by index.html's manual bind) */
 async function finalizeBind(publicKey, providerName){
   if (!publicKey) {
     showModal('<div class="small-muted">No public key provided</div>', ()=> setTimeout(hideModal,900));
@@ -621,9 +628,7 @@ function openPhantomDeepLink(){
     const redirect_link = encodeURIComponent(cleanRedirect);
     const link = `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
     console.log('Attempting Phantom deep link ->', { link, cleanRedirect });
-    // fallback to opening in a new tab if assign fails
     try { window.location.assign(link); } catch(e){ window.open(link, '_blank'); }
-    // Show a waiting hint
     showModal('<div class="small-muted">Opened Phantom — return to this page after connecting. If nothing happens, use the manual Bind Public Key option.</div>');
   } catch (e) {
     console.error('Phantom deep link failed', e);
@@ -671,7 +676,7 @@ async function connectWithSolflare(){
   try {
     if (window.solflare && typeof window.solflare.connect === 'function'){
       const resp = await window.solflare.connect();
-      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
+      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || resp;
       const ok = await finalizeBind(publicKey, 'solflare');
       if (ok) hideModal();
       return;
@@ -955,17 +960,15 @@ function updateUI(){
   if ($('ui-provider')) {
     $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—';
   }
+  // update small counters if present
+  if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday || 0);
+  if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
 }
 
 /* ---------------------------
    Phaser scenes and game logic (unchanged)
-   (preserved fully below)
+   (Preserve previously working game logic)
 */
-
-/* (Full game logic preserved - same as earlier file) */
-
-/* For brevity in this reply the full Phaser game code is unchanged and appended here.
-   In your file keep the exact game logic from your previous version. */
 
 const gameState = {
   grid: null,
@@ -1418,3 +1421,16 @@ async function claimRewards(){
     showModal('<div class="small-muted">Network error — try again later.</div>', ()=> setTimeout(hideModal,1200));
   }
 }
+
+/* ---------------------------
+   Expose wallet helpers globally so index.html bottom-sheet can call them
+*/
+window.connectWithPhantom = connectWithPhantom;
+window.connectWithSolflare = connectWithSolflare;
+window.connectWithBackpack = connectWithBackpack;
+window.connectWithWalletConnect = connectWithWalletConnect;
+window.finalizeBind = finalizeBind;
+window.showWalletPicker = showWalletPicker;
+window.openPhantomDeepLink = openPhantomDeepLink;
+window.openSolflareDeepLink = openSolflareDeepLink;
+window.openBackpackDeepLink = openBackpackDeepLink;
