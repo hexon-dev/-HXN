@@ -1,5 +1,6 @@
 /* main.js
    Hexon — Phaser 3 Tetris engine (redraft to match FastAPI server)
+   - Multi-wallet support added (Phantom, Solflare, Backpack, WalletConnect scaffold, Coinbase/Trust advice)
    - Adopt server sessionId
    - GETs automatically append sessionId query param
    - shop_items mapping (snake_case -> client fields)
@@ -54,6 +55,7 @@ let clientState = {
   userId: null,
   username: null,
   wallet: null,
+  walletProvider: null, // phantom, solflare, backpack, walletconnect, coinbase...
   gp: 0,
   energy: 65,
   miners: [],        // owned miners
@@ -360,29 +362,21 @@ async function purchaseMiner(itemId){
 }
 
 /* ---------------------------
-   Phantom wallet integration (bind includes referral)
-   - server expects sessionId, wallet, referral (optional)
-   - If injected provider exists (desktop / supported mobile browsers), use it.
-   - Otherwise open Phantom universal link (deep link) immediately so iOS will hand off to the app.
-   - Telegram WebApp: always deep-link (in-app WebView can't detect injected provider)
-   - Handles Phantom redirect return (phantom_public_key, public_key, publicKey)
-   - IMPORTANT: keep deep-link calls inside user gesture where possible.
-*/
-
-/*
-  IMPORTANT PHANTOM iOS NOTE (applies to openPhantomDeepLink below)
-  - Phantom expects a clean, same-origin redirect URL (no querystring fragments, stable path).
-  - Using a full `window.location.href` with existing query/hash often causes the universal link
-    to open Safari but the Phantom app will not redirect back to your original URL.
-  - Use a clean origin-root redirect (e.g. https://yourdomain.com/) OR a dedicated static path
-    that you serve from the same origin (e.g. /phantom-return).
+   Wallet support (multi-wallet)
+   - Provides a wallet picker and connectors for:
+     * Phantom
+     * Solflare
+     * Backpack
+     * WalletConnect (scaffold + helper instructions)
+     * Coinbase/Trust (deep-link instructions)
+   - All flows include referral when binding
+   - Deep-links use a clean redirect for iOS Phantom behavior
 */
 
 /* create a clean redirect path on the same origin (no query/hash) */
 function buildCleanRedirect(){
   try {
-    // If you have a dedicated endpoint that is whitelisted in Phantom, return it here.
-    // Default to origin + '/' which is the safest general-purpose choice.
+    // If you can whitelist a dedicated return path (recommended), use it here e.g. `${origin}/phantom-return`
     const origin = window.location.origin.replace(/\/+$/, '');
     return origin + '/';
   } catch (e) {
@@ -390,24 +384,114 @@ function buildCleanRedirect(){
   }
 }
 
-/* openPhantomDeepLink: uses a clean redirect_link so Phantom can return to us reliably */
+/* Utilities to detect injected providers more broadly */
+function detectInjectedProviders(){
+  const providers = {
+    phantom: Boolean(window.solana && window.solana.isPhantom),
+    solflare: Boolean(window.solflare || (window.solana && window.solana.isSolflare)),
+    backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack)),
+    // Others can be detected similarly
+  };
+  return providers;
+}
+
+/* Wallet picker UI (modal) */
+function showWalletPicker(){
+  const detected = detectInjectedProviders();
+  const html = [
+    '<div style="text-align:left;"><h3>Connect Wallet</h3>',
+    '<div class="small-muted">Choose a wallet to connect — we support Phantom, Solflare, Backpack and WalletConnect.</div>',
+    '<div style="height:12px"></div>'
+  ];
+
+  const buttons = [];
+
+  // Phantom
+  buttons.push(`<button class="button wallet-btn" data-w="phantom">Phantom ${detected.phantom ? '• detected' : ''}</button>`);
+
+  // Solflare
+  buttons.push(`<button class="button wallet-btn" data-w="solflare">Solflare ${detected.solflare ? '• detected' : ''}</button>`);
+
+  // Backpack
+  buttons.push(`<button class="button wallet-btn" data-w="backpack">Backpack ${detected.backpack ? '• detected' : ''}</button>`);
+
+  // WalletConnect
+  buttons.push(`<button class="button wallet-btn" data-w="walletconnect">WalletConnect</button>`);
+
+  // Coinbase/Trust (deep-link / wallet chooser)
+  buttons.push(`<button class="btn-ghost wallet-btn" data-w="other">Other (Coinbase, Trust, etc.)</button>`);
+
+  html.push(`<div style="display:flex;flex-direction:column;gap:8px;">${buttons.join('')}</div>`);
+  html.push('<div style="height:12px"></div><button id="closeWalletPicker" class="btn-ghost">Close</button></div>');
+
+  showModal(html.join(''), ()=>{
+    document.querySelectorAll('.wallet-btn').forEach(btn=>{
+      btn.onclick = (ev)=>{
+        const w = btn.getAttribute('data-w');
+        hideModal();
+        switch (w){
+          case 'phantom': connectWithPhantom(); break;
+          case 'solflare': connectWithSolflare(); break;
+          case 'backpack': connectWithBackpack(); break;
+          case 'walletconnect': connectWithWalletConnect(); break;
+          case 'other': showOtherWalletOptions(); break;
+          default: showModal('<div class="small-muted">Unknown wallet</div>', ()=> setTimeout(hideModal,900)); break;
+        }
+      };
+    });
+    const close = $('#closeWalletPicker'); if (close) close.onclick = hideModal;
+  });
+}
+
+/* showOtherWalletOptions: instructions for wallets that work via WalletConnect or deep link */
+function showOtherWalletOptions(){
+  const html = `<div style="text-align:left">
+    <h3>Other wallets</h3>
+    <div class="small-muted">Use WalletConnect-compatible wallets (Coinbase Wallet, Trust Wallet, Exodus, etc.) or open their apps and connect via deep link. We recommend WalletConnect for the best mobile UX.</div>
+    <div style="height:10px"></div>
+    <button id="openWalletConnectFromOther" class="button">Use WalletConnect</button>
+    <div style="height:8px"></div>
+    <button id="openInstallWallet" class="btn-ghost">Install a wallet app</button>
+    <div style="height:8px"></div>
+    <button id="closeOther" class="btn-ghost">Close</button>
+  </div>`;
+  showModal(html, ()=>{
+    const a = $('#openWalletConnectFromOther'); if (a) a.onclick = ()=> { hideModal(); connectWithWalletConnect(); };
+    const i = $('#openInstallWallet'); if (i) i.onclick = ()=> { try { window.open('https://www.trustwallet.com/', '_blank'); } catch(e){ console.warn(e); } };
+    const c = $('#closeOther'); if (c) c.onclick = hideModal;
+  });
+}
+
+/* Generic helper used by many wallet flows to finalize server bind */
+async function finalizeBind(publicKey, providerName){
+  if (!publicKey) return false;
+  clientState.walletProvider = providerName || clientState.walletProvider || null;
+  const ok = await bindWalletWithPublicKey(publicKey);
+  if (ok){
+    clientState.wallet = publicKey;
+    clientState.walletProvider = providerName;
+    showModal(`<div class="small-muted">Wallet connected (${escapeHtml(providerName || 'unknown')})</div>`, ()=> setTimeout(hideModal,900));
+    updateUI();
+    return true;
+  } else {
+    showModal(`<div class="small-muted">Server bind failed for ${escapeHtml(providerName || 'wallet')}</div><div style="height:8px"></div><button id="openWalletRetry" class="button">Try again</button>`, ()=>{
+      const b = $('#openWalletRetry'); if (b) b.onclick = ()=> { hideModal(); showWalletPicker(); };
+    });
+    return false;
+  }
+}
+
+/* ---------------------------
+   Phantom connector (injected + deep-link fallback)
+*/
 function openPhantomDeepLink(){
   try {
     const origin = window.location.origin.replace(/\/+$/, '');
     const cleanRedirect = buildCleanRedirect(); // e.g. https://example.com/
     const app_url = encodeURIComponent(origin);
     const redirect_link = encodeURIComponent(cleanRedirect);
-
-    // Use the universal link for Phantom. Keep this in a synchronous user gesture.
-    const link =
-      `https://phantom.app/ul/v1/connect` +
-      `?app_url=${app_url}` +
-      `&redirect_link=${redirect_link}`;
-
+    const link = `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
     console.log('Attempting Phantom deep link ->', { link, cleanRedirect });
-
-    // Assign (synchronous) so it's treated as a user gesture.
-    // window.location.assign may be preferable to setting href in some contexts.
     window.location.assign(link);
   } catch (e) {
     console.error('Phantom deep link failed', e);
@@ -415,7 +499,152 @@ function openPhantomDeepLink(){
   }
 }
 
-/* bindWalletWithPublicKey: calls backend to finalize binding and updates UI */
+async function connectWithPhantom(){
+  // Telegram: deep-link only
+  if (tg){ openPhantomDeepLink(); return; }
+
+  if (window.solana && window.solana.isPhantom){
+    try {
+      const resp = await window.solana.connect();
+      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
+      await finalizeBind(publicKey, 'phantom');
+      return;
+    } catch (err) {
+      console.warn('Injected Phantom connect failed', err);
+      // show CTA
+      showModal('<div class="small-muted">Phantom connection canceled or failed. Tap to open Phantom app.</div><div style="height:8px"></div><button id="openPhantomBtn" class="button">Open Phantom</button>', ()=>{
+        const b = $('#openPhantomBtn'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
+      });
+      return;
+    }
+  } else {
+    // no injected provider -> deep link
+    openPhantomDeepLink();
+  }
+}
+
+/* ---------------------------
+   Solflare connector (injected detection + deep-link fallback)
+   - Many Solflare users have an injected `window.solflare` or `window.solana` with isSolflare
+*/
+function openSolflareDeepLink(){
+  try {
+    const origin = window.location.origin.replace(/\/+$/, '');
+    const cleanRedirect = buildCleanRedirect();
+    // Solflare's universal link scheme may differ; fallback to main site if unknown
+    const link = `https://solflare.com/access?redirect=${encodeURIComponent(cleanRedirect)}`;
+    try { window.location.assign(link); } catch(e){ window.open('https://solflare.com/', '_blank'); }
+  } catch(e){ console.warn('openSolflareDeepLink failed', e); window.open('https://solflare.com/', '_blank'); }
+}
+
+async function connectWithSolflare(){
+  if (tg){ openSolflareDeepLink(); return; }
+
+  try {
+    if (window.solflare && typeof window.solflare.connect === 'function'){
+      const resp = await window.solflare.connect();
+      // Solflare may return publicKey similarly
+      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
+      await finalizeBind(publicKey, 'solflare');
+      return;
+    } else if (window.solana && window.solana.isSolflare){
+      // provider is on window.solana but flagged as Solflare
+      try {
+        const r = await window.solana.connect();
+        const publicKey = (r && r.publicKey && typeof r.publicKey.toString === 'function') ? r.publicKey.toString() : (r && r.publicKey) || (r && r);
+        await finalizeBind(publicKey, 'solflare');
+        return;
+      } catch(e){}
+    }
+  } catch(e){ console.warn('solflare injected connect failed', e); }
+
+  // fallback deep link
+  openSolflareDeepLink();
+}
+
+/* ---------------------------
+   Backpack connector (injected detection + deep-link fallback)
+*/
+function openBackpackDeepLink(){
+  try {
+    const cleanRedirect = buildCleanRedirect();
+    const link = `https://backpack.app/`;// replace with a deep-link if you have one
+    try { window.location.assign(link); } catch(e){ window.open(link, '_blank'); }
+  } catch(e){ console.warn('openBackpackDeepLink failed', e); window.open('https://backpack.app/', '_blank'); }
+}
+
+async function connectWithBackpack(){
+  if (tg){ openBackpackDeepLink(); return; }
+
+  try {
+    if (window.backpack && typeof window.backpack.connect === 'function'){
+      const resp = await window.backpack.connect();
+      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
+      await finalizeBind(publicKey, 'backpack');
+      return;
+    } else if (window.solana && window.solana.isBackpack){
+      try {
+        const r = await window.solana.connect();
+        const publicKey = (r && r.publicKey && typeof r.publicKey.toString === 'function') ? r.publicKey.toString() : (r && r.publicKey) || (r && r);
+        await finalizeBind(publicKey, 'backpack');
+        return;
+      } catch(e){}
+    }
+  } catch(e){ console.warn('backpack injected connect failed', e); }
+
+  // fallback deep link
+  openBackpackDeepLink();
+}
+
+/* ---------------------------
+   WalletConnect scaffold
+   - NOTE: integrating WalletConnect with Solana properly requires choosing a supported library
+     (WalletConnect v2 + Solana Wallet Adapter or a specific bridge). Here we provide a safe
+     scaffold: try to dynamically load a connector (if you add one), otherwise show instructions
+     and a QR / deep-link path for the user to open their wallet.
+   - Replace the loader with your preferred WalletConnect/Solana integration for production.
+*/
+function showWalletConnectInstructions(qrOrLinkText){
+  const html = `<div style="text-align:left">
+    <h3>WalletConnect</h3>
+    <div class="small-muted">WalletConnect allows many wallets (Coinbase Wallet, Trust Wallet, Exodus, etc.).</div>
+    <div style="height:8px"></div>
+    <div class="small-muted">${escapeHtml(qrOrLinkText || 'Open your wallet app and choose "WalletConnect" or scan a QR.' )}</div>
+    <div style="height:12px"></div>
+    <button id="closeWc" class="btn-ghost">Close</button>
+  </div>`;
+  showModal(html, ()=>{ const c = $('#closeWc'); if (c) c.onclick = hideModal; });
+}
+
+async function connectWithWalletConnect(){
+  // Attempt to dynamically load an optional WalletConnect helper that your build may provide.
+  // NOTE: For a production-ready WalletConnect+Solana integration you will likely use:
+  //    - WalletConnect v2 SDK + solana adapter OR
+  //    - Solana Wallet Adapter + @solana/wallet-adapter-walletconnect
+  // The code below is a graceful fallback scaffold: it attempts to load a connector if present,
+  // otherwise shows instructions so the user can pick WalletConnect in their wallet app.
+  try {
+    // Example: if you ship a global `window.SOL_WALLETCONNECT_CONNECTOR` from your build, use it.
+    if (window.SOL_WALLETCONNECT_CONNECTOR && typeof window.SOL_WALLETCONNECT_CONNECTOR.connect === 'function'){
+      // This is app-specific; call the provided connector which should handle its own UX and return a publicKey
+      const pk = await window.SOL_WALLETCONNECT_CONNECTOR.connect({ redirect: buildCleanRedirect() });
+      if (pk) await finalizeBind(pk, 'walletconnect');
+      return;
+    }
+
+    // Otherwise, attempt to inject a placeholder script that your app can later implement.
+    // We avoid adding a concrete WalletConnect package here to keep the file resilient.
+    showWalletConnectInstructions('No WalletConnect helper found on this page. To enable WalletConnect integrate a WalletConnect-Solana adapter or use the app chooser in the wallet. For now, open your Wallet app and choose WalletConnect, then paste the returned public key into the web UI (if available).');
+
+  } catch (e) {
+    console.warn('connectWithWalletConnect failed', e);
+    showWalletConnectInstructions('WalletConnect initialization failed — please try a mobile wallet (Coinbase, Trust, Exodus) and use the WalletConnect option there.');
+  }
+}
+
+/* ---------------------------
+   Generic server finalizer (already present earlier)
+*/
 async function bindWalletWithPublicKey(publicKey){
   try {
     console.log('Attempting server-side wallet bind', publicKey);
@@ -445,7 +674,6 @@ async function bindWalletWithPublicKey(publicKey){
 /* parsePhantomReturnParams: support many possible returned param names, search both search and hash */
 function parsePhantomReturnParams(){
   try {
-    // Combine search and hash safely: treat hash like a query if it looks like '#?a=b'
     const search = window.location.search || '';
     const hash = window.location.hash && window.location.hash.indexOf('?') !== -1 ? window.location.hash.replace('#','') : '';
     const combined = (search || '') + (hash || '');
@@ -470,23 +698,19 @@ function readPhantomReturn(){
   try {
     const pk = parsePhantomReturnParams();
     if (pk){
-      console.log('Phantom return detected, publicKey=', pk);
-      // Immediately attempt to bind using returned public key
+      console.log('Phantom/Wallet return detected, publicKey=', pk);
       (async ()=>{
         const ok = await bindWalletWithPublicKey(pk);
-        // Remove phantom params so UI is clean (preserve path)
         try {
-          // Prefer replaceState to remove query/hash only if supported
-          const cleanUrl = window.location.origin + window.location.pathname + window.location.hash.replace(/[?&]phantom_public_key=[^&]*/,'').replace(/[?&]public_key=[^&]*/,'').replace(/[?&]publicKey=[^&]*/,'');
+          // Remove wallet params so UI is clean (best effort)
+          const cleanUrl = window.location.origin + window.location.pathname;
           history.replaceState({}, document.title, cleanUrl);
         } catch(e){ console.warn('replaceState failed', e); }
         if (ok) {
           clearPendingReferral();
           showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
         } else {
-          showModal('<div class="small-muted">Wallet connect failed — tap "Open Phantom" to try via app</div><div style="height:8px"></div><button id="openPhantomRetry" class="button">Open Phantom</button>', ()=>{
-            const b = $('#openPhantomRetry'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
-          });
+          showModal('<div class="small-muted">Wallet connect failed — open app and try again</div>', ()=> setTimeout(hideModal,1200));
         }
       })();
       return true;
@@ -498,77 +722,17 @@ function readPhantomReturn(){
   }
 }
 
-/*
-  bindWallet()
-  - MUST be wired to a user gesture (click) so deep-link fallback has maximal chance to open the native app.
-  - Behavior:
-    * Telegram WebApp -> deep-link immediately (webview cannot detect injected provider reliably)
-    * If injected Phantom provider present -> attempt connect() (this runs during user gesture and may prompt extension/app)
-      - on connect success -> hit server bind
-      - on connect error/cancel -> show a simple modal with an explicit "Open Phantom" button (user must click to re-open app)
-    * If no injected provider -> deep-link immediately
-*/
-async function bindWallet(event){
-  try {
-    // If Telegram WebApp — deep link only (in-app webview can't detect injected provider reliably).
-    if (tg) {
-      openPhantomDeepLink();
-      return;
-    }
-
-    const injected = Boolean(window.solana && window.solana.isPhantom);
-
-    if (!injected){
-      // No injected provider at all — deep-link immediately (inside user gesture)
-      openPhantomDeepLink();
-      return;
-    }
-
-    // If we reach here: injected provider exists. Attempt connect (this still originates from user gesture)
-    try {
-      const resp = await window.solana.connect();
-      // resp may be { publicKey: PublicKey } or similar
-      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
-      if (!publicKey) throw new Error('No publicKey returned from provider');
-
-      // call server bind
-      const ok = await bindWalletWithPublicKey(publicKey);
-      if (ok){
-        showModal('<div class="small-muted">Wallet bound</div>', ()=> setTimeout(hideModal,900));
-        return;
-      } else {
-        showModal('<div class="small-muted">Bind failed — open Phantom app to continue</div><div style="height:8px"></div><button id="openPhantomFromBind" class="button">Open Phantom</button>', ()=>{
-          const b = $('#openPhantomFromBind'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
-        });
-        return;
-      }
-    } catch (err) {
-      // If injected connect failed or was canceled, do NOT attempt to auto-open deep-link outside of a user gesture.
-      console.warn('Injected Phantom connect error or canceled — presenting deep-link CTA', err);
-      showModal('<div class="small-muted">Phantom connection canceled or failed. Tap to open the Phantom app.</div><div style="height:8px"></div><button id="openPhantomBtn" class="button">Open Phantom</button>', ()=>{
-        const b = $('#openPhantomBtn'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
-      });
-      return;
-    }
-  } catch (e) {
-    console.warn('bindWallet general error', e);
-    showModal('<div class="small-muted">Wallet connect error — try again</div>', ()=> setTimeout(hideModal,1200));
-  }
-}
-
 /* ---------------------------
    Listen for injected provider "connect" events — helpful if provider connects outside flow
-   (e.g., extension auto-connect or mobile provider handing off)
 */
 function setupInjectedProviderListeners(){
   try {
+    // Many wallets expose `window.solana.on('connect', ...)`
     if (window.solana && typeof window.solana.on === 'function'){
-      // on connect: update UI and attempt server bind if we don't have wallet bound
       window.solana.on('connect', async (pk) => {
         try {
           const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
           if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
-            // attempt server-side bind silently
             const ok = await bindWalletWithPublicKey(publicKey);
             if (ok) {
               showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
@@ -577,16 +741,15 @@ function setupInjectedProviderListeners(){
         } catch(e){ console.warn('provider connect handler error', e); }
       });
       window.solana.on('disconnect', () => {
-        // provider disconnected — keep server-binding state (server owns binding), but reflect UI
-        console.log('Phantom provider disconnected');
+        console.log('Provider disconnected');
       });
     }
+    // Solflare/backpack might have their own on() as well; we don't assume exact globals for all.
   } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
 }
 
 /* ---------------------------
-   Referral UI & sharing
-   - server endpoint /player/referral expects sessionId query param (api() attaches automatically)
+   Referral UI & sharing (unchanged)
 */
 async function getMyReferral(){
   try {
@@ -677,7 +840,11 @@ function updateUI(){
 
 /* ---------------------------
    Phaser scenes and game logic (unchanged core)
+   (omitted here in this comment but preserved below unchanged)
 */
+
+/* (Full game logic preserved - same as before) */
+
 const gameState = {
   grid: null,
   activePiece: null,
@@ -1037,7 +1204,7 @@ window.addEventListener('load', async ()=>{
     console.log('Hexon boot starting...');
     initTelegram();
 
-    // If Phantom redirected back with params, read and handle them first
+    // If Phantom (or other wallet) redirected back with params, read and handle them first
     try { readPhantomReturn(); } catch(e){ /* non-fatal */ console.warn('readPhantomReturn failed', e); }
 
     // Capture and persist referral from URL before init
@@ -1048,7 +1215,7 @@ window.addEventListener('load', async ()=>{
     // wire UI buttons safely (use addEventListener so we preserve user gesture)
     try { if ($('watchAdBtn')) $('watchAdBtn').addEventListener('click', showAdAndVerify); } catch(e){ console.warn(e); }
     try { if ($('openStore')) $('openStore').addEventListener('click', openMinerShop); } catch(e){ console.warn(e); }
-    try { if ($('bindWalletBtn')) $('bindWalletBtn').addEventListener('click', bindWallet); } catch(e){ console.warn(e); }
+    try { if ($('bindWalletBtn')) $('bindWalletBtn').addEventListener('click', showWalletPicker); } catch(e){ console.warn(e); }
     if ($('showRefBtn')) $('showRefBtn').addEventListener('click', showReferralModal);
     if ($('viewAlloc')) $('viewAlloc').addEventListener('click', ()=> showModal('<div class="small-muted">Allocation preview</div>'));
     if ($('claimRewardBtn')) $('claimRewardBtn').addEventListener('click', claimRewards);
