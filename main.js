@@ -8,7 +8,7 @@
    - defensive API handling
    - reliable Phantom deep link fallback for mobile (iOS/Android)
    - Telegram WebApp safe: deep-link only (no injected provider detection)
-   - Handles Phantom redirect return (phantom_public_key)
+   - Handles Phantom redirect return (phantom_public_key, public_key, publicKey)
 */
 
 'use strict';
@@ -91,6 +91,7 @@ function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if
    API helper (auto-attach sessionId to GETs)
    - returns parsed JSON on success or error JSON when server replies non-2xx
    - returns null on network error
+   - also sends X-Session-Id header for server convenience
 */
 async function api(path, method='GET', body=null){
   try {
@@ -103,14 +104,16 @@ async function api(path, method='GET', body=null){
       }
     }
 
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    const headers = { 'Content-Type': 'application/json' };
+    if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+
+    const opts = { method, headers };
     if (body !== null && body !== undefined) {
       // allow sending already-stringified bodies, but prefer objects
       opts.body = (typeof body === 'string') ? body : JSON.stringify(body);
     }
 
     const res = await fetch(url, opts);
-    // try parse JSON even on non-ok so we can bubble server errors
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch (err) { json = text || null; }
@@ -362,7 +365,8 @@ async function purchaseMiner(itemId){
    - If injected provider exists (desktop / supported mobile browsers), use it.
    - Otherwise open Phantom universal link (deep link) immediately so iOS will hand off to the app.
    - Telegram WebApp: always deep-link (in-app WebView can't detect injected provider)
-   - Handles Phantom return parameters (phantom_public_key)
+   - Handles Phantom return parameters (phantom_public_key, public_key, publicKey)
+   - IMPORTANT: keep deep-link calls inside user gesture where possible.
 */
 function openPhantomDeepLink(){
   try {
@@ -390,7 +394,7 @@ async function bindWalletWithPublicKey(publicKey){
       clientState.referralCode = res.referralCode ?? clientState.referralCode;
       if (res.referralAccepted) clearPendingReferral();
       updateUI(); renderMinersList();
-      console.log('Wallet bound via redirect:', publicKey);
+      console.log('Wallet bound via server:', publicKey);
       return true;
     } else {
       console.warn('bindWalletWithPublicKey failed', res);
@@ -402,10 +406,27 @@ async function bindWalletWithPublicKey(publicKey){
   }
 }
 
+function parsePhantomReturnParams(){
+  try {
+    const params = new URLSearchParams(window.location.search || window.location.hash.replace('#','?'));
+    const candidates = [
+      params.get('phantom_public_key'),
+      params.get('phantom_encryption_public_key'),
+      params.get('public_key'),
+      params.get('publicKey'),
+      params.get('wallet'),
+      params.get('pk')
+    ];
+    for (const c of candidates){
+      if (c) return c;
+    }
+    return null;
+  } catch(e){ return null; }
+}
+
 function readPhantomReturn(){
   try {
-    const params = new URLSearchParams(window.location.search);
-    const pk = params.get('phantom_public_key') || params.get('phantom_encryption_public_key');
+    const pk = parsePhantomReturnParams();
     if (pk){
       // Immediately attempt to bind using returned public key
       (async ()=>{
@@ -417,7 +438,10 @@ function readPhantomReturn(){
           clearPendingReferral();
           showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
         } else {
-          showModal('<div class="small-muted">Wallet connect failed — try again</div>', ()=> setTimeout(hideModal,1200));
+          // show user a clear CTA to retry binding (deep-link)
+          showModal('<div class="small-muted">Wallet connect failed — tap "Open Phantom" to try via app</div><div style="height:8px"></div><button id="openPhantomRetry" class="button">Open Phantom</button>', ()=>{
+            const b = $('#openPhantomRetry'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
+          });
         }
       })();
       return true;
@@ -429,52 +453,95 @@ function readPhantomReturn(){
   }
 }
 
-async function bindWallet(){
-  // If Telegram WebApp — deep link only (webview cannot detect injected provider).
-  if (tg) {
-    openPhantomDeepLink();
-    return;
-  }
-
-  // If injected Phantom provider exists (desktop / supported mobile browsers), use it first.
-  if (window.solana && window.solana.isPhantom){
-    try {
-      // This will prompt the Phantom extension/app if available as an injected provider.
-      const resp = await window.solana.connect();
-      const publicKey = resp.publicKey.toString();
-
-      // include pending referral if present
-      const payload = { sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.pendingReferral || clientState.referralCode || null };
-
-      const res = await api('/wallet/bind','POST', payload);
-      if (res && res.ok){
-        clientState.wallet = publicKey;
-        clientState.userId = res.userId ?? clientState.userId;
-        clientState.gp = res.gp ?? clientState.gp;
-        clientState.miners = res.miners ?? clientState.miners;
-        clientState.userAU = res.userAU ?? clientState.userAU;
-        clientState.referralCode = res.referralCode ?? clientState.referralCode;
-        // if backend accepted referral, clear it locally
-        if (res.referralAccepted) clearPendingReferral();
-        updateUI(); renderMinersList();
-        alert('Wallet bound: ' + publicKey);
-      } else {
-        const err = (res && res.error) ? res.error : 'Backend bind failed — check console.';
-        alert('Backend bind failed — ' + err);
-        console.warn('bind response', res);
-      }
-      return;
-    } catch(e){
-      // If injected connection failed or was canceled, fallback to deep link.
-      console.warn('Injected Phantom connect error or canceled — falling back to deep link', e);
-      // Must be called during user gesture; this function is expected to be wired to a click.
+/*
+  bindWallet()
+  - MUST be wired to a user gesture (click) so deep-link fallback has maximal chance to open the native app.
+  - Behavior:
+    * Telegram WebApp -> deep-link immediately (webview cannot detect injected provider reliably)
+    * If injected Phantom provider present -> attempt connect() (this runs during user gesture and may prompt extension/app)
+      - on connect success -> hit server bind
+      - on connect error/cancel -> show a simple modal with an explicit "Open Phantom" button (user must click to re-open app)
+    * If no injected provider -> deep-link immediately
+*/
+async function bindWallet(event){
+  try {
+    // If Telegram WebApp — deep link only (in-app webview can't detect injected provider reliably).
+    if (tg) {
+      // keep inside user gesture
       openPhantomDeepLink();
       return;
     }
-  }
 
-  // No injected provider: open Phantom universal link (deep link) immediately.
-  openPhantomDeepLink();
+    const injected = Boolean(window.solana && window.solana.isPhantom);
+
+    if (!injected){
+      // No injected provider at all — deep-link immediately (inside user gesture)
+      openPhantomDeepLink();
+      return;
+    }
+
+    // If we reach here: injected provider exists. Attempt connect (this still originates from user gesture)
+    try {
+      const resp = await window.solana.connect();
+      // resp may be { publicKey: PublicKey } or similar
+      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
+      if (!publicKey) throw new Error('No publicKey returned from provider');
+
+      // call server bind
+      const ok = await bindWalletWithPublicKey(publicKey);
+      if (ok){
+        // success
+        showModal('<div class="small-muted">Wallet bound</div>', ()=> setTimeout(hideModal,900));
+        return;
+      } else {
+        // server rejected, show user a fallback with explicit CTA
+        showModal('<div class="small-muted">Bind failed — open Phantom app to continue</div><div style="height:8px"></div><button id="openPhantomFromBind" class="button">Open Phantom</button>', ()=>{
+          const b = $('#openPhantomFromBind'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
+        });
+        return;
+      }
+    } catch (err) {
+      // If injected connect failed or was canceled, do NOT attempt to auto-open deep-link outside of a user gesture.
+      // Instead show a modal with a clear button so user can explicitly open the Phantom app.
+      console.warn('Injected Phantom connect error or canceled — presenting deep-link CTA', err);
+      showModal('<div class="small-muted">Phantom connection canceled or failed. Tap to open the Phantom app.</div><div style="height:8px"></div><button id="openPhantomBtn" class="button">Open Phantom</button>', ()=>{
+        const b = $('#openPhantomBtn'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
+      });
+      return;
+    }
+  } catch (e) {
+    console.warn('bindWallet general error', e);
+    // fallback presentation
+    showModal('<div class="small-muted">Wallet connect error — try again</div>', ()=> setTimeout(hideModal,1200));
+  }
+}
+
+/* ---------------------------
+   Listen for injected provider "connect" events — helpful if provider connects outside flow
+   (e.g., extension auto-connect or mobile provider handing off)
+*/
+function setupInjectedProviderListeners(){
+  try {
+    if (window.solana && typeof window.solana.on === 'function'){
+      // on connect: update UI and attempt server bind if we don't have wallet bound
+      window.solana.on('connect', async (pk) => {
+        try {
+          const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
+          if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+            // attempt server-side bind silently
+            const ok = await bindWalletWithPublicKey(publicKey);
+            if (ok) {
+              showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
+            }
+          }
+        } catch(e){ console.warn('provider connect handler error', e); }
+      });
+      window.solana.on('disconnect', () => {
+        // provider disconnected — keep server-binding state (server owns binding), but reflect UI
+        console.log('Phantom provider disconnected');
+      });
+    }
+  } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
 }
 
 /* ---------------------------
@@ -555,7 +622,7 @@ function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&am
 function updateUI(){
   if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
   if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp || 0) + ' GP';
-  if ($('ui-energyFill')) $('ui-energyFill').style.width = (clientState.energy) + '%';
+  if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = (clientState.energy) + '%';
   if ($('ui-level')) $('ui-level').innerText = gameState.level;
   if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
   if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU || 0).toFixed(2);
@@ -938,13 +1005,13 @@ window.addEventListener('load', async ()=>{
     if (ref) savePendingReferral(ref);
     else loadPendingReferral();
 
-    // wire UI buttons safely
-    try { if ($('watchAdBtn')) $('watchAdBtn').onclick = showAdAndVerify; } catch(e){ console.warn(e); }
-    try { if ($('openStore')) $('openStore').onclick = openMinerShop; } catch(e){ console.warn(e); }
-    try { if ($('bindWalletBtn')) $('bindWalletBtn').onclick = bindWallet; } catch(e){ console.warn(e); }
-    if ($('showRefBtn')) $('showRefBtn').onclick = showReferralModal;
-    if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
-    if ($('claimRewardBtn')) $('claimRewardBtn').onclick = claimRewards;
+    // wire UI buttons safely (use addEventListener so we preserve user gesture)
+    try { if ($('watchAdBtn')) $('watchAdBtn').addEventListener('click', showAdAndVerify); } catch(e){ console.warn(e); }
+    try { if ($('openStore')) $('openStore').addEventListener('click', openMinerShop); } catch(e){ console.warn(e); }
+    try { if ($('bindWalletBtn')) $('bindWalletBtn').addEventListener('click', bindWallet); } catch(e){ console.warn(e); }
+    if ($('showRefBtn')) $('showRefBtn').addEventListener('click', showReferralModal);
+    if ($('viewAlloc')) $('viewAlloc').addEventListener('click', ()=> showModal('<div class="small-muted">Allocation preview</div>'));
+    if ($('claimRewardBtn')) $('claimRewardBtn').addEventListener('click', claimRewards);
 
     // attempt initial client init (include pending referral so backend can register if desired)
     try {
@@ -1004,6 +1071,9 @@ window.addEventListener('load', async ()=>{
       scene: [ BootScene, GameScene ],
       render: { pixelArt: false, antialias: true }
     });
+
+    // setup provider listeners (if injected)
+    setupInjectedProviderListeners();
 
     loadAdsGram();
 
