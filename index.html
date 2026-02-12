@@ -33,7 +33,6 @@
 
     /* Layout */
     #gameContainer{ display:flex; gap:12px; padding:12px; height:100dvh; box-sizing:border-box; }
-    /* Use 100dvh where supported to reduce iOS viewport issues; fallbacks are okay */
     @supports not (height: 100dvh) { #gameContainer { height:100vh; } }
 
     #phaserCanvas{ flex:2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; }
@@ -53,11 +52,9 @@
 
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
 
-    /* small inline wallet hint (removed earlier) kept for graceful fallback */
     .wallet-option{ display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:10px; cursor:pointer; user-select:none; }
     .wallet-option:hover{ background:rgba(255,255,255,0.02); }
 
-    /* overlay / bottom-sheet */
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
     .overlay.show{ display:flex; }
 
@@ -70,7 +67,6 @@
       transform:translateY(0);
       transition:transform .22s cubic-bezier(.2,.9,.3,1);
       overflow:hidden;
-      /* compute height to avoid leaving sheet taller than viewport; respect safe area */
       max-height: min(86vh, calc(100vh - 96px));
       display:flex;
       flex-direction:column;
@@ -82,7 +78,6 @@
 
     .sheet-actions{ padding:12px 16px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent); }
 
-    /* responsive */
     @media (max-width:900px){
       #gameContainer{ flex-direction:column; padding:10px; }
       #phaserCanvas{ order:1; height:56dvh; min-height:320px; }
@@ -214,7 +209,7 @@
   </aside>
 </div>
 
-<!-- overlay + bottom-sheet for wallet picker (always inside DOM) -->
+<!-- overlay bottom-sheet for wallet picker (matches main.js fallback) -->
 <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
   <div class="bottom-sheet" role="document" aria-label="Wallet selector">
     <div class="sheet-header">
@@ -258,28 +253,22 @@
   </div>
 </div>
 
-<!-- small inline helper script (Telegram-compatible deep-link + bottom-sheet wiring) -->
+<!-- bottom-sheet helper (keeps behavior aligned with main.js) -->
 <script>
 (function(){
-  // safe tg instance
   function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
-
-  // open external URL using Telegram WebApp when available (safe) then fallback to normal navigation
   function openExternal(url){
     const tg = tgInstance();
     if (tg){
       try {
         if (typeof tg.openUrl === 'function'){ tg.openUrl(url); return; }
         if (typeof tg.openLink === 'function'){ tg.openLink(url); return; }
-        // some builds provide openPopup
         if (typeof tg.openPopup === 'function'){ tg.openPopup(url); return; }
       } catch(e){ console.warn('tg.open* failed', e); }
     }
-    // fallback to assign (works in Safari)
     try { window.location.assign(url); } catch(e){ try { window.open(url, '_blank'); } catch(e2){ console.warn('openExternal fallback failed', e2); } }
   }
 
-  // bottom-sheet controls
   const overlay = document.getElementById('overlay');
   const sheetClose = document.getElementById('sheetClose');
   const sheetCancel = document.getElementById('sheetCancel');
@@ -289,9 +278,7 @@
     if (!overlay) return;
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden','false');
-    // try to expand Telegram window if available (improves view in miniapp)
     try { const tg = tgInstance(); if (tg && typeof tg.expand === 'function') tg.expand(); } catch(e){}
-    // focus body to allow keyboard scroll
     const bodyEl = document.getElementById('sheetBody');
     if (bodyEl) bodyEl.focus();
     setDetectionBadges();
@@ -303,7 +290,6 @@
     overlay.setAttribute('aria-hidden','true');
   }
 
-  // Compose deep-links similar to main.js' behavior
   function buildCleanRedirect(){
     try { return window.location.origin.replace(/\/+$/,'') + window.location.pathname; } catch(e){ return window.location.origin + '/'; }
   }
@@ -318,7 +304,6 @@
   }
   function backpackDeepLink(){ return 'https://backpack.app/'; }
 
-  // detect injected providers for badges
   function detectInjectedProviders(){
     return {
       phantom: Boolean(window.solana && window.solana.isPhantom),
@@ -335,9 +320,9 @@
     } catch(e){}
   }
 
-  // map option ids to behaviors (prefer your injected connectors, otherwise deep-link/openExternal)
   const optionMap = {
     'opt-phantom': async ()=> {
+      // If main.js exposes connectWithPhantom, prefer it — keeps everything aligned
       if (typeof window.connectWithPhantom === 'function') {
         try { await window.connectWithPhantom(); hideSheet(); return; } catch(e){ console.warn('connectWithPhantom failed', e); }
       }
@@ -361,7 +346,6 @@
       }
       const tg = tgInstance();
       if (tg) {
-        // Telegram blocks some popups; provide instruction
         const msg = 'Open your mobile wallet (Coinbase Wallet / Trust Wallet / Exodus) and choose WalletConnect. Then paste the returned public key into Hexon.';
         alert(msg);
       } else {
@@ -370,7 +354,6 @@
     }
   };
 
-  // manual bind: prefer finalizeBind from main.js; otherwise local save
   async function manualBind(publicKey){
     if (!publicKey || publicKey.length < 20){ alert('Invalid public key'); return; }
     if (typeof window.finalizeBind === 'function'){
@@ -392,35 +375,34 @@
     } catch(e){ console.warn(e); alert('Unable to save locally'); }
   }
 
-  // Intercept bind clicks (capture) so main.js can't open its own modal in bubble phase
   function interceptBind(ev){
     ev.preventDefault();
     ev.stopImmediatePropagation();
+    // If main.js provides _hexon_openWalletSheet, call that (keeps both layers in sync).
+    if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return false; } catch(e){} }
     showSheet();
     return false;
   }
 
-  // keyboard: Esc closes sheet
   function onKeyDown(e){
     if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheet(); }
   }
 
-  // wire UI after DOM ready
   document.addEventListener('DOMContentLoaded', ()=>{
-    // attach capture-phase listener to Bind button
     if (bindBtn){
       bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false });
-      bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); showSheet(); }, { passive:false });
+      bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); 
+        if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return; } catch(e){} }
+        showSheet(); 
+      }, { passive:false });
       bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheet(); } });
     }
 
     if (sheetClose) sheetClose.addEventListener('click', hideSheet);
     if (sheetCancel) sheetCancel.addEventListener('click', hideSheet);
 
-    // overlay click outside to close (only when clicking backdrop)
     overlay.addEventListener('pointerdown', (ev)=>{ if (ev.target === overlay) hideSheet(); });
 
-    // wire option selectors
     Object.keys(optionMap).forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -428,13 +410,11 @@
       el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
     });
 
-    // manual bind
     const manualBtn = document.getElementById('manualBindBtn');
     if (manualBtn){
       manualBtn.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); const pk = (document.getElementById('manualPublicKey').value||'').trim(); await manualBind(pk); }, { passive:false });
     }
 
-    // show detection badges and quick-fill session/wallet placeholders
     setDetectionBadges();
     try {
       const sid = localStorage.getItem('hexon_session');
@@ -445,11 +425,10 @@
       if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov;
     } catch(e){}
 
-    // keyboard close
     document.addEventListener('keydown', onKeyDown);
   });
 
-  // expose helpers for debugging if needed
+  // expose helpers so main.js can call into this sheet
   window._hexon_openWalletSheet = showSheet;
   window._hexon_closeWalletSheet = hideSheet;
 })();
