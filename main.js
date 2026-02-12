@@ -1,9 +1,7 @@
 /* main.js
-   Hexon — Phaser 3 Tetris engine
-   - Grid widened and height fixed above dashboard via canvas sizing
-   - Pieces move, drop, rotate correctly (with basic wall-kicks)
-   - Persistent cell sprites for performance
-   - Keep your API_BASE updated for backend hooks
+   Hexon — Phaser 3 Tetris engine (fixed movement, rotation, larger grid,
+   canvas sized to board so blocks don't fall below dashboard)
+   - Update API_BASE for your backend
 */
 
 'use strict';
@@ -11,21 +9,13 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-// update API endpoint as needed
-const API_BASE = 'https://api.yourdomain.com';
-
-// Grid size (wider as requested)
-const GRID_COLS = 14;
-const GRID_ROWS = 24;
-
-// cell size and spacing
+const API_BASE = 'https://api.yourdomain.com'; // <-- update
+const GRID_COLS = 14;   // widened
+const GRID_ROWS = 24;   // taller
 const CELL_SIZE = 28;
 const CELL_GAP = 2;
-
-// Gameplay timing
 const INITIAL_DROP_MS = 800;
 
-// Ads/energy/miner related constants (kept for compatibility)
 const AUTO_RECHARGE_MINUTES = 30;
 const AUTO_RECHARGE_PERCENT = 10;
 const MAX_SITTINGS_PER_DAY = 3;
@@ -33,7 +23,7 @@ const MAX_ADS_PER_SITTING = 3;
 const MAX_ADS_PER_DAY = 9;
 
 /* ---------------------------
-   Client state & utilities
+   Client state & utils
    --------------------------- */
 let clientState = {
   sessionId: generateUUID(),
@@ -50,30 +40,26 @@ let clientState = {
 
 function generateUUID(){ return 'xxxxxx'.replace(/[x]/g, ()=> (Math.random()*36|0).toString(36)); }
 function $(id){ return document.getElementById(id); }
-function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); }
+function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if(clientState.actionLog.length>5000) clientState.actionLog.shift(); }
 
-// Minimal API helper (same as before — adjust API_BASE)
 async function api(path, method='GET', body=null){
   try {
     const res = await fetch(API_BASE + path, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {'Content-Type':'application/json'},
       body: body ? JSON.stringify(body) : undefined
     });
     if (!res.ok) throw new Error('api:' + res.status);
     return await res.json();
-  } catch (e) {
-    console.warn('api error', e);
-    return null;
-  }
+  } catch(e) { console.warn('API error', e); return null; }
 }
 
 /* ---------------------------
    Game state
    --------------------------- */
 const gameState = {
-  grid: null,         // 2D array of 0 or piece types
-  activePiece: null,  // { type, rot, x, y }
+  grid: null,
+  activePiece: null,   // { type, rot, x, y }
   nextPiece: null,
   score: 0,
   level: 1,
@@ -92,19 +78,19 @@ const PIECES = {
     [[0,1],[1,1],[2,1],[3,1]],
     [[2,0],[2,1],[2,2],[2,3]],
     [[0,2],[1,2],[2,2],[3,2]],
-    [[1,0],[1,1],[1,2],[1,3]],
+    [[1,0],[1,1],[1,2],[1,3]]
   ],
   J: [
     [[0,0],[0,1],[1,1],[2,1]],
     [[1,0],[2,0],[1,1],[1,2]],
     [[0,1],[1,1],[2,1],[2,2]],
-    [[1,0],[1,1],[0,2],[1,2]],
+    [[1,0],[1,1],[0,2],[1,2]]
   ],
   L: [
     [[2,0],[0,1],[1,1],[2,1]],
     [[1,0],[1,1],[1,2],[2,2]],
     [[0,1],[1,1],[2,1],[0,2]],
-    [[0,0],[1,0],[1,1],[1,2]],
+    [[0,0],[1,0],[1,1],[1,2]]
   ],
   O: [
     [[1,0],[2,0],[1,1],[2,1]]
@@ -117,7 +103,7 @@ const PIECES = {
     [[1,0],[0,1],[1,1],[2,1]],
     [[1,0],[1,1],[2,1],[1,2]],
     [[0,1],[1,1],[2,1],[1,2]],
-    [[1,0],[0,1],[1,1],[1,2]],
+    [[1,0],[0,1],[1,1],[1,2]]
   ],
   Z: [
     [[0,0],[1,0],[1,1],[2,1]],
@@ -127,9 +113,8 @@ const PIECES = {
 const PIECE_TYPES = Object.keys(PIECES);
 
 /* ---------------------------
-   Phaser boot & game scene
+   Phaser Scenes
    --------------------------- */
-
 let phaserGame;
 
 class BootScene extends Phaser.Scene {
@@ -142,61 +127,50 @@ class GameScene extends Phaser.Scene {
   create(){
     console.log('GameScene.create()');
 
-    // compute grid pixel dims and place board at top-left of canvas
-    // boardWidth = GRID_COLS * (CELL_SIZE + CELL_GAP) + some margin
-    this.boardPixelWidth = GRID_COLS * (CELL_SIZE + CELL_GAP) + 32;
-    this.boardPixelHeight = GRID_ROWS * (CELL_SIZE + CELL_GAP) + 32;
+    // compute board pixel size (small margin)
+    this.boardPixelWidth = GRID_COLS * (CELL_SIZE + CELL_GAP) + 40;
+    this.boardPixelHeight = GRID_ROWS * (CELL_SIZE + CELL_GAP) + 40;
 
-    // origin inside canvas
+    // top-left origin inside canvas
     this.gridOrigin = { x: 16, y: 16 };
 
-    // background panel for board
+    // background panel & light grid lines
     const g = this.add.graphics();
     g.fillStyle(0x061426, 1);
-    g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
+    g.fillRoundedRect(this.gridOrigin.x-8, this.gridOrigin.y-8, this.boardPixelWidth, this.boardPixelHeight, 10);
     g.lineStyle(1, 0x0d2130, 0.6);
-    // optional grid lines
     for (let r=0; r<=GRID_ROWS; r++){
-      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL_SIZE + CELL_GAP), this.gridOrigin.x + GRID_COLS*(CELL_SIZE+CELL_GAP), this.gridOrigin.y + r*(CELL_SIZE + CELL_GAP)));
+      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL_SIZE+CELL_GAP), this.gridOrigin.x + GRID_COLS*(CELL_SIZE+CELL_GAP), this.gridOrigin.y + r*(CELL_SIZE+CELL_GAP)));
     }
     for (let c=0; c<=GRID_COLS; c++){
-      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL_SIZE + CELL_GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL_SIZE + CELL_GAP), this.gridOrigin.y + GRID_ROWS*(CELL_SIZE+CELL_GAP)));
+      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL_SIZE+CELL_GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL_SIZE+CELL_GAP), this.gridOrigin.y + GRID_ROWS*(CELL_SIZE+CELL_GAP)));
     }
 
-    // initialize logical grid and UI
+    // init logical grid & sprites
     initGrid();
-
-    // persistent cell sprites
     this.cellSprites = [];
     for (let r=0; r<GRID_ROWS; r++){
       this.cellSprites[r] = [];
       for (let c=0; c<GRID_COLS; c++){
-        const x = this.gridOrigin.x + c*(CELL_SIZE + CELL_GAP) + CELL_SIZE/2;
-        const y = this.gridOrigin.y + r*(CELL_SIZE + CELL_GAP) + CELL_SIZE/2;
+        const x = this.gridOrigin.x + c*(CELL_SIZE+CELL_GAP) + CELL_SIZE/2;
+        const y = this.gridOrigin.y + r*(CELL_SIZE+CELL_GAP) + CELL_SIZE/2;
         const rect = this.add.rectangle(x, y, CELL_SIZE, CELL_SIZE, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
         this.cellSprites[r][c] = rect;
       }
     }
 
-    // spawn first piece
     spawnPiece();
-
     gameState.isPlaying = true;
     gameState.dropTimer = 0;
 
-    // input
     this.setupInput();
-
-    // update UI initial
     updateUI();
 
-    // auto-recharge placeholder timer (server should be authoritative)
     this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
   }
 
   update(time, delta){
     if (!gameState.isPlaying) return;
-
     gameState.dropTimer += delta;
     if (gameState.dropTimer >= gameState.dropInterval){
       gameState.dropTimer = 0;
@@ -204,12 +178,11 @@ class GameScene extends Phaser.Scene {
       logAction('tick_drop', { moved });
       if (!moved) lockPiece();
     }
-
     this.renderGrid();
   }
 
   renderGrid(){
-    // paint locked cells first
+    // locked grid
     for (let r=0; r<GRID_ROWS; r++){
       for (let c=0; c<GRID_COLS; c++){
         const val = gameState.grid[r][c];
@@ -228,7 +201,7 @@ class GameScene extends Phaser.Scene {
   }
 
   setupInput(){
-    this.input.keyboard.on('keydown', (ev) => {
+    this.input.keyboard.on('keydown', (ev)=>{
       if (!gameState.isPlaying) return;
       switch(ev.code){
         case 'ArrowLeft': movePiece(-1); break;
@@ -239,8 +212,6 @@ class GameScene extends Phaser.Scene {
       }
       updateUI();
     });
-
-    // add touch buttons if not already present
     if (!document.querySelector('.touch-controls')) setupTouchControls(this);
   }
 
@@ -252,38 +223,31 @@ class GameScene extends Phaser.Scene {
 }
 
 /* ---------------------------
-   Piece helpers: compute absolute cells
+   Piece helpers
    --------------------------- */
 function getPieceCells(piece){
-  // piece: { type, rot, x, y }
   const states = PIECES[piece.type];
   const state = states[piece.rot % states.length];
   return state.map(p => ({ x: p[0] + piece.x, y: p[1] + piece.y }));
 }
 
 /* ---------------------------
-   Game logic: grid, move, rotate, lock, clear
+   Game logic
    --------------------------- */
 function initGrid(){
   gameState.grid = Array.from({length: GRID_ROWS}, () => Array(GRID_COLS).fill(0));
-  gameState.score = 0;
-  gameState.level = 1;
-  gameState.lines = 0;
-  gameState.combo = 0;
+  gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0;
 }
 
 function spawnPiece(){
   const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   const rot = 0;
-  // center piece horizontally (reserve up to 4 columns)
   const xStart = Math.floor((GRID_COLS - 4) / 2);
-  const yStart = -1; // start slightly above so I-piece can come in
+  const yStart = -1; // small spawn buffer above visible area
   gameState.activePiece = { type, rot, x: xStart, y: yStart };
   gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-  logAction('spawn', {type, x:xStart, y:yStart});
-
-  // if spawn collides immediately -> game over
-  if (checkCollision(getPieceCells(gameState.activePiece))){
+  logAction('spawn', { type, x:xStart, y:yStart });
+  if (checkCollision(getPieceCells(gameState.activePiece))) {
     gameOver();
   }
 }
@@ -300,7 +264,7 @@ function movePiece(dir){
   if (!gameState.activePiece) return;
   const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir };
   if (!checkCollision(getPieceCells(cand))){
-    gameState.activePiece.x += dir;
+    gameState.activePiece.x = cand.x;
     logAction('move', {dir});
   }
 }
@@ -309,20 +273,13 @@ function movePieceDown(){
   if (!gameState.activePiece) return false;
   const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 };
   if (!checkCollision(getPieceCells(cand))){
-    gameState.activePiece.y += 1;
+    gameState.activePiece.y = cand.y;
     return true;
   }
   return false;
 }
 
-function softDrop(){
-  if (movePieceDown()){
-    gameState.score += 1;
-    clientState.gp += 1;
-    logAction('soft_drop');
-    updateUI();
-  }
-}
+function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); } }
 
 function hardDrop(){
   let falls = 0;
@@ -337,7 +294,7 @@ function hardDrop(){
 function rotatePiece(){
   if (!gameState.activePiece) return;
   const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) };
-  // basic wall-kick tests: center, left, right, left2, right2, up
+  // simple wall-kick attempts
   const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}];
   for (const k of kicks){
     const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy };
@@ -345,11 +302,11 @@ function rotatePiece(){
       gameState.activePiece.rot = cand.rot;
       gameState.activePiece.x = cand.x;
       gameState.activePiece.y = cand.y;
-      logAction('rotate', {rot: gameState.activePiece.rot, kick:k});
+      logAction('rotate', {rot:gameState.activePiece.rot, kick:k});
       return;
     }
   }
-  // blocked — do nothing
+  // blocked: no rotation
 }
 
 function lockPiece(){
@@ -361,7 +318,7 @@ function lockPiece(){
       gameState.grid[p.y][p.x] = ap.type;
     }
   }
-  // check for clears
+  // clear lines
   const cleared = [];
   for (let r=0; r<GRID_ROWS; r++){
     if (gameState.grid[r].every(v => v !== 0)) cleared.push(r);
@@ -383,7 +340,7 @@ function clearLines(rows){
   gameState.lines += count;
   gameState.combo += 1;
   clientState.gp += (count * 10) + (gameState.combo * 5);
-  logAction('clear', {count, combo: gameState.combo});
+  logAction('clear', {count, combo:gameState.combo});
   if (gameState.lines % 10 === 0){
     gameState.level++;
     gameState.dropInterval = Math.max(120, gameState.dropInterval * 0.92);
@@ -393,10 +350,9 @@ function clearLines(rows){
 
 async function gameOver(){
   gameState.isPlaying = false;
-  logAction('gameover', {score: gameState.score, lines: gameState.lines});
-  // submit to backend (best-effort)
-  try { await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, userId: clientState.userId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); }
-  catch(e) { console.warn(e); }
+  logAction('gameover', {score:gameState.score, lines:gameState.lines});
+  // send best-effort
+  try { await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, userId: clientState.userId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
   showModal(`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div><div style="height:12px"></div><button id="playAgain" class="button">Play Again</button>`, ()=>{
     $('#playAgain').onclick = ()=>{ hideModal(); resetForPlay(); };
   });
@@ -413,7 +369,7 @@ function resetForPlay(){
 }
 
 /* ---------------------------
-   Color mapping
+   Color helper
    --------------------------- */
 function colorFromVal(val){
   const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 };
@@ -421,68 +377,66 @@ function colorFromVal(val){
 }
 
 /* ---------------------------
-   Touch controls (DOM) - add once
+   Touch controls (DOM)
    --------------------------- */
 function setupTouchControls(scene){
-  if (document.querySelector('.touch-controls')) return; // already added
+  if (document.querySelector('.touch-controls')) return;
   const wrapper = document.createElement('div');
   wrapper.classList.add('touch-controls');
-  wrapper.style.position = 'relative';
-  wrapper.style.marginTop = '10px';
-  wrapper.style.display = 'flex';
-  wrapper.style.justifyContent = 'space-around';
-  wrapper.style.gap = '8px';
+  wrapper.style.display='flex'; wrapper.style.justifyContent='space-around'; wrapper.style.gap='8px'; wrapper.style.marginTop='10px';
   const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerText='◀';
   const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerText='▶';
   const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerText='↻';
-  const btnDrop = document.createElement('div'); btnDrop.className='touch-btn'; btnDrop.innerText='↓';
-  [btnLeft, btnRotate, btnDrop, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
-  wrapper.append(btnLeft, btnRotate, btnDrop, btnRight);
+  const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerText='↓';
+  [btnLeft, btnRotate, btnDown, btnRight].forEach(b => { b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
+  wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
   const ui = $('uiPanel');
   if (ui) ui.append(wrapper);
   btnLeft.onclick = ()=>{ movePiece(-1); logAction('touch_left'); updateUI(); };
   btnRight.onclick = ()=>{ movePiece(1); logAction('touch_right'); updateUI(); };
   btnRotate.onclick = ()=>{ rotatePiece(); logAction('touch_rotate'); updateUI(); };
-  btnDrop.onclick = ()=>{ softDrop(); logAction('touch_drop'); updateUI(); };
+  btnDown.onclick = ()=>{ softDrop(); logAction('touch_drop'); updateUI(); };
 }
 
 /* ---------------------------
-   Minimal stubs for UI functions referenced earlier
-   (If you have full implementations already, they will be used instead)
+   Minimal stubs for UI functions (keep your implementations if present)
    --------------------------- */
-async function handleWatchAd(){ console.log('watch ad (stub)'); showModal('<div class="small-muted">Ad simulated - energy +50%</div>'); clientState.energy = Math.min(100, clientState.energy + 50); updateUI(); }
-async function openMinerShop(){ showModal('<div class="small-muted">Miner shop (stub)</div>'); }
+async function handleWatchAd(){ clientState.energy = Math.min(100, clientState.energy + 50); showModal('<div class="small-muted">Ad simulated</div>'); updateUI(); }
+async function openMinerShop(){ showModal('<div class="small-muted">Shop (stub)</div>'); }
 async function bindWallet(){ showModal('<div class="small-muted">Bind wallet (stub)</div>'); }
-function renderMinersList(){ /* noop if no miners UI present */ }
-async function refreshLeaderboard(){ /* noop stub */ }
-function showReferralShare(){ prompt('Share this link', window.location.href + '?ref=yourcode'); }
+function renderMinersList(){ /* existing UI function preserved if present */ }
+async function refreshLeaderboard(){ /* stub */ }
+function showReferralShare(){ prompt('Share invite', window.location.href + '?ref=code'); }
 
 /* ---------------------------
-   Modal helpers (existing HTML expected)
+   Modal helpers & UI updates
    --------------------------- */
-function showModal(html, onMounted){
-  const overlay = $('overlay'); if (!overlay) return;
-  overlay.classList.add('show');
-  const modal = $('#modalContent');
-  if (modal) modal.innerHTML = html;
-  if (onMounted) setTimeout(onMounted, 50);
+function showModal(html, onMounted){ const o=$('overlay'); if(!o) return; o.classList.add('show'); $('#modalContent').innerHTML=html; if(onMounted) setTimeout(onMounted,80); }
+function hideModal(){ const o=$('overlay'); if(!o) return; o.classList.remove('show'); $('#modalContent').innerHTML=''; }
+
+function updateUI(){
+  if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
+  if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp || 0) + ' GP';
+  if ($('ui-energyFill')) $('ui-energyFill').style.width = (clientState.energy) + '%';
+  if ($('ui-level')) $('ui-level').innerText = gameState.level;
+  if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
+  if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU || 0).toFixed(2);
 }
-function hideModal(){ const overlay = $('overlay'); if (!overlay) return; overlay.classList.remove('show'); const modal = $('#modalContent'); if (modal) modal.innerHTML = ''; }
 
 /* ---------------------------
    Init & Phaser boot
    --------------------------- */
-window.addEventListener('load', async () => {
-  // wire UI buttons if present
+window.addEventListener('load', async ()=>{
+  // wire UI controls (if present)
   if ($('watchAdBtn')) $('watchAdBtn').onclick = handleWatchAd;
   if ($('openStore')) $('openStore').onclick = openMinerShop;
   if ($('bindWalletBtn')) $('bindWalletBtn').onclick = bindWallet;
   if ($('showRefBtn')) $('showRefBtn').onclick = showReferralShare;
   if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
 
-  // try optional client init (non-blocking)
+  // attempt optional client init
   try {
-    const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.referralCode });
+    const init = await api('/client/init','POST',{ sessionId:clientState.sessionId, referral:clientState.referralCode });
     if (init){
       clientState.userId = init.userId ?? clientState.userId;
       clientState.gp = init.gp ?? clientState.gp;
@@ -492,12 +446,11 @@ window.addEventListener('load', async () => {
     }
   } catch(e){ console.warn(e); }
 
-  // compute canvas size exactly to board so board fits above dashboard
+  // compute canvas to exactly match board so board stays above dashboard
   const canvasWidth = GRID_COLS * (CELL_SIZE + CELL_GAP) + 40;
   const canvasHeight = GRID_ROWS * (CELL_SIZE + CELL_GAP) + 40;
 
   const parentEl = document.getElementById('phaserCanvas') || document.body;
-
   phaserGame = new Phaser.Game({
     type: Phaser.AUTO,
     parent: parentEl,
@@ -507,11 +460,11 @@ window.addEventListener('load', async () => {
     scene: [ BootScene, GameScene ]
   });
 
-  // initial UI sync & periodic refresh
+  // initial UI sync
   updateUI();
   renderMinersList();
   refreshLeaderboard();
   setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
-  console.log('Phaser boot requested: canvas', canvasWidth, canvasHeight);
+  console.log('Phaser started: board', GRID_COLS+'x'+GRID_ROWS, 'canvas', canvasWidth, 'x', canvasHeight);
 });
