@@ -17,7 +17,7 @@
       --accent-to:#22d3ee;
     }
     html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; padding:18px; }
-    nav{ margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; }
+    nav{ margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     nav a{ color:inherit; text-decoration:none; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; display:inline-flex; gap:8px; align-items:center;}
     .container{ max-width:1100px; margin:0 auto; }
     .card{ background:var(--card-bg); padding:18px; border-radius:12px; margin-bottom:14px; }
@@ -47,8 +47,10 @@
     .lightbox{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); z-index:99999; padding:18px; box-sizing:border-box; }
     .lightbox.show{ display:flex; }
     .lightbox img{ max-width:100%; max-height:95vh; object-fit:contain; border-radius:8px; box-shadow:0 12px 40px rgba(0,0,0,0.6); }
+    .balance{ margin-left:auto; display:flex; gap:8px; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); }
     @media (max-width:720px){
       .grid{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+      nav{ gap:6px; }
     }
   </style>
 </head>
@@ -59,12 +61,17 @@
       <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
       <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
       <a href="referrals.html"><i class="fa-solid fa-user-plus"></i> Referrals</a>
-      <button id="refreshBtn" class="btn-ghost" style="margin-left:auto"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+
+      <div class="balance muted small" id="balanceBadge" title="Your current GP balance">
+        <i class="fa-solid fa-coins"></i> <span id="gpAmount">—</span> GP
+      </div>
+
+      <button id="refreshBtn" class="btn-ghost" style="margin-left:8px"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
     </nav>
 
     <div class="card" role="main" aria-labelledby="shopTitle">
       <h2 id="shopTitle">Miner Shop</h2>
-      <p class="muted">Buy miners to increase your Hash Units. If your backend provides `image_url` (image or GIF) it will be displayed and viewable fullscreen.</p>
+      <p class="muted">Buy miners to increase your Hash Units. If your backend provides <code>image_url</code> (image or GIF) it will be displayed and viewable fullscreen.</p>
 
       <div id="itemsContainer" class="grid" aria-live="polite">
         <div class="muted">Loading items…</div>
@@ -76,7 +83,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Lightbox -->
-  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" tabindex="-1" onclick="hideLightbox()">
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" tabindex="-1" onclick="hideLightbox(event)">
     <img id="lightboxImg" alt="Preview" />
   </div>
 
@@ -84,11 +91,17 @@
 /* -------------------------
    Config + state
 -------------------------*/
-const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev';
+/**
+ * API_BASE:
+ * - If left as an empty string, uses same origin (recommended for deploying alongside Flask).
+ * - Otherwise set to full origin e.g. https://your-domain.com
+ */
+const API_BASE = ''; // default: same origin
 const clientState = {
   sessionId: localStorage.getItem('hexon_session') || generateUUID(),
-  username: null,
-  telegramId: null
+  username: localStorage.getItem('hexon_username') || null,
+  telegramId: null,
+  gp: null
 };
 localStorage.setItem('hexon_session', clientState.sessionId);
 
@@ -99,26 +112,35 @@ function escapeHtml(s){ return String(s || '').replace(/[&<>"']/g, c => ({'&':'&
 
 /* -------------------------
    API helper (adds headers + body fields)
+   - Accepts full path starting with '/' OR full URL
+   - Returns parsed JSON or null on error
 -------------------------*/
 async function api(path, method='GET', body=null, optsExtra={}) {
   try {
-    let url = API_BASE + path;
-    if (method.toUpperCase() === 'GET' && clientState.sessionId){
-      if (!url.includes('sessionId=')) url += (url.includes('?') ? '&' : '?') + 'sessionId=' + encodeURIComponent(clientState.sessionId);
-    }
-
+    // normalize url
+    let url = path.startsWith('http') ? path : (API_BASE ? API_BASE.replace(/\/$/, '') + path : (window.location.origin + path));
     const headers = Object.assign({}, optsExtra.headers || {});
-    if (!optsExtra.skipJsonHeader) headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+    if (!optsExtra.skipJsonHeader && method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
     if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+
     const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
     if (userHandle) headers['X-User-Handle'] = userHandle;
+
+    // attach sessionId for GET endpoints (helps server routing)
+    if (method.toUpperCase() === 'GET' && clientState.sessionId){
+      const sep = url.includes('?') ? '&' : '?';
+      url = url + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
+    }
 
     const fetchOpts = { method, headers, ...optsExtra };
     if (body !== null && body !== undefined){
       if (fetchOpts.headers['Content-Type'] && fetchOpts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
-        body.username = body.username || clientState.username || null;
-        body.telegramId = body.telegramId || clientState.telegramId || null;
-        body.sessionId = body.sessionId || clientState.sessionId || null;
+        // ensure session/user fields are present for the server compatibility
+        body = Object.assign({}, body, {
+          sessionId: body.sessionId || clientState.sessionId,
+          username: body.username || clientState.username || null,
+          telegramId: body.telegramId || clientState.telegramId || null
+        });
         fetchOpts.body = JSON.stringify(body);
       } else {
         fetchOpts.body = body;
@@ -146,33 +168,132 @@ function initTelegram(){
       if (u){
         clientState.telegramId = u.id;
         clientState.username = clientState.username || (u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null);
+        if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
       }
     }
   } catch(e){ console.warn('initTelegram error', e); }
 }
 
 /* -------------------------
+   Discover a "display" endpoint for miners/shop items
+   Tries several likely endpoints in order until one returns an array
+-------------------------*/
+const DISPLAY_ENDPOINT_CANDIDATES = [
+  '/shop/items',
+  '/miners/display',
+  '/miners',
+  '/shop/miners',
+  '/api/shop/items',
+  '/api/miners'
+];
+
+async function discoverDisplayEndpoint() {
+  for (const p of DISPLAY_ENDPOINT_CANDIDATES) {
+    const u = p.startsWith('http') ? p : (API_BASE ? API_BASE.replace(/\/$/, '') + p : window.location.origin + p);
+    // try a GET with sessionId appended
+    const sep = u.includes('?') ? '&' : '?';
+    const url = u + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
+    try {
+      const res = await fetch(url, { method: 'GET', headers: { 'X-Session-Id': clientState.sessionId }});
+      if (!res) continue;
+      const text = await res.text();
+      if (!text) continue;
+      let parsed;
+      try { parsed = JSON.parse(text); } catch(e) { parsed = text; }
+      // Expect an array of items (shop items)
+      if (Array.isArray(parsed) && parsed.length >= 0) {
+        // if we found items (maybe empty) — return the candidate path (not full url)
+        return p;
+      }
+      // Some APIs return object { items: [...] }
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.items)) return p;
+        // some endpoints respond { ok: true, data: [...]}
+        if (Array.isArray(parsed.data)) return p;
+      }
+    } catch (e) {
+      // ignore and continue trying other endpoints
+    }
+  }
+  return null;
+}
+
+/* -------------------------
+   Load user's client state (calls /client/init to sync session and gp)
+-------------------------*/
+async function loadClientState() {
+  // Call /client/init to ensure server knows our session (safe, idempotent)
+  const resp = await api('/client/init', 'POST', { sessionId: clientState.sessionId });
+  if (resp && resp.ok) {
+    clientState.sessionId = resp.sessionId || clientState.sessionId;
+    clientState.username = resp.username || clientState.username;
+    clientState.gp = (typeof resp.gp !== 'undefined') ? Number(resp.gp) : clientState.gp;
+    localStorage.setItem('hexon_session', clientState.sessionId);
+    if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+  }
+  updateBalanceUI();
+}
+
+/* -------------------------
+   Update balance UI
+-------------------------*/
+function updateBalanceUI(){
+  const gpEl = $('gpAmount');
+  gpEl.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
+}
+
+/* -------------------------
    Load & render shop (displays images/gifs when provided)
    Expects backend items with optional field: image_url (string)
 -------------------------*/
+let discoveredEndpoint = null;
 async function loadShop(){
   initTelegram();
   const container = $('itemsContainer');
   container.innerHTML = '<div class="muted">Loading items…</div>';
 
-  const items = await api('/shop/items','GET');
-  if (!items || !Array.isArray(items) || items.length === 0){
-    container.innerHTML = '<div class="muted">Shop unavailable</div>';
+  // ensure client state synced (so we know gp & session id)
+  await loadClientState();
+
+  // discover endpoint if not known
+  if (!discoveredEndpoint) {
+    discoveredEndpoint = await discoverDisplayEndpoint();
+    if (!discoveredEndpoint) {
+      container.innerHTML = '<div class="muted">Shop unavailable (no display endpoint found)</div>';
+      return;
+    }
+  }
+
+  // fetch items (allow endpoints that return { items: [...] } or { data: [...] } or plain array)
+  let itemsResp = await api(discoveredEndpoint, 'GET');
+  if (!itemsResp) {
+    container.innerHTML = '<div class="muted">Shop unavailable (failed to fetch items)</div>';
+    return;
+  }
+  let items = [];
+  if (Array.isArray(itemsResp)) items = itemsResp;
+  else if (Array.isArray(itemsResp.items)) items = itemsResp.items;
+  else if (Array.isArray(itemsResp.data)) items = itemsResp.data;
+  else {
+    // try common shapes (e.g. { ok:true, items: [...] } or maybe top-level object with fields)
+    // fallback: look for any array value inside the object
+    for (const k of Object.keys(itemsResp)) {
+      if (Array.isArray(itemsResp[k])) { items = itemsResp[k]; break; }
+    }
+  }
+
+  if (!items || items.length === 0){
+    container.innerHTML = '<div class="muted">No items available</div>';
     return;
   }
 
   container.innerHTML = '';
   for (const it of items){
-    const id = escapeHtml(String(it.id || it.sku || ''));
-    const name = escapeHtml(it.name || 'Unnamed Miner');
-    const desc = escapeHtml(it.description || it.desc || '');
-    const price = Number(it.price_gp ?? it.priceGP ?? 0);
-    const imageUrl = it.image_url || it.image || null;
+    const id = escapeHtml(String(it.id || it.sku || it.code || ''));
+    const name = escapeHtml(it.name || it.title || 'Unnamed Miner');
+    const desc = escapeHtml(it.description || it.desc || it.summary || '');
+    const price = Number(it.price_gp ?? it.priceGP ?? it.price ?? 0);
+    const imageUrl = (it.image_url || it.image || it.imageUrl || null);
 
     const card = document.createElement('div');
     card.className = 'item';
@@ -196,21 +317,51 @@ async function loadShop(){
     `;
     container.appendChild(card);
 
-    // buy handler
+    // disable buy if insufficient GP (clientState.gp may be null initially; treat null as enabled)
     const buyBtn = card.querySelector('.buyBtn');
+    function refreshBuyState(){
+      if (clientState.gp === null || typeof clientState.gp === 'undefined') {
+        buyBtn.disabled = false;
+        buyBtn.title = '';
+        buyBtn.innerHTML = '<i class="fa-solid fa-cart-plus"></i> Buy';
+        return;
+      }
+      if (Number(clientState.gp) < Number(price)) {
+        buyBtn.disabled = true;
+        buyBtn.title = 'Insufficient GP';
+        buyBtn.innerHTML = `<i class="fa-solid fa-ban"></i> Need ${ (Number(price) - Number(clientState.gp)).toLocaleString() } GP`;
+      } else {
+        buyBtn.disabled = false;
+        buyBtn.title = '';
+        buyBtn.innerHTML = '<i class="fa-solid fa-cart-plus"></i> Buy';
+      }
+    }
+    refreshBuyState();
+
+    // buy handler
     buyBtn.addEventListener('click', async () => {
       if (!confirm(`Buy "${name}" for ${price.toLocaleString()} GP?`)) return;
       buyBtn.disabled = true;
-      buyBtn.textContent = 'Processing…';
-      const resp = await api('/shop/buy','POST',{ sessionId: clientState.sessionId, itemId: id });
-      if (resp && resp.ok){
+      const origHtml = buyBtn.innerHTML;
+      buyBtn.innerHTML = 'Processing…';
+      // POST to discoveredEndpoint mapping: prefer /shop/buy, else fallback to /buy or /miners/buy
+      const buyPaths = ['/shop/buy', '/buy', '/miners/buy', '/api/shop/buy'];
+      let resp = null;
+      for (const p of buyPaths) {
+        resp = await api(p, 'POST', { sessionId: clientState.sessionId, itemId: id });
+        // if resp is null, try next; if resp has ok or error, break
+        if (resp && (typeof resp.ok !== 'undefined' || typeof resp.error !== 'undefined')) break;
+      }
+
+      if (resp && resp.ok) {
+        // update gp state if provided
+        if (typeof resp.gp !== 'undefined') clientState.gp = Number(resp.gp);
+        await loadShop(); // refresh item list and gp
         showToast('Purchase successful', 1200);
-        // refresh shop and UI as appropriate
-        await loadShop();
       } else {
-        showToast((resp && resp.error) ? resp.error : 'Purchase failed', 2100);
+        showToast((resp && resp.error) ? resp.error : 'Purchase failed', 2400);
         buyBtn.disabled = false;
-        buyBtn.innerHTML = '<i class="fa-solid fa-cart-plus"></i> Buy';
+        buyBtn.innerHTML = origHtml;
       }
     });
 
@@ -227,6 +378,8 @@ async function loadShop(){
       mediaEl.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') openPreview(); });
     }
   }
+
+  updateBalanceUI();
 }
 
 /* -------------------------
@@ -239,7 +392,9 @@ function showLightbox(url){
   lb.classList.add('show');
   lb.focus();
 }
-function hideLightbox(){
+function hideLightbox(ev){
+  // allow clicking backdrop or pressing escape; don't hide if clicking image
+  if (ev && ev.target && ev.target.id === 'lightboxImg') return;
   const lb = $('lightbox');
   lb.classList.remove('show');
   $('lightboxImg').src = '';
@@ -249,11 +404,15 @@ document.addEventListener('keydown', (e)=> { if (e.key === 'Escape') hideLightbo
 /* -------------------------
    Wiring & boot
 -------------------------*/
-$('refreshBtn').addEventListener('click', ()=> loadShop());
+$('refreshBtn').addEventListener('click', ()=> {
+  // refresh gp first then items
+  loadClientState().then(() => loadShop());
+});
 
 document.addEventListener('DOMContentLoaded', ()=>{
   initTelegram();
-  loadShop();
+  // first attempt to sync state then render shop
+  loadClientState().then(() => loadShop());
 });
 </script>
 </body>
