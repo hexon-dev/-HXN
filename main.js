@@ -1,4 +1,4 @@
-/* main.js (redraft)
+/* main.js (aligned with index.html)
    Hexon — Phaser 3 Tetris engine (FastAPI server-compatible)
    Wallet flow hardened: injected-first, robust deep-link handling for iOS,
    fallback prompts and manual public-key bind.
@@ -35,24 +35,11 @@ const MAX_ADS_PER_DAY = 9; // authoritative on server
 /* ---------------------------
    Client state & helpers
    --------------------------- */
-function loadSessionFromStorage(){
-  try { return localStorage.getItem('hexon_session') || null; } catch(e){ return null; }
-}
-function saveSessionToStorage(sid){
-  try { if(sid) localStorage.setItem('hexon_session', sid); } catch(e){}
-}
-function loadBoundWalletFromStorage(){
-  try { return localStorage.getItem('hexon_bound_wallet') || null; } catch(e){ return null; }
-}
-function saveBoundWalletToStorage(pk, provider){
-  try {
-    if (pk) localStorage.setItem('hexon_bound_wallet', pk);
-    if (provider) localStorage.setItem('hexon_bound_provider', provider);
-  } catch(e){}
-}
-function clearBoundWalletFromStorage(){
-  try { localStorage.removeItem('hexon_bound_wallet'); localStorage.removeItem('hexon_bound_provider'); } catch(e){}
-}
+function loadSessionFromStorage(){ try { return localStorage.getItem('hexon_session') || null; } catch(e){ return null; } }
+function saveSessionToStorage(sid){ try { if(sid) localStorage.setItem('hexon_session', sid); } catch(e){} }
+function loadBoundWalletFromStorage(){ try { return localStorage.getItem('hexon_bound_wallet') || null; } catch(e){ return null; } }
+function saveBoundWalletToStorage(pk, provider){ try { if (pk) localStorage.setItem('hexon_bound_wallet', pk); if (provider) localStorage.setItem('hexon_bound_provider', provider); } catch(e){} }
+function clearBoundWalletFromStorage(){ try { localStorage.removeItem('hexon_bound_wallet'); localStorage.removeItem('hexon_bound_provider'); } catch(e){} }
 
 let clientState = {
   sessionId: loadSessionFromStorage() || generateUUID(),
@@ -61,8 +48,7 @@ let clientState = {
   wallet: loadBoundWalletFromStorage(),
   walletProvider: localStorage.getItem('hexon_bound_provider') || null,
   gp: 0,
-  // Start at 100% (no hardcoded 65)
-  energy: 100,
+  energy: 100, // start full
   miners: [],
   shopItems: [],
   userAU: 0,
@@ -80,13 +66,8 @@ saveSessionToStorage(clientState.sessionId);
 function generateUUID(){
   try {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-      const r = Math.random()*16|0; const v = c === 'x' ? r : (r&0x3|0x8);
-      return v.toString(16);
-    });
-  } catch(e){
-    return 'sess-' + Math.floor(Math.random()*1e9).toString(36);
-  }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; const v = c === 'x' ? r : (r&0x3|0x8); return v.toString(16); });
+  } catch(e){ return 'sess-' + Math.floor(Math.random()*1e9).toString(36); }
 }
 
 function $(id){ return document.getElementById(id); }
@@ -132,96 +113,25 @@ async function api(path, method='GET', body=null, optsExtra={}){
 /* ---------------------------
    Referral helpers
 */
-function getRefFromURL(){
-  try {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('ref') || params.get('refCode') || null;
-  } catch(e){ return null; }
-}
-function savePendingReferral(code){
-  if (!code) return;
-  try {
-    localStorage.setItem('hexon_pending_ref', code);
-    clientState.pendingReferral = code;
-    console.log('Saved pending referral', code);
-  } catch(e){ console.warn('savePendingReferral', e); }
-}
-function loadPendingReferral(){
-  try {
-    const code = localStorage.getItem('hexon_pending_ref');
-    clientState.pendingReferral = code || null;
-    return clientState.pendingReferral;
-  } catch(e){ return null; }
-}
-function clearPendingReferral(){
-  try { localStorage.removeItem('hexon_pending_ref'); clientState.pendingReferral = null; } catch(e){}
-}
+function getRefFromURL(){ try { const params = new URLSearchParams(window.location.search); return params.get('ref') || params.get('refCode') || null; } catch(e){ return null; } }
+function savePendingReferral(code){ if (!code) return; try { localStorage.setItem('hexon_pending_ref', code); clientState.pendingReferral = code; console.log('Saved pending referral', code); } catch(e){ console.warn('savePendingReferral', e); } }
+function loadPendingReferral(){ try { const code = localStorage.getItem('hexon_pending_ref'); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
+function clearPendingReferral(){ try { localStorage.removeItem('hexon_pending_ref'); clientState.pendingReferral = null; } catch(e){} }
 
 /* ---------------------------
    Telegram WebApp integration
 */
 let tg = null;
-function initTelegram(){
-  try {
-    if (window.Telegram && window.Telegram.WebApp){
-      tg = window.Telegram.WebApp;
-      try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){ console.warn('tg.ready() failed', e); }
-      const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
-      if (u){
-        clientState.userId = clientState.userId || u.id;
-        clientState.username = clientState.username || (u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null);
-      }
-      console.log('Telegram WebApp detected', { username: clientState.username });
-    } else {
-      console.log('Telegram WebApp not present');
-    }
-  } catch (e) { console.warn('initTelegram error', e); }
-}
-function vibratePreferTelegram(pattern=20){
-  try {
-    if (tg){
-      if (typeof tg.triggerHapticFeedback === 'function'){ try { tg.triggerHapticFeedback('selection_change'); return; } catch(e){} }
-      if (tg.HapticFeedback && typeof tg.HapticFeedback.impactOccurred === 'function'){ try { tg.HapticFeedback.impactOccurred(); return; } catch(e){} }
-      if (typeof tg.triggerEvent === 'function'){ try { tg.triggerEvent('web_app_trigger_haptic_feedback', { type: 'selection_change' }); return; } catch(e){} }
-    }
-  } catch(e){ console.warn('Telegram haptic call failed', e); }
-  if (navigator && typeof navigator.vibrate === 'function'){ try { navigator.vibrate(pattern); } catch(e){} }
-}
-function closeTelegramApp(){
-  try {
-    if (tg && typeof tg.close === 'function'){ tg.close(); return true; }
-  } catch(e){ console.warn('tg.close() failed', e); }
-  try { window.close(); } catch(e){}
-  return false;
-}
+function initTelegram(){ try { if (window.Telegram && window.Telegram.WebApp){ tg = window.Telegram.WebApp; try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){} const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null; if (u){ clientState.userId = clientState.userId || u.id; clientState.username = clientState.username || (u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null); } console.log('Telegram WebApp detected', { username: clientState.username }); } else { console.log('Telegram WebApp not present'); } } catch (e) { console.warn('initTelegram error', e); } }
+function vibratePreferTelegram(pattern=20){ try { if (tg){ if (typeof tg.triggerHapticFeedback === 'function'){ try { tg.triggerHapticFeedback('selection_change'); return; } catch(e){} } if (tg.HapticFeedback && typeof tg.HapticFeedback.impactOccurred === 'function'){ try { tg.HapticFeedback.impactOccurred(); return; } catch(e){} } if (typeof tg.triggerEvent === 'function'){ try { tg.triggerEvent('web_app_trigger_haptic_feedback', { type: 'selection_change' }); return; } catch(e){} } } } catch(e){ console.warn('Telegram haptic call failed', e); } if (navigator && typeof navigator.vibrate === 'function'){ try { navigator.vibrate(pattern); } catch(e){} } }
+function closeTelegramApp(){ try { if (tg && typeof tg.close === 'function'){ tg.close(); return true; } } catch(e){ console.warn('tg.close() failed', e); } try { window.close(); } catch(e){} return false; }
 
 /* ---------------------------
    AdsGram loader + wrapper
 */
 let AdsGramLoaded = false;
 let AdController = null;
-function loadAdsGram(){
-  try {
-    if (window.Adsgram && !AdController){
-      try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); }
-    }
-    if (AdsGramLoaded) return;
-    const s = document.createElement('script');
-    s.src = ADSGRAM_SRC;
-    s.async = true;
-    s.onload = () => {
-      try {
-        if (window.Adsgram && typeof window.Adsgram.init === 'function'){
-          AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
-          AdsGramLoaded = true;
-          console.log('AdsGram loaded');
-        }
-      } catch(e){ console.warn('AdsGram init error', e); }
-    };
-    s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); };
-    document.head.appendChild(s);
-  } catch(e){ console.warn('loadAdsGram', e); }
-}
+function loadAdsGram(){ try { if (window.Adsgram && !AdController){ try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } } if (AdsGramLoaded) return; const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true; s.onload = () => { try { if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; console.log('AdsGram loaded'); } } catch(e){ console.warn('AdsGram init error', e); } }; s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); }; document.head.appendChild(s); } catch(e){ console.warn('loadAdsGram', e); } }
 
 async function showAdAndVerify(){
   if ((clientState.adsToday || 0) >= MAX_ADS_PER_DAY) { showModal('<div class="small-muted">Daily ad limit reached.</div>'); return; }
@@ -270,24 +180,7 @@ async function showAdAndVerify(){
 /* ---------------------------
    Miner shop
 */
-async function fetchShopItems(){
-  try {
-    const items = await api('/shop/items','GET');
-    if (Array.isArray(items)) {
-      clientState.shopItems = items.map(i => ({
-        id: i.id,
-        sku: i.sku,
-        name: i.name,
-        desc: i.description || i.desc || '',
-        priceGP: (i.price_gp != null ? i.price_gp : (i.priceGP != null ? i.priceGP : 0)),
-        au: (i.au != null ? i.au : 0)
-      }));
-    } else {
-      clientState.shopItems = [];
-    }
-    return clientState.shopItems;
-  } catch(e){ console.warn('fetchShopItems', e); clientState.shopItems = []; return []; }
-}
+async function fetchShopItems(){ try { const items = await api('/shop/items','GET'); if (Array.isArray(items)) { clientState.shopItems = items.map(i => ({ id: i.id, sku: i.sku, name: i.name, desc: i.description || i.desc || '', priceGP: (i.price_gp != null ? i.price_gp : (i.priceGP != null ? i.priceGP : 0)), au: (i.au != null ? i.au : 0) })); } else { clientState.shopItems = []; } return clientState.shopItems; } catch(e){ console.warn('fetchShopItems', e); clientState.shopItems = []; return []; } }
 
 function openMinerShop(){
   (async ()=>{
@@ -348,19 +241,11 @@ async function purchaseMiner(itemId){
 }
 
 /* ---------------------------
-   Utility: environment checks
+   Environment checks
 */
-function isIOS(){
-  return /iP(ad|hone|od)/i.test(navigator.userAgent);
-}
-function isAndroid(){
-  return /Android/i.test(navigator.userAgent);
-}
-function isInAppBrowser(){
-  // crude detection for in-app webviews where deep links/universal links may not work
-  const ua = navigator.userAgent || '';
-  return /FBAN|FBAV|Instagram|Line|KAKAOTALK|Twitter|LinkedIn|Snapchat/i.test(ua);
-}
+function isIOS(){ return /iP(ad|hone|od)/i.test(navigator.userAgent); }
+function isAndroid(){ return /Android/i.test(navigator.userAgent); }
+function isInAppBrowser(){ const ua = navigator.userAgent || ''; return /FBAN|FBAV|Instagram|Line|KAKAOTALK|Twitter|LinkedIn|Snapchat/i.test(ua); }
 
 /* ---------------------------
    Modal utilities (robust)
@@ -371,15 +256,7 @@ function ensureModalOverlay(){
     o = document.createElement('div');
     o.id = 'modalOverlay';
     o.className = 'modal-overlay';
-    Object.assign(o.style, {
-      position: 'fixed',
-      inset: '0',
-      display: 'none',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: String(2147483650),
-      background: 'rgba(0,0,0,0.45)'
-    });
+    Object.assign(o.style, { position: 'fixed', inset: '0', display: 'none', alignItems: 'center', justifyContent: 'center', zIndex: String(2147483650), background: 'rgba(0,0,0,0.45)' });
     const inner = document.createElement('div');
     inner.id = 'modalContent';
     inner.className = 'modal';
@@ -403,25 +280,12 @@ function showModal(html, onMounted){
     o.classList.add('show');
     o.setAttribute('aria-hidden','false');
     const content = $('#modalContent');
-    if (!content){
-      console.warn('Modal content missing');
-      return;
-    }
+    if (!content){ console.warn('Modal content missing'); return; }
     content.innerHTML = html;
-    setTimeout(()=> {
-      if (typeof onMounted === 'function') {
-        try { onMounted(); } catch(e){ console.warn('onMounted failed', e); }
-      }
-    }, 50);
-    o.onclick = (ev) => {
-      if (ev.target === o){
-        hideModal();
-      }
-    };
+    setTimeout(()=> { if (typeof onMounted === 'function') { try { onMounted(); } catch(e){ console.warn('onMounted failed', e); } } }, 50);
+    o.onclick = (ev) => { if (ev.target === o){ hideModal(); } };
     try { content.setAttribute('tabindex', '-1'); content.focus(); } catch(e){}
-  } catch(e){
-    console.warn('showModal error', e);
-  }
+  } catch(e){ console.warn('showModal error', e); }
 }
 
 function hideModal(){
@@ -440,103 +304,28 @@ function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&am
 
 /* ---------------------------
    Build clean redirect URL for deep links
-   - removes wallet-return fragments and includes sessionId to correlate
 */
 function buildCleanRedirect(){
   try {
     const origin = window.location.origin || (window.location.protocol + '//' + window.location.host);
     const path = window.location.pathname || '/';
-    // include sessionId so wallet app can redirect back with it if needed
     const sid = clientState.sessionId ? `?sessionId=${encodeURIComponent(clientState.sessionId)}` : '';
     return origin + path + sid;
-  } catch(e){
-    console.warn('buildCleanRedirect failed', e);
-    return window.location.href;
-  }
+  } catch(e){ console.warn('buildCleanRedirect failed', e); return window.location.href; }
 }
 
 /* ---------------------------
-   Wallet utilities (unified deep-link opener + detection)
+   Detect injected providers
 */
-function openAppOrPrompt({ deepLink, installUrl, appName, fallbackPage }) {
-  // returns Promise<boolean> - true if app likely opened, false if not (and modal was shown)
-  return new Promise(resolve => {
-    let handled = false;
-    let timeoutId = null;
-
-    function cleanup() {
-      clearTimeout(timeoutId);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', onPageHide);
-      window.removeEventListener('blur', onBlur);
-    }
-
-    function onVisibility() {
-      if (document.hidden) { handled = true; cleanup(); resolve(true); }
-    }
-    function onPageHide() { handled = true; cleanup(); resolve(true); }
-    function onBlur() { handled = true; cleanup(); resolve(true); }
-
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide', onPageHide);
-    window.addEventListener('blur', onBlur);
-
-    // Try using location assign first (works best for universal links)
-    try {
-      window.location.assign(deepLink);
-    } catch (e) {
-      try { window.open(deepLink, '_self'); } catch (e2) { console.warn('open deep link failed', e2); }
-    }
-
-    // If the app doesn't take over quickly, assume it didn't open.
-    // Use a short timeout so we don't sit too long.
-    timeoutId = setTimeout(() => {
-      cleanup();
-      if (handled) { resolve(true); return; }
-      // show modal with explicit actions: try open again / install / manual instructions
-      showModal(`<div style="text-align:left">
-          <h3>Open ${escapeHtml(appName)}</h3>
-          <div class="small-muted">We couldn't open ${escapeHtml(appName)} automatically. Choose an action below.</div>
-          <div style="height:12px"></div>
-          <div style="display:flex;gap:8px;">
-            <button id="openAppNow" class="button">Try open ${escapeHtml(appName)}</button>
-            <button id="installApp" class="btn-ghost">Install / Get ${escapeHtml(appName)}</button>
-          </div>
-          <div style="height:8px"></div>
-          <div class="small-muted">If your wallet supports WalletConnect, use WalletConnect from the wallet app and paste the resulting public key.</div>
-        </div>`, ()=>{
-          const b = $('#openAppNow'); if (b) b.onclick = ()=> {
-            hideModal();
-            try { window.location.assign(deepLink); } catch(e){ window.open(deepLink, '_blank'); }
-            setTimeout(()=> resolve(false), 600);
-          };
-          const i = $('#installApp'); if (i) i.onclick = ()=> {
-            hideModal();
-            try { window.open(installUrl || fallbackPage || deepLink, '_blank'); } catch(e){ try { window.location.assign(installUrl || fallbackPage || deepLink); } catch(e2){} }
-            setTimeout(()=> resolve(false), 600);
-          };
-        });
-    }, 1200);
-  });
-}
+function detectInjectedProviders(){ const solana = window.solana || null; return { phantom: Boolean((solana && solana.isPhantom) || (window.phantom && window.phantom.isPhantom)), solflare: Boolean(window.solflare || (solana && solana.isSolflare)), backpack: Boolean(window.backpack || (solana && solana.isBackpack)), anySolana: Boolean(solana || window.solflare || window.backpack || window.phantom) }; }
 
 /* ---------------------------
-   Detect injected providers (more exhaustive)
-*/
-function detectInjectedProviders(){
-  const solana = window.solana || null;
-  return {
-    phantom: Boolean((solana && solana.isPhantom) || (window.phantom && window.phantom.isPhantom) || Boolean(window.solana && window.solana.isPhantom)),
-    solflare: Boolean(window.solflare || (solana && solana.isSolflare) || (window.solflare && window.solflare.isSolflare)),
-    backpack: Boolean(window.backpack || (solana && solana.isBackpack)),
-    anySolana: Boolean(solana || window.solflare || window.backpack || window.phantom)
-  };
-}
-
-/* ---------------------------
-   Modal-based wallet picker
+   Wallet picker — prefer page bottom-sheet if present
 */
 function showWalletPicker(){
+  // If the page exposes the bottom-sheet helper, use it (keeps UI consistent)
+  if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return; } catch(e){ console.warn('bottom-sheet open failed', e); } }
+  // fallback to modal-based picker
   const detected = detectInjectedProviders();
   const html = [
     '<div style="text-align:left">',
@@ -561,29 +350,13 @@ function showWalletPicker(){
       btn.onclick = async (ev) => {
         const w = btn.getAttribute('data-w');
         try {
-          if (w === 'phantom') {
-            await attemptConnectPreferred('phantom');
-            return;
-          } else if (w === 'solflare') {
-            await attemptConnectPreferred('solflare');
-            return;
-          } else if (w === 'backpack') {
-            await attemptConnectPreferred('backpack');
-            return;
-          } else if (w === 'walletconnect') {
-            showWalletConnectInstructions('Attempting WalletConnect — follow your wallet app to complete. If your app returns a public key, paste it using the "Bind Public Key" input.');
-            return;
-          } else if (w === 'other') {
-            showOtherWalletOptions();
-            return;
-          } else {
-            showModal('<div class="small-muted">Unknown wallet option</div>', ()=> setTimeout(hideModal,900));
-            return;
-          }
-        } catch(err){
-          console.warn('wallet-btn handler error', err);
-          showModal('<div class="small-muted">Wallet action failed</div>', ()=> setTimeout(hideModal,900));
-        }
+          if (w === 'phantom') { await attemptConnectPreferred('phantom'); return; }
+          if (w === 'solflare') { await attemptConnectPreferred('solflare'); return; }
+          if (w === 'backpack') { await attemptConnectPreferred('backpack'); return; }
+          if (w === 'walletconnect') { showWalletConnectInstructions('Attempting WalletConnect — follow your wallet app to complete. If your app returns a public key, paste it using the "Bind Public Key" input.'); return; }
+          if (w === 'other') { showOtherWalletOptions(); return; }
+          showModal('<div class="small-muted">Unknown wallet option</div>', ()=> setTimeout(hideModal,900));
+        } catch(err){ console.warn('wallet-btn handler error', err); showModal('<div class="small-muted">Wallet action failed</div>', ()=> setTimeout(hideModal,900)); }
       };
     });
 
@@ -603,53 +376,22 @@ function showWalletPicker(){
 }
 
 /* ---------------------------
-   Other wallet helper dialogs
+   Other wallet helper dialogs (unchanged)
 */
-function showOtherWalletOptions(){
-  const html = `<div style="text-align:left">
-    <h3>Other wallets</h3>
-    <div class="small-muted">Use WalletConnect-compatible wallets (Coinbase Wallet, Trust Wallet, Exodus, etc.) or open their apps and connect via deep link. We recommend WalletConnect for the best mobile UX.</div>
-    <div style="height:10px"></div>
-    <button id="openWalletConnectFromOther" class="button">Use WalletConnect</button>
-    <div style="height:8px"></div>
-    <button id="openInstallWallet" class="btn-ghost">Install a wallet app</button>
-    <div style="height:8px"></div>
-    <div style="height:8px"></div><button id="closeOther" class="btn-ghost">Close</button>
-  </div>`;
-  showModal(html, ()=>{
-    const a = $('#openWalletConnectFromOther'); if (a) a.onclick = ()=> { connectWithWalletConnect(); hideModal(); };
-    const i = $('#openInstallWallet'); if (i) i.onclick = ()=> { try { window.open('https://www.trustwallet.com/', '_blank'); } catch(e){ console.warn(e); } };
-    const c = $('#closeOther'); if (c) c.onclick = hideModal;
-  });
-}
+function showOtherWalletOptions(){ const html = `<div style="text-align:left"><h3>Other wallets</h3><div class="small-muted">Use WalletConnect-compatible wallets (Coinbase Wallet, Trust Wallet, Exodus, etc.) or open their apps and connect via deep link. We recommend WalletConnect for the best mobile UX.</div><div style="height:10px"></div><button id="openWalletConnectFromOther" class="button">Use WalletConnect</button><div style="height:8px"></div><button id="openInstallWallet" class="btn-ghost">Install a wallet app</button><div style="height:8px"></div><div style="height:8px"></div><button id="closeOther" class="btn-ghost">Close</button></div>`; showModal(html, ()=>{ const a = $('#openWalletConnectFromOther'); if (a) a.onclick = ()=> { connectWithWalletConnect(); hideModal(); }; const i = $('#openInstallWallet'); if (i) i.onclick = ()=> { try { window.open('https://www.trustwallet.com/', '_blank'); } catch(e){ console.warn(e); } }; const c = $('#closeOther'); if (c) c.onclick = hideModal; }); }
 
 /* ---------------------------
-   Public key validation (basic base58-ish check)
+   Public key validation
 */
-function isValidSolanaPublicKey(pk){
-  if (!pk || typeof pk !== 'string') return false;
-  // Base58 acceptable characters (no 0, O, I, l)
-  const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
-  if (!base58Regex.test(pk)) return false;
-  // Common solana pubkey lengths are ~32 bytes -> base58 length ~43-44; accept range
-  if (pk.length < 32 || pk.length > 64) return false;
-  return true;
-}
+function isValidSolanaPublicKey(pk){ if (!pk || typeof pk !== 'string') return false; const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/; if (!base58Regex.test(pk)) return false; if (pk.length < 32 || pk.length > 64) return false; return true; }
 
 /* ---------------------------
-   Generic helper to finalize bind (global entrypoint used by index.html's manual bind)
+   finalizeBind
 */
 async function finalizeBind(publicKey, providerName){
-  if (!publicKey) {
-    showModal('<div class="small-muted">No public key provided</div>', ()=> setTimeout(hideModal,900));
-    return false;
-  }
-  if (!isValidSolanaPublicKey(publicKey)){
-    showModal('<div class="small-muted">Public key format invalid</div>', ()=> setTimeout(hideModal,900));
-    return false;
-  }
+  if (!publicKey) { showModal('<div class="small-muted">No public key provided</div>', ()=> setTimeout(hideModal,900)); return false; }
+  if (!isValidSolanaPublicKey(publicKey)){ showModal('<div class="small-muted">Public key format invalid</div>', ()=> setTimeout(hideModal,900)); return false; }
 
-  // set provider early so saveBoundWalletToStorage records it on success
   clientState.walletProvider = providerName || clientState.walletProvider || null;
 
   const ok = await bindWalletWithPublicKey(publicKey);
@@ -658,6 +400,8 @@ async function finalizeBind(publicKey, providerName){
     clientState.walletProvider = providerName;
     saveBoundWalletToStorage(publicKey, providerName);
     updateUI();
+    // If page has bottom-sheet, close it
+    if (typeof window._hexon_closeWalletSheet === 'function'){ try { window._hexon_closeWalletSheet(); } catch(e){} }
     showModal(`<div class="small-muted">Wallet connected (${escapeHtml(providerName || 'unknown')})</div>`, ()=> setTimeout(hideModal,900));
     return true;
   } else {
@@ -669,14 +413,12 @@ async function finalizeBind(publicKey, providerName){
 }
 
 /* ---------------------------
-   Attempt preferred connection (injected-first, then deep-link + prompt)
+   Attempt preferred connection
 */
 async function attemptConnectPreferred(providerKey){
-  // providerKey: 'phantom'|'solflare'|'backpack'
   hideModal();
   const detected = detectInjectedProviders();
 
-  // If injected provider present, prefer it (user gesture required)
   if ((providerKey === 'phantom' && detected.phantom) ||
       (providerKey === 'solflare' && detected.solflare) ||
       (providerKey === 'backpack' && detected.backpack)) {
@@ -687,9 +429,7 @@ async function attemptConnectPreferred(providerKey){
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         const ok = await finalizeBind(publicKey, 'phantom');
         hideModal();
-        if (!ok){
-          showModal('<div class="small-muted">Injected Phantom connect succeeded but server bind failed</div>', ()=> setTimeout(hideModal,1200));
-        }
+        if (!ok) showModal('<div class="small-muted">Injected Phantom connect succeeded but server bind failed</div>', ()=> setTimeout(hideModal,1200));
         return;
       }
       if (providerKey === 'solflare' && (window.solflare || (window.solana && window.solana.isSolflare))){
@@ -712,38 +452,28 @@ async function attemptConnectPreferred(providerKey){
       }
     } catch (err){
       console.warn('Injected provider connect failed', err);
-      // fallthrough to deep-link attempt
       hideModal();
     }
   }
 
-  // If we reach here, either no injected provider or injected connect failed -> deep-link or universal link
-  if (providerKey === 'phantom') {
-    await openPhantomDeepLink();
-  } else if (providerKey === 'solflare') {
-    await openSolflareDeepLink();
-  } else if (providerKey === 'backpack') {
-    await openBackpackDeepLink();
-  } else {
-    showModal('<div class="small-muted">Wallet not available</div>', ()=> setTimeout(hideModal,900));
-  }
+  if (providerKey === 'phantom') { await openPhantomDeepLink(); }
+  else if (providerKey === 'solflare') { await openSolflareDeepLink(); }
+  else if (providerKey === 'backpack') { await openBackpackDeepLink(); }
+  else { showModal('<div class="small-muted">Wallet not available</div>', ()=> setTimeout(hideModal,900)); }
 }
 
 /* ---------------------------
-   Helper to extract public key from provider responses
+   Extract public key helper
 */
 function extractPublicKeyFromProviderResponse(resp){
   try {
     if (!resp) return null;
-    // Many providers return { publicKey: PublicKey } or PublicKey directly or {address} or string
     if (typeof resp === 'string') return resp;
     if (resp.publicKey && typeof resp.publicKey.toString === 'function') return resp.publicKey.toString();
     if (resp.publicKey && typeof resp.publicKey === 'string') return resp.publicKey;
     if (resp.public_key && typeof resp.public_key === 'string') return resp.public_key;
     if (resp.address && typeof resp.address === 'string') return resp.address;
-    // sometimes connector returns { data: { publicKey: '...' } }
     if (resp.data && resp.data.publicKey) return resp.data.publicKey;
-    // fallback: JSON stringify search
     const s = JSON.stringify(resp);
     const match = s.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
     if (match) return match[1];
@@ -752,152 +482,25 @@ function extractPublicKeyFromProviderResponse(resp){
 }
 
 /* ---------------------------
-   Phantom connector (injected + deep-link fallback)
+   Phantom / Solflare / Backpack connectors & deep-links
 */
-function openPhantomDeepLink(){
-  try {
-    const origin = window.location.origin.replace(/\/+$/, '');
-    const cleanRedirect = buildCleanRedirect();
-    // Phantom universal link
-    const link = `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(cleanRedirect)}`;
-    const install = 'https://phantom.app/';
-    return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Phantom' });
-  } catch (e) {
-    console.error('Phantom deep link failed', e);
-    try { window.open('https://phantom.app/', '_blank'); } catch(e2){ console.warn(e2); }
-    return Promise.resolve(false);
-  }
-}
+function openPhantomDeepLink(){ try { const origin = window.location.origin.replace(/\/+$/, ''); const cleanRedirect = buildCleanRedirect(); const link = `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(cleanRedirect)}`; const install = 'https://phantom.app/'; return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Phantom' }); } catch (e) { console.error('Phantom deep link failed', e); try { window.open('https://phantom.app/', '_blank'); } catch(e2){ console.warn(e2); } return Promise.resolve(false); } }
+async function connectWithPhantom(){ if (tg){ openPhantomDeepLink(); return; } if (window.solana && window.solana.isPhantom){ try { const resp = await window.solana.connect(); const publicKey = extractPublicKeyFromProviderResponse(resp); const ok = await finalizeBind(publicKey, 'phantom'); if (ok) hideModal(); return; } catch (err) { console.warn('Injected Phantom connect failed', err); showModal('<div class="small-muted">Phantom connection canceled or failed. Tap to open Phantom app.</div><div style="height:8px"></div><button id="openPhantomBtn" class="button">Open Phantom</button>', ()=>{ const b = $('#openPhantomBtn'); if (b) b.onclick = ()=> { openPhantomDeepLink(); }; }); return; } } else { openPhantomDeepLink(); } }
 
-async function connectWithPhantom(){
-  if (tg){ openPhantomDeepLink(); return; }
+function openSolflareDeepLink(){ try { const cleanRedirect = buildCleanRedirect(); const link = `https://solflare.com/access?redirect=${encodeURIComponent(cleanRedirect)}`; const install = 'https://solflare.com/'; return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Solflare' }); } catch(e){ console.warn('openSolflareDeepLink failed', e); try { window.open('https://solflare.com/', '_blank'); } catch(e2){} return Promise.resolve(false); } }
+async function connectWithSolflare(){ if (tg){ openSolflareDeepLink(); return; } try { if (window.solflare && typeof window.solflare.connect === 'function'){ const resp = await window.solflare.connect(); const publicKey = extractPublicKeyFromProviderResponse(resp); const ok = await finalizeBind(publicKey, 'solflare'); if (ok) hideModal(); return; } else if (window.solana && window.solana.isSolflare){ try { const r = await window.solana.connect(); const publicKey = extractPublicKeyFromProviderResponse(r); const ok = await finalizeBind(publicKey, 'solflare'); if (ok) hideModal(); return; } catch(e){} } } catch(e){ console.warn('solflare injected connect failed', e); } openSolflareDeepLink(); }
 
-  if (window.solana && window.solana.isPhantom){
-    try {
-      const resp = await window.solana.connect();
-      const publicKey = extractPublicKeyFromProviderResponse(resp);
-      const ok = await finalizeBind(publicKey, 'phantom');
-      if (ok) hideModal();
-      return;
-    } catch (err) {
-      console.warn('Injected Phantom connect failed', err);
-      showModal('<div class="small-muted">Phantom connection canceled or failed. Tap to open Phantom app.</div><div style="height:8px"></div><button id="openPhantomBtn" class="button">Open Phantom</button>', ()=>{
-        const b = $('#openPhantomBtn'); if (b) b.onclick = ()=> { openPhantomDeepLink(); };
-      });
-      return;
-    }
-  } else {
-    openPhantomDeepLink();
-  }
-}
+function openBackpackDeepLink(){ try { const link = `https://backpack.app/`; const install = 'https://backpack.app/'; return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Backpack' }); } catch(e){ console.warn('openBackpackDeepLink failed', e); window.open('https://backpack.app/', '_blank'); return Promise.resolve(false); } }
+async function connectWithBackpack(){ if (tg){ openBackpackDeepLink(); return; } try { if (window.backpack && typeof window.backpack.connect === 'function'){ const resp = await window.backpack.connect(); const publicKey = extractPublicKeyFromProviderResponse(resp); const ok = await finalizeBind(publicKey, 'backpack'); if (ok) hideModal(); return; } else if (window.solana && window.solana.isBackpack){ try { const r = await window.solana.connect(); const publicKey = extractPublicKeyFromProviderResponse(r); const ok = await finalizeBind(publicKey, 'backpack'); if (ok) hideModal(); return; } catch(e){} } } catch(e){ console.warn('backpack injected connect failed', e); } openBackpackDeepLink(); }
 
 /* ---------------------------
-   Solflare connector (injected + deep-link fallback)
+   WalletConnect scaffold
 */
-function openSolflareDeepLink(){
-  try {
-    const cleanRedirect = buildCleanRedirect();
-    // Solflare universal link (access endpoint supports redirect param)
-    const link = `https://solflare.com/access?redirect=${encodeURIComponent(cleanRedirect)}`;
-    const install = 'https://solflare.com/';
-    return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Solflare' });
-  } catch(e){ console.warn('openSolflareDeepLink failed', e); try { window.open('https://solflare.com/', '_blank'); } catch(e2){} return Promise.resolve(false); }
-}
-
-async function connectWithSolflare(){
-  if (tg){ openSolflareDeepLink(); return; }
-
-  try {
-    // window.solflare used by some integrations; fallback to window.solana.isSolflare
-    if (window.solflare && typeof window.solflare.connect === 'function'){
-      const resp = await window.solflare.connect();
-      const publicKey = extractPublicKeyFromProviderResponse(resp);
-      const ok = await finalizeBind(publicKey, 'solflare');
-      if (ok) hideModal();
-      return;
-    } else if (window.solana && window.solana.isSolflare){
-      try {
-        const r = await window.solana.connect();
-        const publicKey = extractPublicKeyFromProviderResponse(r);
-        const ok = await finalizeBind(publicKey, 'solflare');
-        if (ok) hideModal();
-        return;
-      } catch(e){}
-    }
-  } catch(e){ console.warn('solflare injected connect failed', e); }
-
-  openSolflareDeepLink();
-}
+function showWalletConnectInstructions(qrOrLinkText){ const html = `<div style="text-align:left"><h3>WalletConnect</h3><div class="small-muted">WalletConnect allows many wallets (Coinbase Wallet, Trust Wallet, Exodus, etc.).</div><div style="height:8px"></div><div class="small-muted">${escapeHtml(qrOrLinkText || 'Open your wallet app and choose "WalletConnect" or scan a QR.' )}</div><div style="height:12px"></div><button id="closeWc" class="btn-ghost">Close</button></div>`; showModal(html, ()=>{ const c = $('#closeWc'); if (c) c.onclick = hideModal; }); }
+async function connectWithWalletConnect(){ try { if (window.SOL_WALLETCONNECT_CONNECTOR && typeof window.SOL_WALLETCONNECT_CONNECTOR.connect === 'function'){ const pk = await window.SOL_WALLETCONNECT_CONNECTOR.connect({ redirect: buildCleanRedirect() }); if (pk) { const ok = await finalizeBind(pk, 'walletconnect'); if (ok) hideModal(); } return; } showWalletConnectInstructions('No WalletConnect helper found. Use your wallet app and paste returned public key into the "Bind Public Key" field.'); } catch (e) { console.warn('connectWithWalletConnect failed', e); showWalletConnectInstructions('WalletConnect failed — try a mobile wallet and use WalletConnect option there.'); } }
 
 /* ---------------------------
-   Backpack connector (injected + deep-link fallback)
-*/
-function openBackpackDeepLink(){
-  try {
-    const link = `https://backpack.app/`;
-    const install = 'https://backpack.app/';
-    return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Backpack' });
-  } catch(e){ console.warn('openBackpackDeepLink failed', e); window.open('https://backpack.app/', '_blank'); return Promise.resolve(false); }
-}
-
-async function connectWithBackpack(){
-  if (tg){ openBackpackDeepLink(); return; }
-
-  try {
-    if (window.backpack && typeof window.backpack.connect === 'function'){
-      const resp = await window.backpack.connect();
-      const publicKey = extractPublicKeyFromProviderResponse(resp);
-      const ok = await finalizeBind(publicKey, 'backpack');
-      if (ok) hideModal();
-      return;
-    } else if (window.solana && window.solana.isBackpack){
-      try {
-        const r = await window.solana.connect();
-        const publicKey = extractPublicKeyFromProviderResponse(r);
-        const ok = await finalizeBind(publicKey, 'backpack');
-        if (ok) hideModal();
-        return;
-      } catch(e){}
-    }
-  } catch(e){ console.warn('backpack injected connect failed', e); }
-
-  openBackpackDeepLink();
-}
-
-/* ---------------------------
-   WalletConnect scaffold (improved messaging)
-*/
-function showWalletConnectInstructions(qrOrLinkText){
-  const html = `<div style="text-align:left">
-    <h3>WalletConnect</h3>
-    <div class="small-muted">WalletConnect allows many wallets (Coinbase Wallet, Trust Wallet, Exodus, etc.).</div>
-    <div style="height:8px"></div>
-    <div class="small-muted">${escapeHtml(qrOrLinkText || 'Open your wallet app and choose "WalletConnect" or scan a QR.' )}</div>
-    <div style="height:12px"></div>
-    <button id="closeWc" class="btn-ghost">Close</button>
-  </div>`;
-  showModal(html, ()=>{ const c = $('#closeWc'); if (c) c.onclick = hideModal; });
-}
-
-async function connectWithWalletConnect(){
-  try {
-    if (window.SOL_WALLETCONNECT_CONNECTOR && typeof window.SOL_WALLETCONNECT_CONNECTOR.connect === 'function'){
-      const pk = await window.SOL_WALLETCONNECT_CONNECTOR.connect({ redirect: buildCleanRedirect() });
-      if (pk) {
-        const ok = await finalizeBind(pk, 'walletconnect');
-        if (ok) hideModal();
-      }
-      return;
-    }
-    showWalletConnectInstructions('No WalletConnect helper found. Use your wallet app and paste returned public key into the "Bind Public Key" field.');
-  } catch (e) {
-    console.warn('connectWithWalletConnect failed', e);
-    showWalletConnectInstructions('WalletConnect failed — try a mobile wallet and use WalletConnect option there.');
-  }
-}
-
-/* ---------------------------
-   Generic server finalizer
+   Server bind finalizer
 */
 async function bindWalletWithPublicKey(publicKey){
   try {
@@ -905,12 +508,7 @@ async function bindWalletWithPublicKey(publicKey){
     const payload = { sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.pendingReferral || clientState.referralCode || null };
     const res = await api('/wallet/bind','POST', payload);
     if (res && res.ok){
-      // merge server data into client state (no hardcoded fallbacks)
-      if (res.sessionId && res.sessionId !== clientState.sessionId){
-        clientState.sessionId = res.sessionId;
-        saveSessionToStorage(clientState.sessionId);
-        console.log('Adopted server sessionId:', clientState.sessionId);
-      }
+      if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); console.log('Adopted server sessionId:', clientState.sessionId); }
       clientState.wallet = publicKey;
       clientState.userId = res.userId ?? clientState.userId;
       clientState.gp = res.gp ?? clientState.gp;
@@ -935,12 +533,10 @@ async function bindWalletWithPublicKey(publicKey){
 }
 
 /* ---------------------------
-   Parse deep link / redirect returns (Phantom/Solflare/Backpack)
-   - looks in query + hash + common param names (very permissive)
+   Parse deep link / redirect returns
 */
 function parseReturnParams(){
   try {
-    // gather search + hash querystring
     let combined = window.location.search || '';
     if (window.location.hash){
       const h = window.location.hash.replace(/^#/, '');
@@ -948,36 +544,19 @@ function parseReturnParams(){
       else combined += (combined ? '&' : '') + h;
     }
     const params = new URLSearchParams(combined);
-    const names = [
-      'phantom_public_key',
-      'phantom_encryption_public_key',
-      'public_key',
-      'publicKey',
-      'public-key',
-      'wallet',
-      'pk',
-      'address',
-      'account',
-      'account_id'
-    ];
-    for (const n of names){
-      const v = params.get(n);
-      if (v) return v;
-    }
-    // check common JSON param
+    const names = ['phantom_public_key','phantom_encryption_public_key','public_key','publicKey','public-key','wallet','pk','address','account','account_id'];
+    for (const n of names){ const v = params.get(n); if (v) return v; }
     const raw = params.get('result') || params.get('response') || params.get('data');
     if (raw){
       try {
         const parsed = JSON.parse(raw);
         if (parsed && (parsed.publicKey || parsed.address || parsed.pk)) return parsed.publicKey || parsed.address || parsed.pk;
-        // check nested
         for (const k of Object.keys(parsed || {})){
           const val = parsed[k];
           if (typeof val === 'string' && isValidSolanaPublicKey(val)) return val;
         }
       } catch(e){}
     }
-    // fallback: search full URL for base58-like token
     const full = window.location.href;
     const match = full.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
     if (match) return match[1];
@@ -991,37 +570,22 @@ function readWalletReturn(){
     if (pk){
       console.log('Wallet return detected, publicKey=', pk);
       (async ()=>{
-        if (!isValidSolanaPublicKey(pk)){
-          showModal('<div class="small-muted">Returned public key appears invalid</div>', ()=> setTimeout(hideModal,1200));
-          return;
-        }
+        if (!isValidSolanaPublicKey(pk)){ showModal('<div class="small-muted">Returned public key appears invalid</div>', ()=> setTimeout(hideModal,1200)); return; }
         const ok = await bindWalletWithPublicKey(pk);
-        try {
-          const cleanUrl = window.location.origin + window.location.pathname;
-          history.replaceState({}, document.title, cleanUrl);
-        } catch(e){ console.warn('replaceState failed', e); }
-        if (ok) {
-          clearPendingReferral();
-          showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
-        } else {
-          showModal('<div class="small-muted">Wallet connect failed — open app and try again</div>', ()=> setTimeout(hideModal,1200));
-        }
+        try { const cleanUrl = window.location.origin + window.location.pathname; history.replaceState({}, document.title, cleanUrl); } catch(e){ console.warn('replaceState failed', e); }
+        if (ok) { clearPendingReferral(); showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900)); } else { showModal('<div class="small-muted">Wallet connect failed — open app and try again</div>', ()=> setTimeout(hideModal,1200)); }
       })();
       return true;
     }
     return false;
-  } catch(e){
-    console.warn('readWalletReturn error', e);
-    return false;
-  }
+  } catch(e){ console.warn('readWalletReturn error', e); return false; }
 }
 
 /* ---------------------------
-   Listen for injected provider events
+   Injected provider listeners
 */
 function setupInjectedProviderListeners(){
   try {
-    // universal solana on/connect/disconnect
     if (window.solana && typeof window.solana.on === 'function'){
       try {
         window.solana.on('connect', async (pk) => {
@@ -1030,9 +594,7 @@ function setupInjectedProviderListeners(){
             if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
               clientState.walletProvider = detectInjectedProviders().phantom ? 'phantom' : clientState.walletProvider;
               const ok = await bindWalletWithPublicKey(publicKey);
-              if (ok) {
-                showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
-              }
+              if (ok) { showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900)); }
             }
           } catch(e){ console.warn('provider connect handler error', e); }
         });
@@ -1046,7 +608,6 @@ function setupInjectedProviderListeners(){
       } catch(e){ console.warn('solana listener setup failed', e); }
     }
 
-    // detect solflare events
     if (window.solflare && typeof window.solflare.on === 'function'){
       try {
         window.solflare.on('connect', async (pk) => {
@@ -1057,16 +618,10 @@ function setupInjectedProviderListeners(){
             if (ok) showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
           }
         });
-        window.solflare.on('disconnect', ()=> {
-          clientState.wallet = null;
-          clientState.walletProvider = null;
-          clearBoundWalletFromStorage();
-          updateUI();
-        });
-      } catch(e){ /* ignore */ }
+        window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+      } catch(e){}
     }
 
-    // backpack events
     if (window.backpack && typeof window.backpack.on === 'function'){
       try {
         window.backpack.on('connect', async (pk) => {
@@ -1077,12 +632,7 @@ function setupInjectedProviderListeners(){
             if (ok) showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
           }
         });
-        window.backpack.on('disconnect', ()=> {
-          clientState.wallet = null;
-          clientState.walletProvider = null;
-          clearBoundWalletFromStorage();
-          updateUI();
-        });
+        window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
       } catch(e){}
     }
   } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
@@ -1091,32 +641,14 @@ function setupInjectedProviderListeners(){
 /* ---------------------------
    Referral UI & sharing
 */
-async function getMyReferral(){
-  try {
-    const resp = await api('/player/referral','GET');
-    if (resp && resp.refCode){
-      clientState.referralCode = resp.refCode;
-      clientState.referralsActive = resp.count ?? clientState.referralsActive;
-    }
-    return clientState.referralCode;
-  } catch(e){ console.warn('getMyReferral', e); return clientState.referralCode; }
-}
+async function getMyReferral(){ try { const resp = await api('/player/referral','GET'); if (resp && resp.refCode){ clientState.referralCode = resp.refCode; clientState.referralsActive = resp.count ?? clientState.referralsActive; } return clientState.referralCode; } catch(e){ console.warn('getMyReferral', e); return clientState.referralCode; } }
 
 function showReferralModal(){
   (async ()=>{
     let code = clientState.referralCode || await getMyReferral();
     if (!code) code = 'UNKNOWN';
     const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
-    const html = `<div style="text-align:left">
-      <h3>Invite Friends</h3>
-      <div class="small-muted">Share your referral link — both of you can earn rewards</div>
-      <div style="margin-top:8px;"><input id="refLinkBox" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" value="${escapeHtml(link)}" readonly></div>
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <button id="copyRefBtn" class="button">Copy Link</button>
-        <button id="shareRefBtn" class="btn-ghost">Share</button>
-      </div>
-      <div style="margin-top:8px;" class="small-muted">Referrals: ${clientState.referralsActive || 0}</div>
-    </div>`;
+    const html = `<div style="text-align:left"><h3>Invite Friends</h3><div class="small-muted">Share your referral link — both of you can earn rewards</div><div style="margin-top:8px;"><input id="refLinkBox" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" value="${escapeHtml(link)}" readonly></div><div style="display:flex; gap:8px; margin-top:10px;"><button id="copyRefBtn" class="button">Copy Link</button><button id="shareRefBtn" class="btn-ghost">Share</button></div><div style="margin-top:8px;" class="small-muted">Referrals: ${clientState.referralsActive || 0}</div></div>`;
     showModal(html, ()=>{
       const copy = $('#copyRefBtn'); const share = $('#shareRefBtn'); const box = $('#refLinkBox');
       if (copy) copy.onclick = async ()=>{ try{ await navigator.clipboard.writeText(box.value); showModal('<div class="small-muted">Copied!</div>', ()=> setTimeout(hideModal,600)); } catch(e){ console.warn(e); alert('Copy failed'); } };
@@ -1128,30 +660,9 @@ function showReferralModal(){
 /* ---------------------------
    UI helpers, miners, leaderboard
 */
-function renderMinersList(){
-  const container = $('minersList'); if (!container) return;
-  container.innerHTML = '';
-  if (!clientState.miners || clientState.miners.length === 0) { container.innerHTML = '<div class="small-muted">No miners owned</div>'; return; }
-  clientState.miners.forEach(m=>{
-    const node = document.createElement('div');
-    node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0';
-    node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status || 'Active')}</div>`;
-    container.appendChild(node);
-  });
-}
+function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML = ''; if (!clientState.miners || clientState.miners.length === 0) { container.innerHTML = '<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status || 'Active')}</div>`; container.appendChild(node); }); }
 
-async function refreshLeaderboard(){
-  const top = await api('/leaderboard/top','GET');
-  const el = $('leaderboard');
-  if (!el) return;
-  el.innerHTML = '';
-  if (!top || !Array.isArray(top)) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
-  top.forEach((t,idx)=>{
-    const row = document.createElement('div'); row.className = 'leader-entry';
-    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score != null) ? Number(t.score).toLocaleString() : '—'}</div>`;
-    el.appendChild(row);
-  });
-}
+async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML = ''; if (!top || !Array.isArray(top)) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className = 'leader-entry'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score != null) ? Number(t.score).toLocaleString() : '—'}</div>`; el.appendChild(row); }); }
 
 /* ---------------------------
    updateUI
@@ -1163,22 +674,11 @@ function updateUI(){
   if ($('ui-level')) $('ui-level').innerText = gameState.level;
   if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
   if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU || 0).toFixed(2);
-  if ($('ui-hxn')) {
-    const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0;
-    $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN';
-  }
-  if ($('ui-username')) {
-    $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest');
-  }
-  if ($('ui-session')) {
-    $('ui-session').innerText = clientState.sessionId || '—';
-  }
-  if ($('ui-wallet')) {
-    $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected';
-  }
-  if ($('ui-provider')) {
-    $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—';
-  }
+  if ($('ui-hxn')) { const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0; $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN'; }
+  if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
+  if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
+  if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
+  if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
   if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday || 0);
   if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
 }
@@ -1186,64 +686,14 @@ function updateUI(){
 /* ---------------------------
    Phaser scenes and game logic
 */
-const gameState = {
-  grid: null,
-  activePiece: null,
-  nextPiece: null,
-  score: 0,
-  level: 1,
-  lines: 0,
-  dropInterval: INITIAL_DROP_MS,
-  isPlaying: false,
-  combo: 0
-};
+const gameState = { grid: null, activePiece: null, nextPiece: null, score: 0, level: 1, lines: 0, dropInterval: INITIAL_DROP_MS, isPlaying: false, combo: 0 };
 
-const PIECES = {
-  I: [
-    [[0,1],[1,1],[2,1],[3,1]],
-    [[2,0],[2,1],[2,2],[2,3]],
-    [[0,2],[1,2],[2,2],[3,2]],
-    [[1,0],[1,1],[1,2],[1,3]]
-  ],
-  J: [
-    [[0,0],[0,1],[1,1],[2,1]],
-    [[1,0],[2,0],[1,1],[1,2]],
-    [[0,1],[1,1],[2,1],[2,2]],
-    [[1,0],[1,1],[0,2],[1,2]]
-  ],
-  L: [
-    [[2,0],[0,1],[1,1],[2,1]],
-    [[1,0],[1,1],[1,2],[2,2]],
-    [[0,1],[1,1],[2,1],[0,2]],
-    [[0,0],[1,0],[1,1],[1,2]]
-  ],
-  O: [
-    [[1,0],[2,0],[1,1],[2,1]]
-  ],
-  S: [
-    [[1,0],[2,0],[0,1],[1,1]],
-    [[1,0],[1,1],[2,1],[2,2]]
-  ],
-  T: [
-    [[1,0],[0,1],[1,1],[2,1]],
-    [[1,0],[1,1],[2,1],[1,2]],
-    [[0,1],[1,1],[2,1],[1,2]],
-    [[1,0],[0,1],[1,1],[1,2]]
-  ],
-  Z: [
-    [[0,0],[1,0],[1,1],[2,1]],
-    [[2,0],[1,1],[2,1],[1,2]]
-  ]
-};
+const PIECES = { I: [ [[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]] ], J: [ [[0,0],[0,1],[1,1],[2,1]], [[1,0],[2,0],[1,1],[1,2]], [[0,1],[1,1],[2,1],[2,2]], [[1,0],[1,1],[0,2],[1,2]] ], L: [ [[2,0],[0,1],[1,1],[2,1]], [[1,0],[1,1],[1,2],[2,2]], [[0,1],[1,1],[2,1],[0,2]], [[0,0],[1,0],[1,1],[1,2]] ], O: [ [[1,0],[2,0],[1,1],[2,1]] ], S: [ [[1,0],[2,0],[0,1],[1,1]], [[1,0],[1,1],[2,1],[2,2]] ], T: [ [[1,0],[0,1],[1,1],[2,1]], [[1,0],[1,1],[2,1],[1,2]], [[0,1],[1,1],[2,1],[1,2]], [[1,0],[0,1],[1,1],[1,2]] ], Z: [ [[0,0],[1,0],[1,1],[2,1]], [[2,0],[1,1],[2,1],[1,2]] ] };
 const PIECE_TYPES = Object.keys(PIECES);
 
 let phaserGame;
 
-class BootScene extends Phaser.Scene {
-  constructor(){ super({ key:'BootScene' }); }
-  create(){ this.scene.start('GameScene'); }
-}
-
+class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 class GameScene extends Phaser.Scene {
   constructor(){ super({ key:'GameScene' }); }
   create(){
@@ -1255,12 +705,8 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x061426, 1);
     g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
     g.lineStyle(1, 0x0d2130, 0.6);
-    for (let r=0; r<=GRID_ROWS; r++){
-      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL + GAP), this.gridOrigin.x + GRID_COLS*(CELL + GAP), this.gridOrigin.y + r*(CELL + GAP)));
-    }
-    for (let c=0; c<=GRID_COLS; c++){
-      g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y + GRID_ROWS*(CELL + GAP)));
-    }
+    for (let r=0; r<=GRID_ROWS; r++){ g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL + GAP), this.gridOrigin.x + GRID_COLS*(CELL + GAP), this.gridOrigin.y + r*(CELL + GAP))); }
+    for (let c=0; c<=GRID_COLS; c++){ g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y + GRID_ROWS*(CELL + GAP))); }
 
     initGrid();
 
@@ -1270,20 +716,9 @@ class GameScene extends Phaser.Scene {
         const x = this.gridOrigin.x + c*(CELL + GAP) + CELL/2;
         const y = this.gridOrigin.y + r*(CELL + GAP) + CELL/2;
         const rect = this.add.rectangle(x, y, CELL, CELL, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
-        rect.updateFill = function(color){
-          try { this.fillColor = color; } catch(e){}
-          try { if (typeof this.setFillStyle === 'function') this.setFillStyle(color); } catch(e){}
-        };
+        rect.updateFill = function(color){ try { this.fillColor = color; } catch(e){} try { if (typeof this.setFillStyle === 'function') this.setFillStyle(color); } catch(e){} };
         rect.setInteractive({ useHandCursor: true });
-        ((rr, cc, node) => {
-          node.on('pointerdown', () => {
-            vibratePreferTelegram(20);
-            logAction('cell_click', { x: cc, y: rr });
-            const orig = node.fillColor || 0x102033;
-            node.updateFill(0xFFFFFF);
-            this.time.delayedCall(80, ()=> node.updateFill(orig));
-          });
-        })(r, c, rect);
+        ((rr, cc, node) => { node.on('pointerdown', () => { vibratePreferTelegram(20); logAction('cell_click', { x: cc, y: rr }); const orig = node.fillColor || 0x102033; node.updateFill(0xFFFFFF); this.time.delayedCall(80, ()=> node.updateFill(orig)); }); })(r, c, rect);
         this.cellSprites[r][c] = rect;
       }
     }
@@ -1297,27 +732,12 @@ class GameScene extends Phaser.Scene {
   }
 
   startDropLoop(){
-    if (this.dropEvent){
-      try { this.dropEvent.remove(false); } catch(e){ console.warn('dropEvent remove failed', e); }
-      this.dropEvent = null;
-    }
+    if (this.dropEvent){ try { this.dropEvent.remove(false); } catch(e){ console.warn('dropEvent remove failed', e); } this.dropEvent = null; }
     const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-    this.dropEvent = this.time.addEvent({
-      delay,
-      loop: true,
-      callback: () => {
-        if (!gameState.isPlaying) return;
-        const moved = movePieceDown();
-        logAction('tick_drop', { moved });
-        if (!moved) lockPiece();
-      }
-    });
+    this.dropEvent = this.time.addEvent({ delay, loop: true, callback: () => { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop', { moved }); if (!moved) lockPiece(); } });
   }
 
-  update(){
-    if (!gameState.isPlaying) return;
-    this.renderGrid();
-  }
+  update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
 
   renderGrid(){
     for (let r=0; r<GRID_ROWS; r++){
@@ -1340,233 +760,59 @@ class GameScene extends Phaser.Scene {
   }
 
   setupInput(){
-    this.input.keyboard.on('keydown', (ev)=>{
-      if (!gameState.isPlaying) return;
-      handleKey(ev.code || ev.key);
-    });
-    window.addEventListener('keydown', (ev) => {
-      if (!gameState.isPlaying) return;
-      handleKey(ev.code || ev.key);
-    });
+    this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
+    window.addEventListener('keydown', (ev) => { if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
     if (!document.querySelector('.touch-controls')) setupTouchControls(this);
   }
 
-  autoRecharge(){
-    clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT);
-    updateUI();
-    logAction('auto_recharge', { energy: clientState.energy });
-  }
+  autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); }
 }
 
-/* game utilities, lock/clear/score, gameover, etc. */
-function handleKey(code){
-  switch(code){
-    case 'ArrowLeft': case 'Left': movePiece(-1); break;
-    case 'ArrowRight': case 'Right': movePiece(1); break;
-    case 'ArrowDown': case 'Down': softDrop(); break;
-    case 'Space': case ' ': hardDrop(); break;
-    case 'ArrowUp': case 'Up': rotatePiece(); break;
-    default: return;
-  }
-  updateUI();
-}
-function getPieceCells(piece){
-  const states = PIECES[piece.type];
-  const state = states[piece.rot % states.length];
-  return state.map(p => ({ x: p[0] + piece.x, y: p[1] + piece.y }));
-}
-function initGrid(){
-  gameState.grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(0));
-  gameState.score = 0;
-  gameState.level = 1;
-  gameState.lines = 0;
-  gameState.combo = 0;
-  gameState.dropInterval = INITIAL_DROP_MS;
-}
-function spawnPiece(){
-  // check energy before allowing play
-  if ((clientState.energy || 0) <= 0){
-    gameState.isPlaying = false;
-    showModal('<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>', ()=> setTimeout(hideModal,1200));
-    return;
-  }
-  const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-  const rot = 0;
-  const xStart = Math.floor((GRID_COLS - 4) / 2);
-  const yStart = 0;
-  gameState.activePiece = { type, rot, x: xStart, y: yStart };
-  gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-  logAction('spawn', { type, x: xStart, y: yStart });
-  if (checkCollision(getPieceCells(gameState.activePiece))) gameOver();
-}
-function checkCollision(cells){
-  for (const p of cells){
-    if (p.x < 0 || p.x >= GRID_COLS) return true;
-    if (p.y >= GRID_ROWS) return true;
-    if (p.y >= 0 && gameState.grid[p.y][p.x]) return true;
-  }
-  return false;
-}
-function movePiece(dir){
-  if (!gameState.activePiece) return;
-  const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir };
-  if (!checkCollision(getPieceCells(cand))){
-    gameState.activePiece.x = cand.x;
-    logAction('move', { dir });
-  }
-}
-function movePieceDown(){
-  if (!gameState.activePiece) return false;
-  const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 };
-  if (!checkCollision(getPieceCells(cand))){
-    gameState.activePiece.y = cand.y;
-    return true;
-  }
-  return false;
-}
+/* utilities: movement, lock, scoring, etc. */
+function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); }
+function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x: p[0] + piece.x, y: p[1] + piece.y })); }
+function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; }
+function spawnPiece(){ if ((clientState.energy || 0) <= 0){ gameState.isPlaying = false; showModal('<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>', ()=> setTimeout(hideModal,1200)); return; } const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]; const rot = 0; const xStart = Math.floor((GRID_COLS - 4) / 2); const yStart = 0; gameState.activePiece = { type, rot, x: xStart, y: yStart }; gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]; logAction('spawn', { type, x: xStart, y: yStart }); if (checkCollision(getPieceCells(gameState.activePiece))) gameOver(); }
+function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
+function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move', { dir }); } }
+function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
 function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); } }
 function hardDrop(){ let falls = 0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; clientState.gp += falls * 2; logAction('hard_drop', { falls }); updateUI(); }
 function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate', { rot: cand.rot, kick: k }); return; } } }
-function lockPiece(){
-  const ap = gameState.activePiece;
-  if (!ap) return;
-  const cells = getPieceCells(ap);
-  for (const p of cells){
-    if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){
-      gameState.grid[p.y][p.x] = ap.type;
-    }
-  }
-
-  // decrease energy by 1 per locked piece (game economy; adjust server-side if needed)
-  clientState.energy = Math.max(0, (clientState.energy || 0) - 1);
-
-  const cleared = [];
-  for (let r=0; r<GRID_ROWS; r++){
-    if (gameState.grid[r].every(v => v !== 0)) cleared.push(r);
-  }
-  if (cleared.length > 0) clearLines(cleared);
-  else gameState.combo = 0;
-
-  spawnPiece();
-
-  try {
-    const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-    if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
-  } catch(e){ console.warn('restart drop loop failed', e); }
-
-  updateUI();
-}
-function clearLines(rows){
-  rows.sort((a,b)=>a-b);
-  for (const r of rows){
-    gameState.grid.splice(r,1);
-    gameState.grid.unshift(Array(GRID_COLS).fill(0));
-  }
-  const count = rows.length;
-  const base = [0,100,300,500,800];
-  gameState.score += base[count] * gameState.level;
-  gameState.lines += count;
-  gameState.combo += 1;
-  clientState.gp += (count * 10) + (gameState.combo * 5);
-  logAction('clear', { count, combo: gameState.combo });
-
-  if (gameState.lines % 10 === 0){
-    gameState.level++;
-    gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92));
-  }
-  updateUI();
-}
-async function gameOver(){
-  gameState.isPlaying = false;
-  logAction('gameover', { score: gameState.score, lines: gameState.lines });
-  try {
-    await api('/game/submit-score','POST', {
-      sessionId: clientState.sessionId,
-      score: gameState.score,
-      lines: gameState.lines,
-      actionLog: clientState.actionLog.slice(-2000)
-    });
-  } catch(e){ console.warn(e); }
-  showModal(`<div style="font-weight:700">Game Over</div>
-    <div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>
-    <div style="height:12px"></div><button id="playAgain" class="button">Play Again</button>`, ()=>{
-      $('#playAgain').onclick = ()=>{ hideModal(); resetForPlay(); };
-  });
-  updateUI();
-}
-function resetForPlay(){
-  initGrid();
-  gameState.dropInterval = INITIAL_DROP_MS;
-  clientState.actionLog = [];
-  // refill energy when starting new run (server-side should control for fairness; client reserves).
-  clientState.energy = Math.max(0, clientState.energy);
-  spawnPiece();
-  gameState.isPlaying = true;
-  try {
-    const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-    if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
-  } catch(e){ console.warn(e); }
-  updateUI();
-}
+function lockPiece(){ const ap = gameState.activePiece; if (!ap) return; const cells = getPieceCells(ap); for (const p of cells){ if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){ gameState.grid[p.y][p.x] = ap.type; } } clientState.energy = Math.max(0, (clientState.energy || 0) - 1); const cleared = []; for (let r=0; r<GRID_ROWS; r++){ if (gameState.grid[r].every(v => v !== 0)) cleared.push(r); } if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0; spawnPiece(); try { const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); } catch(e){ console.warn('restart drop loop failed', e); } updateUI(); }
+function clearLines(rows){ rows.sort((a,b)=>a-b); for (const r of rows){ gameState.grid.splice(r,1); gameState.grid.unshift(Array(GRID_COLS).fill(0)); } const count = rows.length; const base = [0,100,300,500,800]; gameState.score += base[count] * gameState.level; gameState.lines += count; gameState.combo += 1; clientState.gp += (count * 10) + (gameState.combo * 5); logAction('clear', { count, combo: gameState.combo }); if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); } updateUI(); }
+async function gameOver(){ gameState.isPlaying = false; logAction('gameover', { score: gameState.score, lines: gameState.lines }); try { await api('/game/submit-score','POST', { sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); } showModal(`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div><div style="height:12px"></div><button id="playAgain" class="button">Play Again</button>`, ()=>{ $('#playAgain').onclick = ()=>{ hideModal(); resetForPlay(); }; }); updateUI(); }
+function resetForPlay(){ initGrid(); gameState.dropInterval = INITIAL_DROP_MS; clientState.actionLog = []; clientState.energy = Math.max(0, clientState.energy); spawnPiece(); gameState.isPlaying = true; try { const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); } catch(e){ console.warn(e); } updateUI(); }
 
 /* colors / touch controls */
-function colorFromVal(val){
-  const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 };
-  return map[val] ?? 0x0f172a;
-}
-function setupTouchControls(scene){
-  if (document.querySelector('.touch-controls')) return;
-  const wrapper = document.createElement('div');
-  wrapper.classList.add('touch-controls');
-  wrapper.style.display='flex'; wrapper.style.justifyContent='space-around'; wrapper.style.gap='8px'; wrapper.style.marginTop='12px';
-  const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerText='◀';
-  const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerText='▶';
-  const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerText='↻';
-  const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerText='↓';
-  [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
-  wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
-  const ui = $('uiPanel');
-  if (ui) ui.append(wrapper);
-  btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(20); logAction('touch_left'); updateUI(); };
-  btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(20); logAction('touch_right'); updateUI(); };
-  btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(20); logAction('touch_rotate'); updateUI(); };
-  btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(20); logAction('touch_drop'); updateUI(); };
-}
+function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
+function setupTouchControls(scene){ if (document.querySelector('.touch-controls')) return; const wrapper = document.createElement('div'); wrapper.classList.add('touch-controls'); wrapper.style.display='flex'; wrapper.style.justifyContent='space-around'; wrapper.style.gap='8px'; wrapper.style.marginTop='12px'; const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerText='◀'; const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerText='▶'; const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerText='↻'; const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerText='↓'; [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; }); wrapper.append(btnLeft, btnRotate, btnDown, btnRight); const ui = $('uiPanel'); if (ui) ui.append(wrapper); btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(20); logAction('touch_left'); updateUI(); }; btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(20); logAction('touch_right'); updateUI(); }; btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(20); logAction('touch_rotate'); updateUI(); }; btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(20); logAction('touch_drop'); updateUI(); }; }
 
 /* ---------------------------
-   Boot & sizing (use DOMContentLoaded for reliability)
+   Boot & sizing
 */
 document.addEventListener('DOMContentLoaded', async ()=>{
   try {
     console.log('Hexon boot starting...');
     initTelegram();
 
-    // Handle wallet returns first (Phantom / Solflare / Backpack)
     try { readWalletReturn(); } catch(e){ console.warn('readWalletReturn failed', e); }
 
-    // referral
     const ref = getRefFromURL();
     if (ref) savePendingReferral(ref);
     else loadPendingReferral();
 
-    // wire UI buttons - safely, with fallbacks
     try { const wa = $('#watchAdBtn'); if (wa) wa.addEventListener('click', showAdAndVerify); } catch(e){ console.warn(e); }
     try { const os = $('#openStore'); if (os) os.addEventListener('click', openMinerShop); } catch(e){ console.warn(e); }
     try { const bw = $('#bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); showWalletPicker(); }); } catch(e){ console.warn(e); }
-    try { const sr = $('#showRefBtn'); if (sr) sr.addEventListener('click', showReferralModal); } catch(e){ /* optional */ }
+    try { const sr = $('#showRefBtn'); if (sr) sr.addEventListener('click', showReferralModal); } catch(e){}
     try { const va = $('#viewAlloc'); if (va) va.addEventListener('click', ()=> showModal('<div class="small-muted">Allocation preview</div>')); } catch(e){}
     try { const cr = $('#claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
 
-    // attempt initial client init
     try {
       const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null });
       if (init){
-        if (init.sessionId && init.sessionId !== clientState.sessionId){
-          clientState.sessionId = init.sessionId;
-          saveSessionToStorage(clientState.sessionId);
-          console.log('Adopted server sessionId:', clientState.sessionId);
-        }
-
+        if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); console.log('Adopted server sessionId:', clientState.sessionId); }
         clientState.userId = init.userId ?? clientState.userId;
         clientState.gp = init.gp ?? clientState.gp;
         clientState.miners = init.miners ?? clientState.miners;
@@ -1576,24 +822,13 @@ document.addEventListener('DOMContentLoaded', async ()=>{
         clientState.referralCode = init.referralCode ?? clientState.referralCode;
         if (!clientState.username && init.username) clientState.username = init.username;
         if (init.referralAccepted) clearPendingReferral();
-
-        // If server reports wallet already bound, adopt it
-        if (init.wallet) {
-          clientState.wallet = init.wallet;
-          clientState.walletProvider = init.walletProvider || clientState.walletProvider;
-          saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider);
-        }
-        // If server reports energy, adopt it (server is authoritative)
+        if (init.wallet) { clientState.wallet = init.wallet; clientState.walletProvider = init.walletProvider || clientState.walletProvider; saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider); }
         if (typeof init.energy === 'number') clientState.energy = Math.max(0, Math.min(100, init.energy));
       }
     } catch(e){ console.warn('client init failed', e); }
 
-    // compute scale and sizing (same logic)
     const parentEl = document.getElementById('phaserCanvas') || document.body;
-    if (parentEl && parentEl.clientHeight < 200){
-      parentEl.style.minHeight = Math.max(420, Math.floor(window.innerHeight * 0.6)) + 'px';
-      parentEl.style.width = '100%';
-    }
+    if (parentEl && parentEl.clientHeight < 200){ parentEl.style.minHeight = Math.max(420, Math.floor(window.innerHeight * 0.6)) + 'px'; parentEl.style.width = '100%'; }
 
     const rect = parentEl.getBoundingClientRect();
     const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.9, 900));
@@ -1606,21 +841,9 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
     const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
-    if (parentEl && parentEl.style){
-      parentEl.style.minWidth = Math.min(canvasWidth, Math.max(320, canvasWidth)) + 'px';
-      parentEl.style.minHeight = Math.min(canvasHeight, Math.max(420, canvasHeight)) + 'px';
-    }
+    if (parentEl && parentEl.style){ parentEl.style.minWidth = Math.min(canvasWidth, Math.max(320, canvasWidth)) + 'px'; parentEl.style.minHeight = Math.min(canvasHeight, Math.max(420, canvasHeight)) + 'px'; }
 
-    // create Phaser
-    phaserGame = new Phaser.Game({
-      type: Phaser.AUTO,
-      parent: 'phaserCanvas',
-      width: canvasWidth,
-      height: canvasHeight,
-      backgroundColor: '#061426',
-      scene: [ BootScene, GameScene ],
-      render: { pixelArt: false, antialias: true }
-    });
+    phaserGame = new Phaser.Game({ type: Phaser.AUTO, parent: 'phaserCanvas', width: canvasWidth, height: canvasHeight, backgroundColor: '#061426', scene: [ BootScene, GameScene ], render: { pixelArt: false, antialias: true } });
 
     setupInjectedProviderListeners();
     loadAdsGram();
@@ -1637,7 +860,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 });
 
 /* ---------------------------
-   Misc: claimRewards
+   claimRewards
 */
 async function claimRewards(){
   showModal('<div class="small-muted">Claiming rewards...</div>');
@@ -1663,7 +886,7 @@ async function claimRewards(){
 }
 
 /* ---------------------------
-   Expose wallet helpers globally so index.html bottom-sheet can call them
+   Expose wallet helpers globally
 */
 window.connectWithPhantom = connectWithPhantom;
 window.connectWithSolflare = connectWithSolflare;
