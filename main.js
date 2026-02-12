@@ -365,24 +365,60 @@ async function purchaseMiner(itemId){
    - If injected provider exists (desktop / supported mobile browsers), use it.
    - Otherwise open Phantom universal link (deep link) immediately so iOS will hand off to the app.
    - Telegram WebApp: always deep-link (in-app WebView can't detect injected provider)
-   - Handles Phantom return parameters (phantom_public_key, public_key, publicKey)
+   - Handles Phantom redirect return (phantom_public_key, public_key, publicKey)
    - IMPORTANT: keep deep-link calls inside user gesture where possible.
 */
-function openPhantomDeepLink(){
+
+/*
+  IMPORTANT PHANTOM iOS NOTE (applies to openPhantomDeepLink below)
+  - Phantom expects a clean, same-origin redirect URL (no querystring fragments, stable path).
+  - Using a full `window.location.href` with existing query/hash often causes the universal link
+    to open Safari but the Phantom app will not redirect back to your original URL.
+  - Use a clean origin-root redirect (e.g. https://yourdomain.com/) OR a dedicated static path
+    that you serve from the same origin (e.g. /phantom-return).
+*/
+
+/* create a clean redirect path on the same origin (no query/hash) */
+function buildCleanRedirect(){
   try {
-    const app_url = encodeURIComponent(window.location.origin); // used by Phantom to return to your dapp domain
-    const redirect_link = encodeURIComponent(window.location.href); // where Phantom should redirect after connect
-    const link = `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
-    // Direct assignment on user gesture - best chance to open the installed app.
-    window.location.href = link;
+    // If you have a dedicated endpoint that is whitelisted in Phantom, return it here.
+    // Default to origin + '/' which is the safest general-purpose choice.
+    const origin = window.location.origin.replace(/\/+$/, '');
+    return origin + '/';
   } catch (e) {
-    // Last resort: open phantom website
-    try { window.location.href = 'https://phantom.app/'; } catch(e2){ window.open('https://phantom.app/', '_blank'); }
+    return window.location.origin + '/';
   }
 }
 
+/* openPhantomDeepLink: uses a clean redirect_link so Phantom can return to us reliably */
+function openPhantomDeepLink(){
+  try {
+    const origin = window.location.origin.replace(/\/+$/, '');
+    const cleanRedirect = buildCleanRedirect(); // e.g. https://example.com/
+    const app_url = encodeURIComponent(origin);
+    const redirect_link = encodeURIComponent(cleanRedirect);
+
+    // Use the universal link for Phantom. Keep this in a synchronous user gesture.
+    const link =
+      `https://phantom.app/ul/v1/connect` +
+      `?app_url=${app_url}` +
+      `&redirect_link=${redirect_link}`;
+
+    console.log('Attempting Phantom deep link ->', { link, cleanRedirect });
+
+    // Assign (synchronous) so it's treated as a user gesture.
+    // window.location.assign may be preferable to setting href in some contexts.
+    window.location.assign(link);
+  } catch (e) {
+    console.error('Phantom deep link failed', e);
+    try { window.location.assign('https://phantom.app/'); } catch(e2){ window.open('https://phantom.app/', '_blank'); }
+  }
+}
+
+/* bindWalletWithPublicKey: calls backend to finalize binding and updates UI */
 async function bindWalletWithPublicKey(publicKey){
   try {
+    console.log('Attempting server-side wallet bind', publicKey);
     const payload = { sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.pendingReferral || clientState.referralCode || null };
     const res = await api('/wallet/bind','POST', payload);
     if (res && res.ok){
@@ -406,9 +442,14 @@ async function bindWalletWithPublicKey(publicKey){
   }
 }
 
+/* parsePhantomReturnParams: support many possible returned param names, search both search and hash */
 function parsePhantomReturnParams(){
   try {
-    const params = new URLSearchParams(window.location.search || window.location.hash.replace('#','?'));
+    // Combine search and hash safely: treat hash like a query if it looks like '#?a=b'
+    const search = window.location.search || '';
+    const hash = window.location.hash && window.location.hash.indexOf('?') !== -1 ? window.location.hash.replace('#','') : '';
+    const combined = (search || '') + (hash || '');
+    const params = new URLSearchParams(combined);
     const candidates = [
       params.get('phantom_public_key'),
       params.get('phantom_encryption_public_key'),
@@ -424,21 +465,25 @@ function parsePhantomReturnParams(){
   } catch(e){ return null; }
 }
 
+/* readPhantomReturn: called on load to detect Phantom redirect and finalize bind */
 function readPhantomReturn(){
   try {
     const pk = parsePhantomReturnParams();
     if (pk){
+      console.log('Phantom return detected, publicKey=', pk);
       // Immediately attempt to bind using returned public key
       (async ()=>{
         const ok = await bindWalletWithPublicKey(pk);
-        // Remove phantom params so UI is clean (preserve other path)
-        try { history.replaceState({}, document.title, window.location.pathname + window.location.hash); } catch(e){ console.warn('replaceState failed', e); }
+        // Remove phantom params so UI is clean (preserve path)
+        try {
+          // Prefer replaceState to remove query/hash only if supported
+          const cleanUrl = window.location.origin + window.location.pathname + window.location.hash.replace(/[?&]phantom_public_key=[^&]*/,'').replace(/[?&]public_key=[^&]*/,'').replace(/[?&]publicKey=[^&]*/,'');
+          history.replaceState({}, document.title, cleanUrl);
+        } catch(e){ console.warn('replaceState failed', e); }
         if (ok) {
-          // clear pending ref locally if any (server already recorded)
           clearPendingReferral();
           showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
         } else {
-          // show user a clear CTA to retry binding (deep-link)
           showModal('<div class="small-muted">Wallet connect failed — tap "Open Phantom" to try via app</div><div style="height:8px"></div><button id="openPhantomRetry" class="button">Open Phantom</button>', ()=>{
             const b = $('#openPhantomRetry'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
           });
@@ -467,7 +512,6 @@ async function bindWallet(event){
   try {
     // If Telegram WebApp — deep link only (in-app webview can't detect injected provider reliably).
     if (tg) {
-      // keep inside user gesture
       openPhantomDeepLink();
       return;
     }
@@ -490,11 +534,9 @@ async function bindWallet(event){
       // call server bind
       const ok = await bindWalletWithPublicKey(publicKey);
       if (ok){
-        // success
         showModal('<div class="small-muted">Wallet bound</div>', ()=> setTimeout(hideModal,900));
         return;
       } else {
-        // server rejected, show user a fallback with explicit CTA
         showModal('<div class="small-muted">Bind failed — open Phantom app to continue</div><div style="height:8px"></div><button id="openPhantomFromBind" class="button">Open Phantom</button>', ()=>{
           const b = $('#openPhantomFromBind'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
         });
@@ -502,7 +544,6 @@ async function bindWallet(event){
       }
     } catch (err) {
       // If injected connect failed or was canceled, do NOT attempt to auto-open deep-link outside of a user gesture.
-      // Instead show a modal with a clear button so user can explicitly open the Phantom app.
       console.warn('Injected Phantom connect error or canceled — presenting deep-link CTA', err);
       showModal('<div class="small-muted">Phantom connection canceled or failed. Tap to open the Phantom app.</div><div style="height:8px"></div><button id="openPhantomBtn" class="button">Open Phantom</button>', ()=>{
         const b = $('#openPhantomBtn'); if (b) b.onclick = ()=> { hideModal(); openPhantomDeepLink(); };
@@ -511,7 +552,6 @@ async function bindWallet(event){
     }
   } catch (e) {
     console.warn('bindWallet general error', e);
-    // fallback presentation
     showModal('<div class="small-muted">Wallet connect error — try again</div>', ()=> setTimeout(hideModal,1200));
   }
 }
