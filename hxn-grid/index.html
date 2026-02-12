@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hexon — HXN Grid Activation</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    /* Basic layout + mobile-friendly */
+    html,body { height:100%; margin:0; background:radial-gradient(circle at top,#071027,#000); font-family: 'Orbitron', sans-serif; color:#E6F7FF; }
+    #gameContainer { display:flex; height:100vh; width:100vw; box-sizing:border-box; }
+    #phaserCanvas { flex: 2; display:flex; align-items:center; justify-content:center; }
+    #uiPanel { flex: 1; min-width: 320px; max-width:420px; padding:14px; box-sizing:border-box; background: linear-gradient(180deg, rgba(8,18,36,0.9), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); overflow:auto; }
+    .card { background:rgba(255,255,255,0.03); border-radius:12px; padding:12px; margin-bottom:12px; box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
+    .muted { opacity:0.7; font-size:12px; }
+    .stat { font-size:20px; font-weight:700; color:#7EE7FF; }
+    .small { font-size:13px; }
+    .energyBar { width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
+    .energyFill { height:100%; width:60%; background:linear-gradient(90deg,#22d3ee,#3b82f6); transition:width .25s ease; }
+    .button { display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,#3b82f6,#22d3ee); color:#021125; font-weight:700; cursor:pointer; margin-top:8px; }
+    .btn-ghost { background:transparent; border:1px solid rgba(126,231,255,0.1); color:#7EE7FF; }
+    .leaderboard { max-height:150px; overflow:auto; }
+    .leader-entry { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed rgba(126,231,255,0.03); }
+    .touch-controls { display:flex; justify-content:space-around; gap:8px; margin-top:8px; }
+    .touch-btn { background:rgba(255,255,255,0.04); padding:12px; border-radius:10px; text-align:center; min-width:56px; }
+    .footer { font-size:12px; opacity:0.7; text-align:center; margin-top:8px; }
+    /* popup */
+    .overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:999; }
+    .overlay.show { display:flex; }
+    .modal { background:#061026; padding:18px; border-radius:12px; box-shadow:0 12px 40px rgba(2,6,23,0.7); width:320px; max-width:90%; text-align:center; }
+    .small-muted { font-size:12px; color:#9fcbdc; opacity:0.85; }
+    /* responsive */
+    @media (max-width:900px){
+      #gameContainer { flex-direction:column; }
+      #phaserCanvas { height:55vh; min-height:360px; }
+      #uiPanel { height:45vh; max-width:none; min-width:100%; overflow:auto; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="gameContainer">
+  <div id="phaserCanvas"></div>
+
+  <div id="uiPanel">
+    <div class="card">
+      <div class="small muted">Level</div>
+      <div class="stat" id="ui-level">1</div>
+      <div class="muted small">Lines</div>
+      <div class="small" id="ui-lines">0</div>
+    </div>
+
+    <div class="card">
+      <div class="small muted">Score</div>
+      <div class="stat" id="ui-score">0</div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div class="muted small">GP</div>
+          <div id="ui-gp" class="small">0 GP</div>
+        </div>
+        <div>
+          <button id="bindWalletBtn" class="button">Bind Wallet</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="small muted">Energy</div>
+      <div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div>
+      <div style="display:flex; justify-content:space-between; margin-top:8px;">
+        <div><div class="muted small">Auto Refill</div><div id="ui-auto" class="small">+10% / 30m</div></div>
+        <div><div class="muted small">Sittings Left</div><div id="ui-sittings" class="small">3/3</div></div>
+      </div>
+      <div style="margin-top:8px;">
+        <button id="showRefBtn" class="btn-ghost">Share Referral</button>
+        <button id="watchAdBtn" class="button">Watch Transmission</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="small muted">Miners (Off-chain)</div>
+      <div id="minersList" class="small">
+        <!-- dynamic -->
+      </div>
+      <div style="margin-top:8px;">
+        <button id="openStore" class="button">Open Miner Shop</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between;"><div class="small muted">Claimable HXN (preview)</div><div class="small-muted">Est/day</div></div>
+      <div style="display:flex; justify-content:space-between; margin-top:6px;"><div class="stat" id="ui-hxn">0 HXN</div><div class="small" id="ui-au">AU: 0</div></div>
+      <div style="margin-top:8px;"><button id="viewAlloc" class="btn-ghost">View Allocation</button></div>
+    </div>
+
+    <div class="card">
+      <div class="small muted">Top Scorers</div>
+      <div class="leaderboard" id="leaderboard">
+        <!-- dynamic -->
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="small muted">Daily Missions</div>
+      <div class="small" id="missions">- Clear 50 lines<br>- Play 3 games today<br>- Invite friend (referral)</div>
+    </div>
+
+    <div class="footer muted small">Pre-launch • Season active • <span id="daysLeft">74</span> days left</div>
+    <div style="height:12px"></div>
+  </div>
+</div>
+
+<!-- Overlays / modals -->
+<div id="overlay" class="overlay">
+  <div class="modal" id="modalContent">
+    <!-- dynamic -->
+  </div>
+</div>
+
+<!-- Phaser & game code -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+<script src="./main.js"></script>
+</body>
+</html>
