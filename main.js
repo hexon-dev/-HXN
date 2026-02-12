@@ -6,6 +6,7 @@
    - ad daily limit consistent with server (MAX_ADS_PER_DAY)
    - persist sessionId in localStorage
    - defensive API handling
+   - reliable Phantom deep link fallback for mobile (iOS/Android)
 */
 
 'use strict';
@@ -64,6 +65,9 @@ let clientState = {
   adsToday: 0,
   actionLog: []
 };
+
+// ensure initial sessionId is persisted
+saveSessionToStorage(clientState.sessionId);
 
 function generateUUID(){
   try {
@@ -352,10 +356,27 @@ async function purchaseMiner(itemId){
 /* ---------------------------
    Phantom wallet integration (bind includes referral)
    - server expects sessionId, wallet, referral (optional)
+   - If injected provider exists (desktop / supported mobile browsers), use it.
+   - Otherwise open Phantom universal link (deep link) immediately (no await) so iOS will hand off to the app.
 */
+function openPhantomDeepLink(){
+  try {
+    const app_url = encodeURIComponent(window.location.origin); // used by Phantom to return to your dapp domain
+    const redirect_link = encodeURIComponent(window.location.href); // where Phantom should redirect after connect (optional)
+    const link = `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
+    // Direct assignment on user gesture - best chance to open the installed app.
+    window.location.href = link;
+  } catch (e) {
+    // Last resort: open phantom website
+    try { window.location.href = 'https://phantom.app/'; } catch(e2){ window.open('https://phantom.app/', '_blank'); }
+  }
+}
+
 async function bindWallet(){
+  // If injected Phantom provider exists (desktop/metamask-like flow), use it first.
   if (window.solana && window.solana.isPhantom){
     try {
+      // This will prompt the Phantom extension/app if available as an injected provider.
       const resp = await window.solana.connect();
       const publicKey = resp.publicKey.toString();
 
@@ -379,13 +400,19 @@ async function bindWallet(){
         alert('Backend bind failed — ' + err);
         console.warn('bind response', res);
       }
+      return;
     } catch(e){
-      console.warn('Phantom connect error', e);
-      alert('Wallet connect failed or canceled. Make sure Phantom is installed and unlocked.');
+      // If the injected connection failed or was canceled, fall through to deep link
+      console.warn('Injected Phantom connect error or canceled — falling back to deep link', e);
+      // NOTE: do not await anything before calling deep link — must be direct user gesture.
+      openPhantomDeepLink();
+      return;
     }
-  } else {
-    if (confirm('Phantom not detected. Open phantom.app to install?')) window.open('https://phantom.app/', '_blank');
   }
+
+  // No injected provider: open Phantom universal link (deep link) immediately.
+  // This must be triggered by the user's click gesture (bindWallet should be tied directly to onclick).
+  openPhantomDeepLink();
 }
 
 /* ---------------------------
