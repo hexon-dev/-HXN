@@ -1,10 +1,10 @@
 /* main.js
-   Hexon — Phaser 3 Tetris engine (redraft)
-   - AdsGram integrated (init + show)
-   - Phantom wallet connect
-   - Board sized to fit #phaserCanvas
-   - Pieces move/rotate reliably (keyboard + window fallback)
-   - Telegram WebApp integration (vibrate, username, close)
+   Hexon — Phaser 3 Tetris engine (fixed)
+   - Reliable grid rendering
+   - Drop loop uses Phaser time events (stable inside webviews)
+   - Restart drop loop when dropInterval changes
+   - Pieces spawn inside the visible grid
+   - AdsGram, Phantom, Telegram integrations preserved
 */
 
 'use strict';
@@ -77,16 +77,12 @@ async function api(path, method='GET', body=null){
 /* ---------------------------
    Telegram WebApp integration (feature-detected, safe)
    --------------------------- */
-let tg = null; // window.Telegram.WebApp (if present)
-
+let tg = null;
 function initTelegram(){
   try {
     if (window.Telegram && window.Telegram.WebApp){
       tg = window.Telegram.WebApp;
-      // notify Telegram that app is ready; safe-guarded
       try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){ console.warn('tg.ready() failed', e); }
-
-      // Extract user info if present (initDataUnsafe is commonly available)
       const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
       if (u){
         clientState.userId = clientState.userId || u.id;
@@ -94,59 +90,27 @@ function initTelegram(){
       }
       console.log('Telegram WebApp detected', { username: clientState.username });
     } else {
-      console.log('Telegram WebApp not present (running outside Telegram)');
+      console.log('Telegram WebApp not present');
     }
-  } catch (e) {
-    console.warn('initTelegram error', e);
-  }
+  } catch (e) { console.warn('initTelegram error', e); }
 }
 
-/**
- * vibratePreferTelegram:
- * - tries Telegram haptic APIs if available (various clients expose different names)
- * - falls back to navigator.vibrate()
- *
- * We use feature detection; do not assume any particular Telegram method exists.
- */
 function vibratePreferTelegram(pattern=20){
   try {
     if (tg){
-      // Common-sense probes for known wrappers or SDKs:
-      if (typeof tg.triggerHapticFeedback === 'function'){
-        // Some wrappers expose triggerHapticFeedback(type)
-        try { tg.triggerHapticFeedback('selection_change'); return; } catch(e){ /* fallthrough */ }
-      }
-      // Some environments provide an object with methods
-      if (tg.HapticFeedback && typeof tg.HapticFeedback.impactOccurred === 'function'){
-        try { tg.HapticFeedback.impactOccurred(); return; } catch(e){ /* fallthrough */ }
-      }
-      // Older docs mention event-based haptics - attempt generic event trigger if exposed
-      if (typeof tg.triggerEvent === 'function'){
-        try { tg.triggerEvent('web_app_trigger_haptic_feedback', { type: 'selection_change' }); return; } catch(e){ /* fallthrough */ }
-      }
+      if (typeof tg.triggerHapticFeedback === 'function'){ try { tg.triggerHapticFeedback('selection_change'); return; } catch(e){} }
+      if (tg.HapticFeedback && typeof tg.HapticFeedback.impactOccurred === 'function'){ try { tg.HapticFeedback.impactOccurred(); return; } catch(e){} }
+      if (typeof tg.triggerEvent === 'function'){ try { tg.triggerEvent('web_app_trigger_haptic_feedback', { type: 'selection_change' }); return; } catch(e){} }
     }
-  } catch(e){
-    console.warn('Telegram haptic call failed', e);
-  }
-  // Standard web vibration fallback
-  if (navigator && typeof navigator.vibrate === 'function'){
-    try { navigator.vibrate(pattern); } catch(e){ /* ignore */ }
-  }
+  } catch(e){ console.warn('Telegram haptic call failed', e); }
+  if (navigator && typeof navigator.vibrate === 'function'){ try { navigator.vibrate(pattern); } catch(e){} }
 }
 
-/**
- * closeTelegramApp()
- * - closes the web app if inside Telegram
- * - safe fallback: attempts window.close (may be blocked)
- */
 function closeTelegramApp(){
   try {
-    if (tg && typeof tg.close === 'function'){
-      tg.close();
-      return true;
-    }
+    if (tg && typeof tg.close === 'function'){ tg.close(); return true; }
   } catch(e){ console.warn('tg.close() failed', e); }
-  try { window.close(); } catch(e){ /* ignore */ }
+  try { window.close(); } catch(e){}
   return false;
 }
 
@@ -161,7 +125,6 @@ const gameState = {
   level: 1,
   lines: 0,
   dropInterval: INITIAL_DROP_MS,
-  dropTimer: 0,
   isPlaying: false,
   combo: 0
 };
@@ -209,14 +172,13 @@ const PIECES = {
 const PIECE_TYPES = Object.keys(PIECES);
 
 /* ---------------------------
-   AdsGram loader & controller
+   AdsGram loader (kept, non-blocking)
    --------------------------- */
 let AdsGramLoaded = false;
 let AdController = null;
-
 function loadAdsGram(){
   if (window.Adsgram && !AdController){
-    try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; console.log('AdsGram existing init used'); return; } catch(e){ console.warn(e); }
+    try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn(e); }
   }
   if (AdsGramLoaded) return;
   const s = document.createElement('script');
@@ -227,32 +189,32 @@ function loadAdsGram(){
       if (window.Adsgram && typeof window.Adsgram.init === 'function'){
         AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
         AdsGramLoaded = true;
-        console.log('AdsGram SDK loaded & initialized, blockId:', ADSGRAM_BLOCK_ID);
-      } else {
-        console.warn('AdsGram SDK loaded but init not found');
       }
-    } catch(e){
-      console.warn('AdsGram init error', e);
-    }
+    } catch(e){ console.warn('AdsGram init error', e); }
   };
   s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); };
   document.head.appendChild(s);
 }
 
 /* ---------------------------
-   Phaser scenes
+   Phaser scenes (redrafted)
    --------------------------- */
 let phaserGame;
 
-class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
+class BootScene extends Phaser.Scene {
+  constructor(){ super({ key:'BootScene' }); }
+  create(){ this.scene.start('GameScene'); }
+}
 
 class GameScene extends Phaser.Scene {
   constructor(){ super({ key:'GameScene' }); }
   create(){
+    // compute board pixel size
     this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
     this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
     this.gridOrigin = { x: 16, y: 16 };
 
+    // draw panel & grid lines (background)
     const g = this.add.graphics();
     g.fillStyle(0x061426, 1);
     g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
@@ -264,79 +226,112 @@ class GameScene extends Phaser.Scene {
       g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y + GRID_ROWS*(CELL + GAP)));
     }
 
+    // initialize logical grid first
     initGrid();
+
+    // create persistent rectangle sprites for each cell
     this.cellSprites = [];
     for (let r=0; r<GRID_ROWS; r++){
       this.cellSprites[r] = [];
       for (let c=0; c<GRID_COLS; c++){
         const x = this.gridOrigin.x + c*(CELL + GAP) + CELL/2;
         const y = this.gridOrigin.y + r*(CELL + GAP) + CELL/2;
+        // initial fill color for empty cell
         const rect = this.add.rectangle(x, y, CELL, CELL, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
+        // safe method to change color later: use both property and setFillStyle if available
+        rect.updateFill = function(color){
+          try { if (typeof this.setFillStyle === 'function'){ this.setFillStyle(color); } } catch(e){}
+          try { this.fillColor = color; } catch(e){}
+        };
+        // interactive feedback
         rect.setInteractive({ useHandCursor: true });
-        // pointerdown on cell: vibrate + log + optional small visual pop
         ((rr, cc, node) => {
           node.on('pointerdown', () => {
             vibratePreferTelegram(20);
             logAction('cell_click', { x: cc, y: rr });
-            // small visual flash
-            const orig = node.fillColor;
-            node.fillColor = 0xffffff;
-            this.time.delayedCall(80, ()=> node.fillColor = orig);
+            const orig = node.fillColor || 0x102033;
+            node.updateFill(0xFFFFFF);
+            this.time.delayedCall(80, ()=> node.updateFill(orig));
           });
         })(r, c, rect);
         this.cellSprites[r][c] = rect;
       }
     }
 
+    // spawn initial piece and start loop
     spawnPiece();
     gameState.isPlaying = true;
-    gameState.dropTimer = 0;
+
+    // start the drop loop using Phaser timed event (stable)
+    this.startDropLoop();
 
     this.setupInput();
     updateUI();
 
-    // auto-recharge
+    // auto-recharge for energy (keeps running)
     this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
   }
 
-  update(time, delta){
-    if (!gameState.isPlaying) return;
-    gameState.dropTimer += delta;
-    if (gameState.dropTimer >= gameState.dropInterval){
-      gameState.dropTimer = 0;
-      const moved = movePieceDown();
-      logAction('tick_drop', { moved });
-      if (!moved) lockPiece();
+  // safe method to start or restart the drop loop
+  startDropLoop(){
+    // if existing event, remove it
+    if (this.dropEvent) {
+      try { this.dropEvent.remove(false); } catch(e){ console.warn('dropEvent remove', e); }
+      this.dropEvent = null;
     }
+    // create new event with current dropInterval
+    this.dropEvent = this.time.addEvent({
+      delay: Math.max(40, gameState.dropInterval),
+      loop: true,
+      callback: () => {
+        if (!gameState.isPlaying) return;
+        const moved = movePieceDown();
+        logAction('tick_drop', { moved });
+        if (!moved) lockPiece();
+      }
+    });
+  }
+
+  update(){
+    // only rendering each frame now — movement handled by dropEvent
+    if (!gameState.isPlaying) return;
     this.renderGrid();
   }
 
   renderGrid(){
+    // render locked grid
     for (let r=0; r<GRID_ROWS; r++){
       for (let c=0; c<GRID_COLS; c++){
         const val = gameState.grid[r][c];
-        this.cellSprites[r][c].fillColor = val ? colorFromVal(val) : 0x102033;
+        const color = val ? colorFromVal(val) : 0x102033;
+        const rect = this.cellSprites[r][c];
+        if (rect) rect.updateFill(color);
       }
     }
+    // overlay active piece
     if (gameState.activePiece){
       const cells = getPieceCells(gameState.activePiece);
       cells.forEach(p=>{
         if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){
-          this.cellSprites[p.y][p.x].fillColor = colorFromVal(gameState.activePiece.type);
+          const rect = this.cellSprites[p.y][p.x];
+          if (rect) rect.updateFill(colorFromVal(gameState.activePiece.type));
         }
       });
     }
   }
 
   setupInput(){
+    // Phaser keyboard (preferred)
     this.input.keyboard.on('keydown', (ev)=>{
       if (!gameState.isPlaying) return;
-      handleKey(ev.code);
+      // use ev.code for arrow keys; fallback to ev.key for others
+      handleKey(ev.code || ev.key);
     });
 
+    // fallback window keyboard (in case focus lost)
     window.addEventListener('keydown', (ev) => {
       if (!gameState.isPlaying) return;
-      handleKey(ev.code);
+      handleKey(ev.code || ev.key);
     });
 
     if (!document.querySelector('.touch-controls')) setupTouchControls(this);
@@ -350,22 +345,32 @@ class GameScene extends Phaser.Scene {
 }
 
 /* ---------------------------
-   Key handling
+   Key handling (kept)
    --------------------------- */
 function handleKey(code){
   switch(code){
-    case 'ArrowLeft': movePiece(-1); break;
-    case 'ArrowRight': movePiece(1); break;
-    case 'ArrowDown': softDrop(); break;
-    case 'Space': hardDrop(); break;
-    case 'ArrowUp': rotatePiece(); break;
+    case 'ArrowLeft':
+    case 'Left':
+      movePiece(-1); break;
+    case 'ArrowRight':
+    case 'Right':
+      movePiece(1); break;
+    case 'ArrowDown':
+    case 'Down':
+      softDrop(); break;
+    case 'Space':
+    case ' ':
+      hardDrop(); break;
+    case 'ArrowUp':
+    case 'Up':
+      rotatePiece(); break;
     default: return;
   }
   updateUI();
 }
 
 /* ---------------------------
-   Piece helper & movement
+   Piece helper & movement (kept, spawn inside grid)
    --------------------------- */
 function getPieceCells(piece){
   const states = PIECES[piece.type];
@@ -385,17 +390,20 @@ function initGrid(){
 function spawnPiece(){
   const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   const rot = 0;
+  // start inside the top visible row(s) to avoid "stuck above grid" issues
   const xStart = Math.floor((GRID_COLS - 4) / 2);
-  const yStart = -1;
+  const yStart = 0; // ensure piece is visible
   gameState.activePiece = { type, rot, x: xStart, y: yStart };
   gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   logAction('spawn', { type, x: xStart, y: yStart });
 
+  // immediate collision -> gameover
   if (checkCollision( getPieceCells(gameState.activePiece) )){
     gameOver();
   }
 }
 
+/* collision / movement helpers */
 function checkCollision(cells){
   for (const p of cells){
     if (p.x < 0 || p.x >= GRID_COLS) return true;
@@ -472,6 +480,10 @@ function lockPiece(){
   else gameState.combo = 0;
 
   spawnPiece();
+
+  // ensure drop loop uses updated interval (in case level changed)
+  const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+  if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
 }
 
 function clearLines(rows){
@@ -489,7 +501,8 @@ function clearLines(rows){
   logAction('clear', { count, combo: gameState.combo });
   if (gameState.lines % 10 === 0){
     gameState.level++;
-    gameState.dropInterval = Math.max(120, gameState.dropInterval * 0.92);
+    gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92));
+    // restart timer handled by lockPiece() after spawn
   }
   updateUI();
 }
@@ -523,6 +536,9 @@ function resetForPlay(){
   clientState.actionLog = [];
   spawnPiece();
   gameState.isPlaying = true;
+  // restart loop
+  const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+  if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
   updateUI();
 }
 
@@ -554,7 +570,7 @@ function setupTouchControls(scene){
 }
 
 /* ---------------------------
-   Ads integration (AdsGram + fallback)
+   Ads / Wallet / UI helpers (kept, unchanged in intent)
    --------------------------- */
 loadAdsGram();
 
@@ -565,9 +581,7 @@ async function handleWatchAd(){
   if ((clientState.adsThisSitting || 0) >= MAX_ADS_PER_SITTING){
     showModal('<div class="small-muted">Sitting limit reached. Play a bit then return.</div>'); return;
   }
-
   showModal('<div class="small-muted">Opening sponsored transmission...</div>');
-
   if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
     try {
       const result = await AdController.show();
@@ -591,7 +605,6 @@ async function handleWatchAd(){
       return;
     }
   }
-
   await new Promise(res => setTimeout(res, 2400));
   hideModal();
   const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider:'Fallback', adSessionId: generateUUID() });
@@ -607,9 +620,6 @@ async function handleWatchAd(){
   }
 }
 
-/* ---------------------------
-   Phantom wallet integration
-   --------------------------- */
 async function bindWallet(){
   if (window.solana && window.solana.isPhantom){
     try {
@@ -637,9 +647,6 @@ async function bindWallet(){
   }
 }
 
-/* ---------------------------
-   UI helpers, miners, leaderboard
-   --------------------------- */
 function renderMinersList(){
   const container = $('minersList'); if (!container) return;
   container.innerHTML = '';
@@ -666,7 +673,7 @@ async function refreshLeaderboard(){
 }
 
 /* ---------------------------
-   Claim rewards (example flow) - closes webapp in Telegram
+   Claim rewards / modal / UI helpers
    --------------------------- */
 async function claimRewards(){
   showModal('<div class="small-muted">Claiming rewards...</div>');
@@ -678,11 +685,7 @@ async function claimRewards(){
       clientState.userAU = resp.userAU ?? clientState.userAU;
       updateUI();
       showModal('<div class="small-muted">Rewards claimed! Closing...</div>');
-      setTimeout(()=>{
-        hideModal();
-        // Close the Telegram WebApp if present
-        closeTelegramApp();
-      }, 900);
+      setTimeout(()=>{ hideModal(); closeTelegramApp(); }, 900);
     } else {
       showModal('<div class="small-muted">Claim failed — try again later.</div>', ()=> setTimeout(hideModal,1200));
     }
@@ -693,9 +696,6 @@ async function claimRewards(){
   }
 }
 
-/* ---------------------------
-   Modal / UI helpers
-   --------------------------- */
 function showModal(html, onMounted){ const o=$('overlay'); if(!o) { console.log('Modal:', html); return; } o.classList.add('show'); $('#modalContent').innerHTML = html; if(onMounted) setTimeout(onMounted,60); }
 function hideModal(){ const o=$('overlay'); if(!o) return; o.classList.remove('show'); $('#modalContent').innerHTML = ''; }
 function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
@@ -717,14 +717,13 @@ function updateUI(){
 }
 
 /* ---------------------------
-   Boot & sizing
+   Boot & sizing (create Phaser with parent id)
    --------------------------- */
 window.addEventListener('load', async ()=>{
 
-  // init Telegram first so user info is available before client init
   initTelegram();
 
-  // wire UI buttons if present
+  // wire UI buttons
   if ($('watchAdBtn')) $('watchAdBtn').onclick = handleWatchAd;
   if ($('openStore')) $('openStore').onclick = openMinerShop;
   if ($('bindWalletBtn')) $('bindWalletBtn').onclick = bindWallet;
@@ -732,7 +731,7 @@ window.addEventListener('load', async ()=>{
   if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
   if ($('claimRewardBtn')) $('claimRewardBtn').onclick = claimRewards;
 
-  // attempt initial client init (best-effort)
+  // init server-side client (best-effort)
   try {
     const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.referralCode });
     if (init){
@@ -742,7 +741,6 @@ window.addEventListener('load', async ()=>{
       clientState.userAU = init.userAU ?? clientState.userAU;
       clientState.totalAU = init.totalAU ?? clientState.totalAU;
       clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
-      // If username not set from Telegram, accept backend's user name
       if (!clientState.username && init.username) clientState.username = init.username;
     }
   } catch(e){ console.warn(e); }
@@ -763,19 +761,22 @@ window.addEventListener('load', async ()=>{
   const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
   const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
+  // enforce parent size so Phaser canvas isn't 0x0
   if (parentEl && parentEl.style){
     parentEl.style.width = canvasWidth + 'px';
     parentEl.style.height = canvasHeight + 'px';
     parentEl.style.minWidth = '320px';
   }
 
+  // create Phaser game (use parent DOM id)
   phaserGame = new Phaser.Game({
     type: Phaser.AUTO,
-    parent: parentEl,
+    parent: 'phaserCanvas',
     width: canvasWidth,
     height: canvasHeight,
     backgroundColor: '#061426',
-    scene: [ BootScene, GameScene ]
+    scene: [ BootScene, GameScene ],
+    render: { pixelArt: false, antialias: true }
   });
 
   loadAdsGram();
