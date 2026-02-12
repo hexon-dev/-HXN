@@ -9,7 +9,7 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // <-- preserve as requested
+const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // <-- preserved as requested
 const DAILY_EMISSION_CAP = 1250000;
 const GAME_ALLOCATION = 150_000_000;
 
@@ -61,7 +61,8 @@ let clientState = {
   wallet: loadBoundWalletFromStorage(),
   walletProvider: localStorage.getItem('hexon_bound_provider') || null,
   gp: 0,
-  energy: 65,
+  // Start at 100% (no hardcoded 65)
+  energy: 100,
   miners: [],
   shopItems: [],
   userAU: 0,
@@ -129,7 +130,7 @@ async function api(path, method='GET', body=null, optsExtra={}){
 }
 
 /* ---------------------------
-   Referral helpers (unchanged)
+   Referral helpers
 */
 function getRefFromURL(){
   try {
@@ -157,7 +158,7 @@ function clearPendingReferral(){
 }
 
 /* ---------------------------
-   Telegram WebApp integration (unchanged)
+   Telegram WebApp integration
 */
 let tg = null;
 function initTelegram(){
@@ -195,7 +196,7 @@ function closeTelegramApp(){
 }
 
 /* ---------------------------
-   AdsGram loader + wrapper (unchanged)
+   AdsGram loader + wrapper
 */
 let AdsGramLoaded = false;
 let AdController = null;
@@ -267,7 +268,7 @@ async function showAdAndVerify(){
 }
 
 /* ---------------------------
-   Miner shop (unchanged)
+   Miner shop
 */
 async function fetchShopItems(){
   try {
@@ -362,7 +363,7 @@ function isInAppBrowser(){
 }
 
 /* ---------------------------
-   Modal utilities (robust) - kept & used heavily by wallet flows
+   Modal utilities (robust)
 */
 function ensureModalOverlay(){
   let o = $('modalOverlay');
@@ -438,9 +439,24 @@ function hideModal(){
 function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
 /* ---------------------------
+   Build clean redirect URL for deep links
+   - removes wallet-return fragments and includes sessionId to correlate
+*/
+function buildCleanRedirect(){
+  try {
+    const origin = window.location.origin || (window.location.protocol + '//' + window.location.host);
+    const path = window.location.pathname || '/';
+    // include sessionId so wallet app can redirect back with it if needed
+    const sid = clientState.sessionId ? `?sessionId=${encodeURIComponent(clientState.sessionId)}` : '';
+    return origin + path + sid;
+  } catch(e){
+    console.warn('buildCleanRedirect failed', e);
+    return window.location.href;
+  }
+}
+
+/* ---------------------------
    Wallet utilities (unified deep-link opener + detection)
-   - openAppOrPrompt tries to open a universal link / deep link and detects success,
-     otherwise shows a modal offering explicit "Open app" or "Install" choices.
 */
 function openAppOrPrompt({ deepLink, installUrl, appName, fallbackPage }) {
   // returns Promise<boolean> - true if app likely opened, false if not (and modal was shown)
@@ -505,26 +521,27 @@ function openAppOrPrompt({ deepLink, installUrl, appName, fallbackPage }) {
 }
 
 /* ---------------------------
-   Detect injected providers (unchanged but used more defensively)
+   Detect injected providers (more exhaustive)
 */
 function detectInjectedProviders(){
-  const providers = {
-    phantom: Boolean(window.solana && window.solana.isPhantom),
-    solflare: Boolean(window.solflare || (window.solana && window.solana.isSolflare)),
-    backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack)),
+  const solana = window.solana || null;
+  return {
+    phantom: Boolean((solana && solana.isPhantom) || (window.phantom && window.phantom.isPhantom) || Boolean(window.solana && window.solana.isPhantom)),
+    solflare: Boolean(window.solflare || (solana && solana.isSolflare) || (window.solflare && window.solflare.isSolflare)),
+    backpack: Boolean(window.backpack || (solana && solana.isBackpack)),
+    anySolana: Boolean(solana || window.solflare || window.backpack || window.phantom)
   };
-  return providers;
 }
 
 /* ---------------------------
-   Modal-based wallet picker (refined)
+   Modal-based wallet picker
 */
 function showWalletPicker(){
   const detected = detectInjectedProviders();
   const html = [
     '<div style="text-align:left">',
       '<h3>Connect Wallet</h3>',
-      `<div class="small-muted">Choose a wallet — Phantom, Solflare, Backpack, WalletConnect, or paste your public key. ${detected.phantom ? '(Phantom detected)' : ''}</div>`,
+      `<div class="small-muted">Choose a wallet — Phantom, Solflare, Backpack, WalletConnect, or paste your public key. ${detected.phantom ? '(Phantom detected)' : ''}${detected.solflare ? ' (Solflare detected)' : ''}</div>`,
       '<div style="height:12px"></div>',
       '<div style="display:flex;flex-direction:column;gap:10px;">',
         `<button class="button wallet-btn" data-w="phantom">Phantom ${detected.phantom ? '• detected' : ''}</button>`,
@@ -575,7 +592,7 @@ function showWalletPicker(){
       const pkBox = $('#manualPublicKey');
       if (!pkBox) return;
       const pk = pkBox.value && pkBox.value.trim();
-      if (!pk || pk.length < 20) { showModal('<div class="small-muted">Invalid public key</div>', ()=> setTimeout(hideModal,900)); return; }
+      if (!pk || !isValidSolanaPublicKey(pk)) { showModal('<div class="small-muted">Invalid public key</div>', ()=> setTimeout(hideModal,900)); return; }
       showModal('<div class="small-muted">Binding public key...</div>');
       const ok = await finalizeBind(pk, 'manual');
       if (ok) hideModal();
@@ -586,7 +603,7 @@ function showWalletPicker(){
 }
 
 /* ---------------------------
-   Other wallet helper dialogs (unchanged)
+   Other wallet helper dialogs
 */
 function showOtherWalletOptions(){
   const html = `<div style="text-align:left">
@@ -607,6 +624,19 @@ function showOtherWalletOptions(){
 }
 
 /* ---------------------------
+   Public key validation (basic base58-ish check)
+*/
+function isValidSolanaPublicKey(pk){
+  if (!pk || typeof pk !== 'string') return false;
+  // Base58 acceptable characters (no 0, O, I, l)
+  const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
+  if (!base58Regex.test(pk)) return false;
+  // Common solana pubkey lengths are ~32 bytes -> base58 length ~43-44; accept range
+  if (pk.length < 32 || pk.length > 64) return false;
+  return true;
+}
+
+/* ---------------------------
    Generic helper to finalize bind (global entrypoint used by index.html's manual bind)
 */
 async function finalizeBind(publicKey, providerName){
@@ -614,7 +644,14 @@ async function finalizeBind(publicKey, providerName){
     showModal('<div class="small-muted">No public key provided</div>', ()=> setTimeout(hideModal,900));
     return false;
   }
+  if (!isValidSolanaPublicKey(publicKey)){
+    showModal('<div class="small-muted">Public key format invalid</div>', ()=> setTimeout(hideModal,900));
+    return false;
+  }
+
+  // set provider early so saveBoundWalletToStorage records it on success
   clientState.walletProvider = providerName || clientState.walletProvider || null;
+
   const ok = await bindWalletWithPublicKey(publicKey);
   if (ok){
     clientState.wallet = publicKey;
@@ -647,7 +684,7 @@ async function attemptConnectPreferred(providerKey){
     try {
       if (providerKey === 'phantom' && window.solana && window.solana.isPhantom){
         const resp = await window.solana.connect();
-        const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || resp;
+        const publicKey = extractPublicKeyFromProviderResponse(resp);
         const ok = await finalizeBind(publicKey, 'phantom');
         hideModal();
         if (!ok){
@@ -658,7 +695,7 @@ async function attemptConnectPreferred(providerKey){
       if (providerKey === 'solflare' && (window.solflare || (window.solana && window.solana.isSolflare))){
         const connector = window.solflare || window.solana;
         const resp = await connector.connect();
-        const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || resp;
+        const publicKey = extractPublicKeyFromProviderResponse(resp);
         const ok = await finalizeBind(publicKey, 'solflare');
         hideModal();
         if (!ok) showModal('<div class="small-muted">Injected Solflare connect succeeded but server bind failed</div>', ()=> setTimeout(hideModal,1200));
@@ -667,7 +704,7 @@ async function attemptConnectPreferred(providerKey){
       if (providerKey === 'backpack' && (window.backpack || (window.solana && window.solana.isBackpack))){
         const connector = window.backpack || window.solana;
         const resp = await connector.connect();
-        const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || resp;
+        const publicKey = extractPublicKeyFromProviderResponse(resp);
         const ok = await finalizeBind(publicKey, 'backpack');
         hideModal();
         if (!ok) showModal('<div class="small-muted">Injected Backpack connect succeeded but server bind failed</div>', ()=> setTimeout(hideModal,1200));
@@ -693,15 +730,37 @@ async function attemptConnectPreferred(providerKey){
 }
 
 /* ---------------------------
-   Phantom connector (injected + deep-link fallback, iOS-aware)
+   Helper to extract public key from provider responses
+*/
+function extractPublicKeyFromProviderResponse(resp){
+  try {
+    if (!resp) return null;
+    // Many providers return { publicKey: PublicKey } or PublicKey directly or {address} or string
+    if (typeof resp === 'string') return resp;
+    if (resp.publicKey && typeof resp.publicKey.toString === 'function') return resp.publicKey.toString();
+    if (resp.publicKey && typeof resp.publicKey === 'string') return resp.publicKey;
+    if (resp.public_key && typeof resp.public_key === 'string') return resp.public_key;
+    if (resp.address && typeof resp.address === 'string') return resp.address;
+    // sometimes connector returns { data: { publicKey: '...' } }
+    if (resp.data && resp.data.publicKey) return resp.data.publicKey;
+    // fallback: JSON stringify search
+    const s = JSON.stringify(resp);
+    const match = s.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
+    if (match) return match[1];
+  } catch(e){}
+  return null;
+}
+
+/* ---------------------------
+   Phantom connector (injected + deep-link fallback)
 */
 function openPhantomDeepLink(){
   try {
     const origin = window.location.origin.replace(/\/+$/, '');
     const cleanRedirect = buildCleanRedirect();
-    // Phantom universal link that supports deep linking
-    const link = `https://phantom.app/ul/v1/connect?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(cleanRedirect)}`;
-    const install = 'https://phantom.app/'; // canonical fallback
+    // Phantom universal link
+    const link = `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(cleanRedirect)}`;
+    const install = 'https://phantom.app/';
     return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Phantom' });
   } catch (e) {
     console.error('Phantom deep link failed', e);
@@ -716,7 +775,7 @@ async function connectWithPhantom(){
   if (window.solana && window.solana.isPhantom){
     try {
       const resp = await window.solana.connect();
-      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || (resp && resp);
+      const publicKey = extractPublicKeyFromProviderResponse(resp);
       const ok = await finalizeBind(publicKey, 'phantom');
       if (ok) hideModal();
       return;
@@ -733,12 +792,12 @@ async function connectWithPhantom(){
 }
 
 /* ---------------------------
-   Solflare connector
+   Solflare connector (injected + deep-link fallback)
 */
 function openSolflareDeepLink(){
   try {
     const cleanRedirect = buildCleanRedirect();
-    // Solflare universal link
+    // Solflare universal link (access endpoint supports redirect param)
     const link = `https://solflare.com/access?redirect=${encodeURIComponent(cleanRedirect)}`;
     const install = 'https://solflare.com/';
     return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Solflare' });
@@ -749,16 +808,17 @@ async function connectWithSolflare(){
   if (tg){ openSolflareDeepLink(); return; }
 
   try {
+    // window.solflare used by some integrations; fallback to window.solana.isSolflare
     if (window.solflare && typeof window.solflare.connect === 'function'){
       const resp = await window.solflare.connect();
-      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || resp;
+      const publicKey = extractPublicKeyFromProviderResponse(resp);
       const ok = await finalizeBind(publicKey, 'solflare');
       if (ok) hideModal();
       return;
     } else if (window.solana && window.solana.isSolflare){
       try {
         const r = await window.solana.connect();
-        const publicKey = (r && r.publicKey && typeof r.publicKey.toString === 'function') ? r.publicKey.toString() : (r && r.publicKey) || (r && r);
+        const publicKey = extractPublicKeyFromProviderResponse(r);
         const ok = await finalizeBind(publicKey, 'solflare');
         if (ok) hideModal();
         return;
@@ -770,11 +830,11 @@ async function connectWithSolflare(){
 }
 
 /* ---------------------------
-   Backpack connector
+   Backpack connector (injected + deep-link fallback)
 */
 function openBackpackDeepLink(){
   try {
-    const link = `https://backpack.app/`; // universal link
+    const link = `https://backpack.app/`;
     const install = 'https://backpack.app/';
     return openAppOrPrompt({ deepLink: link, installUrl: install, appName: 'Backpack' });
   } catch(e){ console.warn('openBackpackDeepLink failed', e); window.open('https://backpack.app/', '_blank'); return Promise.resolve(false); }
@@ -786,14 +846,14 @@ async function connectWithBackpack(){
   try {
     if (window.backpack && typeof window.backpack.connect === 'function'){
       const resp = await window.backpack.connect();
-      const publicKey = (resp && resp.publicKey && typeof resp.publicKey.toString === 'function') ? resp.publicKey.toString() : (resp && resp.publicKey) || resp;
+      const publicKey = extractPublicKeyFromProviderResponse(resp);
       const ok = await finalizeBind(publicKey, 'backpack');
       if (ok) hideModal();
       return;
     } else if (window.solana && window.solana.isBackpack){
       try {
         const r = await window.solana.connect();
-        const publicKey = (r && r.publicKey && typeof r.publicKey.toString === 'function') ? r.publicKey.toString() : (r && r.publicKey) || (r && r);
+        const publicKey = extractPublicKeyFromProviderResponse(r);
         const ok = await finalizeBind(publicKey, 'backpack');
         if (ok) hideModal();
         return;
@@ -805,7 +865,7 @@ async function connectWithBackpack(){
 }
 
 /* ---------------------------
-   WalletConnect scaffold (unchanged except messaging)
+   WalletConnect scaffold (improved messaging)
 */
 function showWalletConnectInstructions(qrOrLinkText){
   const html = `<div style="text-align:left">
@@ -837,7 +897,7 @@ async function connectWithWalletConnect(){
 }
 
 /* ---------------------------
-   Generic server finalizer (unchanged)
+   Generic server finalizer
 */
 async function bindWalletWithPublicKey(publicKey){
   try {
@@ -845,6 +905,12 @@ async function bindWalletWithPublicKey(publicKey){
     const payload = { sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.pendingReferral || clientState.referralCode || null };
     const res = await api('/wallet/bind','POST', payload);
     if (res && res.ok){
+      // merge server data into client state (no hardcoded fallbacks)
+      if (res.sessionId && res.sessionId !== clientState.sessionId){
+        clientState.sessionId = res.sessionId;
+        saveSessionToStorage(clientState.sessionId);
+        console.log('Adopted server sessionId:', clientState.sessionId);
+      }
       clientState.wallet = publicKey;
       clientState.userId = res.userId ?? clientState.userId;
       clientState.gp = res.gp ?? clientState.gp;
@@ -852,6 +918,7 @@ async function bindWalletWithPublicKey(publicKey){
       clientState.userAU = res.userAU ?? clientState.userAU;
       clientState.totalAU = res.totalAU ?? clientState.totalAU;
       clientState.referralCode = res.referralCode ?? clientState.referralCode;
+      clientState.referralsActive = res.referralsActive ?? clientState.referralsActive;
       if (res.referralAccepted) clearPendingReferral();
       saveBoundWalletToStorage(publicKey, clientState.walletProvider || null);
       updateUI(); renderMinersList();
@@ -869,33 +936,51 @@ async function bindWalletWithPublicKey(publicKey){
 
 /* ---------------------------
    Parse deep link / redirect returns (Phantom/Solflare/Backpack)
-   - looks in query + hash + common param names
+   - looks in query + hash + common param names (very permissive)
 */
 function parseReturnParams(){
   try {
-    const full = (window.location.search || '') + (window.location.hash && window.location.hash.indexOf('?') !== -1 ? window.location.hash.replace('#','') : '');
-    const params = new URLSearchParams(full);
-    const candidates = [
-      params.get('phantom_public_key'),
-      params.get('phantom_encryption_public_key'),
-      params.get('public_key'),
-      params.get('publicKey'),
-      params.get('wallet'),
-      params.get('pk'),
-      params.get('address'),
-      params.get('account')
-    ];
-    for (const c of candidates){
-      if (c) return c;
+    // gather search + hash querystring
+    let combined = window.location.search || '';
+    if (window.location.hash){
+      const h = window.location.hash.replace(/^#/, '');
+      if (h.indexOf('?') !== -1) combined += (combined ? '&' : '') + h.split('?').slice(1).join('?');
+      else combined += (combined ? '&' : '') + h;
     }
-    // also check common "result" JSON in a single param (rare)
-    const raw = params.get('result') || params.get('response');
+    const params = new URLSearchParams(combined);
+    const names = [
+      'phantom_public_key',
+      'phantom_encryption_public_key',
+      'public_key',
+      'publicKey',
+      'public-key',
+      'wallet',
+      'pk',
+      'address',
+      'account',
+      'account_id'
+    ];
+    for (const n of names){
+      const v = params.get(n);
+      if (v) return v;
+    }
+    // check common JSON param
+    const raw = params.get('result') || params.get('response') || params.get('data');
     if (raw){
       try {
         const parsed = JSON.parse(raw);
         if (parsed && (parsed.publicKey || parsed.address || parsed.pk)) return parsed.publicKey || parsed.address || parsed.pk;
+        // check nested
+        for (const k of Object.keys(parsed || {})){
+          const val = parsed[k];
+          if (typeof val === 'string' && isValidSolanaPublicKey(val)) return val;
+        }
       } catch(e){}
     }
+    // fallback: search full URL for base58-like token
+    const full = window.location.href;
+    const match = full.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
+    if (match) return match[1];
     return null;
   } catch(e){ return null; }
 }
@@ -906,6 +991,10 @@ function readWalletReturn(){
     if (pk){
       console.log('Wallet return detected, publicKey=', pk);
       (async ()=>{
+        if (!isValidSolanaPublicKey(pk)){
+          showModal('<div class="small-muted">Returned public key appears invalid</div>', ()=> setTimeout(hideModal,1200));
+          return;
+        }
         const ok = await bindWalletWithPublicKey(pk);
         try {
           const cleanUrl = window.location.origin + window.location.pathname;
@@ -932,31 +1021,75 @@ function readWalletReturn(){
 */
 function setupInjectedProviderListeners(){
   try {
+    // universal solana on/connect/disconnect
     if (window.solana && typeof window.solana.on === 'function'){
-      window.solana.on('connect', async (pk) => {
-        try {
+      try {
+        window.solana.on('connect', async (pk) => {
+          try {
+            const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
+            if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+              clientState.walletProvider = detectInjectedProviders().phantom ? 'phantom' : clientState.walletProvider;
+              const ok = await bindWalletWithPublicKey(publicKey);
+              if (ok) {
+                showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
+              }
+            }
+          } catch(e){ console.warn('provider connect handler error', e); }
+        });
+        window.solana.on('disconnect', () => {
+          console.log('Provider disconnected');
+          clientState.wallet = null;
+          clientState.walletProvider = null;
+          clearBoundWalletFromStorage();
+          updateUI();
+        });
+      } catch(e){ console.warn('solana listener setup failed', e); }
+    }
+
+    // detect solflare events
+    if (window.solflare && typeof window.solflare.on === 'function'){
+      try {
+        window.solflare.on('connect', async (pk) => {
           const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
           if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+            clientState.walletProvider = 'solflare';
             const ok = await bindWalletWithPublicKey(publicKey);
-            if (ok) {
-              showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
-            }
+            if (ok) showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
           }
-        } catch(e){ console.warn('provider connect handler error', e); }
-      });
-      window.solana.on('disconnect', () => {
-        console.log('Provider disconnected');
-        clientState.wallet = null;
-        clientState.walletProvider = null;
-        clearBoundWalletFromStorage();
-        updateUI();
-      });
+        });
+        window.solflare.on('disconnect', ()=> {
+          clientState.wallet = null;
+          clientState.walletProvider = null;
+          clearBoundWalletFromStorage();
+          updateUI();
+        });
+      } catch(e){ /* ignore */ }
+    }
+
+    // backpack events
+    if (window.backpack && typeof window.backpack.on === 'function'){
+      try {
+        window.backpack.on('connect', async (pk) => {
+          const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
+          if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+            clientState.walletProvider = 'backpack';
+            const ok = await bindWalletWithPublicKey(publicKey);
+            if (ok) showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
+          }
+        });
+        window.backpack.on('disconnect', ()=> {
+          clientState.wallet = null;
+          clientState.walletProvider = null;
+          clearBoundWalletFromStorage();
+          updateUI();
+        });
+      } catch(e){}
     }
   } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
 }
 
 /* ---------------------------
-   Referral UI & sharing (unchanged)
+   Referral UI & sharing
 */
 async function getMyReferral(){
   try {
@@ -993,7 +1126,7 @@ function showReferralModal(){
 }
 
 /* ---------------------------
-   UI helpers, miners, leaderboard (unchanged)
+   UI helpers, miners, leaderboard
 */
 function renderMinersList(){
   const container = $('minersList'); if (!container) return;
@@ -1012,16 +1145,16 @@ async function refreshLeaderboard(){
   const el = $('leaderboard');
   if (!el) return;
   el.innerHTML = '';
-  if (!top) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
+  if (!top || !Array.isArray(top)) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
   top.forEach((t,idx)=>{
     const row = document.createElement('div'); row.className = 'leader-entry';
-    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name)}</div><div>${Number(t.score).toLocaleString()}</div>`;
+    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score != null) ? Number(t.score).toLocaleString() : '—'}</div>`;
     el.appendChild(row);
   });
 }
 
 /* ---------------------------
-   updateUI (unchanged)
+   updateUI
 */
 function updateUI(){
   if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
@@ -1051,7 +1184,7 @@ function updateUI(){
 }
 
 /* ---------------------------
-   Phaser scenes and game logic (unchanged)
+   Phaser scenes and game logic
 */
 const gameState = {
   grid: null,
@@ -1225,7 +1358,7 @@ class GameScene extends Phaser.Scene {
   }
 }
 
-/* game utilities, lock/clear/score, gameover, etc. -- keep the same as before */
+/* game utilities, lock/clear/score, gameover, etc. */
 function handleKey(code){
   switch(code){
     case 'ArrowLeft': case 'Left': movePiece(-1); break;
@@ -1251,6 +1384,12 @@ function initGrid(){
   gameState.dropInterval = INITIAL_DROP_MS;
 }
 function spawnPiece(){
+  // check energy before allowing play
+  if ((clientState.energy || 0) <= 0){
+    gameState.isPlaying = false;
+    showModal('<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>', ()=> setTimeout(hideModal,1200));
+    return;
+  }
   const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   const rot = 0;
   const xStart = Math.floor((GRID_COLS - 4) / 2);
@@ -1298,6 +1437,9 @@ function lockPiece(){
     }
   }
 
+  // decrease energy by 1 per locked piece (game economy; adjust server-side if needed)
+  clientState.energy = Math.max(0, (clientState.energy || 0) - 1);
+
   const cleared = [];
   for (let r=0; r<GRID_ROWS; r++){
     if (gameState.grid[r].every(v => v !== 0)) cleared.push(r);
@@ -1311,6 +1453,8 @@ function lockPiece(){
     const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
     if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
   } catch(e){ console.warn('restart drop loop failed', e); }
+
+  updateUI();
 }
 function clearLines(rows){
   rows.sort((a,b)=>a-b);
@@ -1325,6 +1469,7 @@ function clearLines(rows){
   gameState.combo += 1;
   clientState.gp += (count * 10) + (gameState.combo * 5);
   logAction('clear', { count, combo: gameState.combo });
+
   if (gameState.lines % 10 === 0){
     gameState.level++;
     gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92));
@@ -1353,6 +1498,8 @@ function resetForPlay(){
   initGrid();
   gameState.dropInterval = INITIAL_DROP_MS;
   clientState.actionLog = [];
+  // refill energy when starting new run (server-side should control for fairness; client reserves).
+  clientState.energy = Math.max(0, clientState.energy);
   spawnPiece();
   gameState.isPlaying = true;
   try {
@@ -1362,7 +1509,7 @@ function resetForPlay(){
   updateUI();
 }
 
-/* colors / touch controls (unchanged) */
+/* colors / touch controls */
 function colorFromVal(val){
   const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 };
   return map[val] ?? 0x0f172a;
@@ -1429,6 +1576,15 @@ document.addEventListener('DOMContentLoaded', async ()=>{
         clientState.referralCode = init.referralCode ?? clientState.referralCode;
         if (!clientState.username && init.username) clientState.username = init.username;
         if (init.referralAccepted) clearPendingReferral();
+
+        // If server reports wallet already bound, adopt it
+        if (init.wallet) {
+          clientState.wallet = init.wallet;
+          clientState.walletProvider = init.walletProvider || clientState.walletProvider;
+          saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider);
+        }
+        // If server reports energy, adopt it (server is authoritative)
+        if (typeof init.energy === 'number') clientState.energy = Math.max(0, Math.min(100, init.energy));
       }
     } catch(e){ console.warn('client init failed', e); }
 
@@ -1491,6 +1647,7 @@ async function claimRewards(){
     if (resp && resp.ok){
       clientState.gp = resp.gp ?? clientState.gp;
       clientState.userAU = resp.userAU ?? clientState.userAU;
+      if (typeof resp.energy === 'number') clientState.energy = Math.max(0, Math.min(100, resp.energy));
       updateUI();
       showModal('<div class="small-muted">Rewards claimed! Closing...</div>');
       setTimeout(()=>{ hideModal(); closeTelegramApp(); }, 900);
