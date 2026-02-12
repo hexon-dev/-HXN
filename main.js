@@ -1,7 +1,9 @@
 /* main.js
    Hexon — Phaser 3 Tetris engine (robust/redraft)
-   - fixes for canvas sizing, stable drop loop, safe handlers
-   - preserves AdsGram, Phantom, Telegram integrations
+   - Referral system (capture, share, register on bind)
+   - Miner shop (fetch, buy)
+   - AdsGram (show + verify + fallback)
+   - Stable drop loop, safe handlers, and defensive boot
 */
 
 'use strict';
@@ -9,7 +11,7 @@
 /* ---------------------------
    Config & Constants
    --------------------------- */
-const API_BASE = 'https://api.yourdomain.com'; // <-- update to your backend (optional)
+const API_BASE = 'https://api.yourdomain.com'; // <-- change to your backend
 const DAILY_EMISSION_CAP = 1250000;
 const GAME_ALLOCATION = 150_000_000;
 
@@ -42,10 +44,12 @@ let clientState = {
   wallet: null,
   gp: 0,
   energy: 65,
-  miners: [],
+  miners: [],        // owned miners
+  shopItems: [],     // fetched store items
   userAU: 0,
   totalAU: 0,
-  referralCode: null,
+  referralCode: null,   // my own code (from server)
+  pendingReferral: null,// code used to refer me (captured from URL)
   referralsActive: 0,
   adsThisSitting: 0,
   adsToday: 0,
@@ -59,17 +63,46 @@ function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if
 async function api(path, method='GET', body=null){
   try {
     const url = API_BASE + path;
-    const res = await fetch(url, {
-      method,
-      headers: {'Content-Type':'application/json'},
-      body: body ? JSON.stringify(body) : undefined
-    });
-    if (!res.ok) throw new Error('api ' + res.status);
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      console.warn('API non-ok', res.status, path);
+      return null;
+    }
     return await res.json();
   } catch (e) {
     console.warn('API error', e);
     return null;
   }
+}
+
+/* ---------------------------
+   Referral helpers
+   --------------------------- */
+function getRefFromURL(){
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('ref') || params.get('refCode') || null;
+  } catch(e){ return null; }
+}
+function savePendingReferral(code){
+  if (!code) return;
+  try {
+    localStorage.setItem('hexon_pending_ref', code);
+    clientState.pendingReferral = code;
+    console.log('Saved pending referral', code);
+  } catch(e){ console.warn('savePendingReferral', e); }
+}
+function loadPendingReferral(){
+  try {
+    const code = localStorage.getItem('hexon_pending_ref');
+    clientState.pendingReferral = code || null;
+    return clientState.pendingReferral;
+  } catch(e){ return null; }
+}
+function clearPendingReferral(){
+  try { localStorage.removeItem('hexon_pending_ref'); clientState.pendingReferral = null; } catch(e){}
 }
 
 /* ---------------------------
@@ -113,8 +146,284 @@ function closeTelegramApp(){
 }
 
 /* ---------------------------
-   Game state
+   AdsGram loader + wrapper
    --------------------------- */
+let AdsGramLoaded = false;
+let AdController = null;
+function loadAdsGram(){
+  try {
+    if (window.Adsgram && !AdController){
+      try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); }
+    }
+    if (AdsGramLoaded) return;
+    const s = document.createElement('script');
+    s.src = ADSGRAM_SRC;
+    s.async = true;
+    s.onload = () => {
+      try {
+        if (window.Adsgram && typeof window.Adsgram.init === 'function'){
+          AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
+          AdsGramLoaded = true;
+          console.log('AdsGram loaded');
+        }
+      } catch(e){ console.warn('AdsGram init error', e); }
+    };
+    s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); };
+    document.head.appendChild(s);
+  } catch(e){ console.warn('loadAdsGram', e); }
+}
+
+// unified ad show function
+async function showAdAndVerify(){
+  if ((clientState.adsToday || 0) >= MAX_SITTINGS_PER_DAY) { showModal('<div class="small-muted">Daily ad sitting limit reached.</div>'); return; }
+  if ((clientState.adsThisSitting || 0) >= MAX_ADS_PER_SITTING) { showModal('<div class="small-muted">Sitting limit reached. Play a bit then return.</div>'); return; }
+
+  showModal('<div class="small-muted">Opening sponsored transmission...</div>');
+  try {
+    let provider = 'Fallback';
+    let payload = { adSessionId: generateUUID() };
+
+    if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
+      provider = 'AdsGram';
+      try {
+        const result = await AdController.show(); // may throw if skipped
+        payload = { result };
+      } catch(err){
+        console.warn('AdController.show error', err);
+        hideModal();
+        showModal('<div class="small-muted">Ad failed / skipped — no reward</div>', ()=> setTimeout(hideModal,900));
+        return;
+      }
+    } else {
+      // fallback: simulate watch delay
+      await new Promise(res => setTimeout(res, 2400));
+    }
+
+    // verify with backend for authoritative reward issuance
+    const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
+    hideModal();
+    if (resp && resp.grantedPercent){
+      clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
+      clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
+      clientState.adsToday = (clientState.adsToday||0) + 1;
+      logAction('ad_watched', { provider, granted: resp.grantedPercent });
+      updateUI();
+      showModal(`<div class="small-muted">Energy credited +${resp.grantedPercent}%</div>`, ()=> setTimeout(hideModal,900));
+    } else {
+      showModal('<div class="small-muted">Ad verification failed</div>', ()=> setTimeout(hideModal,1200));
+    }
+  } catch(e){
+    hideModal();
+    console.warn('showAdAndVerify error', e);
+    showModal('<div class="small-muted">Ad error — try later</div>', ()=> setTimeout(hideModal,1200));
+  }
+}
+
+/* ---------------------------
+   Miner shop (UI + backend)
+   - fetch /shop/items (GET)
+   - buy: /shop/buy (POST { sessionId, itemId })
+*/
+async function fetchShopItems(){
+  try {
+    const items = await api('/shop/items','GET');
+    if (Array.isArray(items)) clientState.shopItems = items;
+    return clientState.shopItems;
+  } catch(e){ console.warn('fetchShopItems', e); return []; }
+}
+
+function openMinerShop(){
+  // render modal with shop items
+  (async ()=>{
+    showModal('<div class="small-muted">Loading shop...</div>');
+    const items = await fetchShopItems();
+    if (!items || items.length === 0){
+      showModal('<div class="small-muted">Shop unavailable</div>', ()=> setTimeout(hideModal,900));
+      return;
+    }
+    const html = ['<div style="text-align:left"><h3>Miner Shop</h3><div class="small-muted">Buy miners to increase AU</div><div style="height:8px"></div>'];
+    items.forEach(it=>{
+      html.push(`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px dashed rgba(255,255,255,0.03)">
+        <div><b>${escapeHtml(it.name)}</b><div class="small-muted">${escapeHtml(it.desc || '')}</div></div>
+        <div style="text-align:right">
+          <div style="font-weight:700">${(it.priceGP||0)} GP</div>
+          <button class="button" data-item="${escapeHtml(it.id)}" style="margin-top:6px">Buy</button>
+        </div>
+      </div>`);
+    });
+    html.push('<div style="height:8px"></div><button id="closeShop" class="btn-ghost">Close</button></div>');
+    showModal(html.join(''), ()=>{
+      // attach buy handlers
+      document.querySelectorAll('[data-item]').forEach(btn=>{
+        btn.onclick = async (ev)=>{
+          const id = btn.getAttribute('data-item');
+          await purchaseMiner(id);
+        };
+      });
+      const close = $('#closeShop');
+      if (close) close.onclick = hideModal;
+    });
+  })();
+}
+
+async function purchaseMiner(itemId){
+  showModal('<div class="small-muted">Purchasing...</div>');
+  try {
+    const resp = await api('/shop/buy','POST', { sessionId: clientState.sessionId, itemId });
+    hideModal();
+    if (resp && resp.ok){
+      // refresh local miners (backend should return updated miners)
+      if (resp.miners) clientState.miners = resp.miners;
+      else {
+        // fallback: request client/init to refresh
+        const init = await api('/client/init','POST',{ sessionId: clientState.sessionId });
+        if (init && init.miners) clientState.miners = init.miners;
+      }
+      renderMinersList();
+      showModal('<div class="small-muted">Purchase successful</div>', ()=> setTimeout(hideModal,900));
+      logAction('buy_miner', { itemId });
+    } else {
+      console.warn('purchase failed', resp);
+      showModal('<div class="small-muted">Purchase failed — check funds or try later</div>', ()=> setTimeout(hideModal,1200));
+    }
+  } catch(e){
+    hideModal();
+    console.warn('purchaseMiner error', e);
+    showModal('<div class="small-muted">Network error — try later</div>', ()=> setTimeout(hideModal,1200));
+  }
+}
+
+/* ---------------------------
+   Phantom wallet integration (bind includes referral)
+*/
+async function bindWallet(){
+  if (window.solana && window.solana.isPhantom){
+    try {
+      const resp = await window.solana.connect();
+      const publicKey = resp.publicKey.toString();
+
+      // include pending referral if present
+      const payload = { sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.pendingReferral || clientState.referralCode || null };
+
+      const res = await api('/wallet/bind','POST', payload);
+      if (res && res.ok){
+        clientState.wallet = publicKey;
+        clientState.userId = res.userId ?? clientState.userId;
+        clientState.gp = res.gp ?? clientState.gp;
+        clientState.miners = res.miners ?? clientState.miners;
+        clientState.userAU = res.userAU ?? clientState.userAU;
+        clientState.referralCode = res.referralCode ?? clientState.referralCode;
+        // if backend accepted referral, clear it locally
+        if (res.referralAccepted) clearPendingReferral();
+        updateUI(); renderMinersList();
+        alert('Wallet bound: ' + publicKey);
+      } else {
+        alert('Backend bind failed — check console.');
+        console.warn('bind response', res);
+      }
+    } catch(e){
+      console.warn('Phantom connect error', e);
+      alert('Wallet connect failed or canceled. Make sure Phantom is installed and unlocked.');
+    }
+  } else {
+    if (confirm('Phantom not detected. Open phantom.app to install?')) window.open('https://phantom.app/', '_blank');
+  }
+}
+
+/* ---------------------------
+   Referral UI & sharing
+*/
+async function getMyReferral(){
+  try {
+    // get my referral code & stats
+    const resp = await api('/player/referral','GET');
+    if (resp && resp.refCode){
+      clientState.referralCode = resp.refCode;
+      clientState.referralsActive = resp.count ?? clientState.referralsActive;
+    }
+    return clientState.referralCode;
+  } catch(e){ console.warn('getMyReferral', e); return clientState.referralCode; }
+}
+
+function showReferralModal(){
+  (async ()=>{
+    let code = clientState.referralCode || await getMyReferral();
+    if (!code) {
+      code = 'UNKNOWN';
+    }
+    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+    const html = `<div style="text-align:left">
+      <h3>Invite Friends</h3>
+      <div class="small-muted">Share your referral link — both of you can earn rewards</div>
+      <div style="margin-top:8px;"><input id="refLinkBox" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" value="${escapeHtml(link)}" readonly></div>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button id="copyRefBtn" class="button">Copy Link</button>
+        <button id="shareRefBtn" class="btn-ghost">Share</button>
+      </div>
+      <div style="margin-top:8px;" class="small-muted">Referrals: ${clientState.referralsActive || 0}</div>
+    </div>`;
+    showModal(html, ()=>{
+      const copy = $('#copyRefBtn'); const share = $('#shareRefBtn'); const box = $('#refLinkBox');
+      if (copy) copy.onclick = async ()=>{ try{ await navigator.clipboard.writeText(box.value); showModal('<div class="small-muted">Copied!</div>', ()=> setTimeout(hideModal,600)); } catch(e){ console.warn(e); alert('Copy failed'); } };
+      if (share) share.onclick = async ()=>{ try { if (navigator.share) { await navigator.share({ title: 'Play Hexon', text: 'Join me on Hexon', url: box.value }); hideModal(); } else { alert('Share not supported on this device — copy link instead'); } } catch(e){ console.warn(e); } };
+    });
+  })();
+}
+
+/* ---------------------------
+   UI helpers, miners, leaderboard
+*/
+function renderMinersList(){
+  const container = $('minersList'); if (!container) return;
+  container.innerHTML = '';
+  if (!clientState.miners || clientState.miners.length === 0) { container.innerHTML = '<div class="small-muted">No miners owned</div>'; return; }
+  clientState.miners.forEach(m=>{
+    const node = document.createElement('div');
+    node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0';
+    node.innerHTML = `<div><b>${m.name}</b><div class="small-muted">Hash ${m.au} AU</div></div><div class="small-muted">${m.status||'Active'}</div>`;
+    container.appendChild(node);
+  });
+}
+
+async function refreshLeaderboard(){
+  const top = await api('/leaderboard/top','GET');
+  const el = $('leaderboard');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!top) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
+  top.forEach((t,idx)=>{
+    const row = document.createElement('div'); row.className = 'leader-entry';
+    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name)}</div><div>${t.score.toLocaleString()}</div>`;
+    el.appendChild(row);
+  });
+}
+
+/* ---------------------------
+   Modal / UI helpers
+*/
+function showModal(html, onMounted){ const o=$('overlay'); if(!o) { console.log('Modal:', html); return; } o.classList.add('show'); $('#modalContent').innerHTML = html; if(onMounted) setTimeout(onMounted,60); }
+function hideModal(){ const o=$('overlay'); if(!o) return; o.classList.remove('show'); $('#modalContent').innerHTML = ''; }
+function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+
+function updateUI(){
+  if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
+  if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp || 0) + ' GP';
+  if ($('ui-energyFill')) $('ui-energyFill').style.width = (clientState.energy) + '%';
+  if ($('ui-level')) $('ui-level').innerText = gameState.level;
+  if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
+  if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU || 0).toFixed(2);
+  if ($('ui-hxn')) {
+    const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0;
+    $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN';
+  }
+  if ($('ui-username')) {
+    $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest');
+  }
+}
+
+/* ---------------------------
+   Phaser scenes and game logic (unchanged core)
+*/
 const gameState = {
   grid: null,
   activePiece: null,
@@ -127,9 +436,6 @@ const gameState = {
   combo: 0
 };
 
-/* ---------------------------
-   Tetromino definitions
-   --------------------------- */
 const PIECES = {
   I: [
     [[0,1],[1,1],[2,1],[3,1]],
@@ -169,36 +475,6 @@ const PIECES = {
 };
 const PIECE_TYPES = Object.keys(PIECES);
 
-/* ---------------------------
-   AdsGram loader (non-blocking)
-   --------------------------- */
-let AdsGramLoaded = false;
-let AdController = null;
-function loadAdsGram(){
-  try {
-    if (window.Adsgram && !AdController){
-      try { AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn(e); }
-    }
-    if (AdsGramLoaded) return;
-    const s = document.createElement('script');
-    s.src = ADSGRAM_SRC;
-    s.async = true;
-    s.onload = () => {
-      try {
-        if (window.Adsgram && typeof window.Adsgram.init === 'function'){
-          AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
-          AdsGramLoaded = true;
-        }
-      } catch(e){ console.warn('AdsGram init error', e); }
-    };
-    s.onerror = ()=> { console.warn('Failed to load AdsGram SDK'); };
-    document.head.appendChild(s);
-  } catch(e){ console.warn('loadAdsGram', e); }
-}
-
-/* ---------------------------
-   Phaser scenes
-   --------------------------- */
 let phaserGame;
 
 class BootScene extends Phaser.Scene {
@@ -210,12 +486,10 @@ class GameScene extends Phaser.Scene {
   constructor(){ super({ key:'GameScene' }); }
   create(){
     console.log('GameScene.create');
-    // compute board pixel size using current CELL/GAP
     this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
     this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
     this.gridOrigin = { x: 16, y: 16 };
 
-    // draw panel background and grid lines
     const g = this.add.graphics();
     g.fillStyle(0x061426, 1);
     g.fillRoundedRect(this.gridOrigin.x - 8, this.gridOrigin.y - 8, this.boardPixelWidth, this.boardPixelHeight, 10);
@@ -227,10 +501,8 @@ class GameScene extends Phaser.Scene {
       g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL + GAP), this.gridOrigin.y + GRID_ROWS*(CELL + GAP)));
     }
 
-    // initialize logical grid
     initGrid();
 
-    // create persistent rectangle sprites for each grid cell
     this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
     for (let r=0; r<GRID_ROWS; r++){
       for (let c=0; c<GRID_COLS; c++){
@@ -238,7 +510,6 @@ class GameScene extends Phaser.Scene {
         const y = this.gridOrigin.y + r*(CELL + GAP) + CELL/2;
         const rect = this.add.rectangle(x, y, CELL, CELL, 0x102033).setStrokeStyle(1, 0x092033, 0.6);
         rect.updateFill = function(color){
-          // Phaser.GameObjects.Rectangle supports 'fillColor' and 'setFillStyle' may not exist; do both defensively
           try { this.fillColor = color; } catch(e){}
           try { if (typeof this.setFillStyle === 'function') this.setFillStyle(color); } catch(e){}
         };
@@ -256,20 +527,12 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // spawn first piece
     spawnPiece();
     gameState.isPlaying = true;
     updateUI();
-
-    // start the drop loop, stable
     this.startDropLoop();
-
-    // input setup
     this.setupInput();
-
-    // auto recharge event
     this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
-
     console.log('GameScene created — boardSize', this.boardPixelWidth, this.boardPixelHeight);
   }
 
@@ -289,8 +552,6 @@ class GameScene extends Phaser.Scene {
         if (!moved) lockPiece();
       }
     });
-    // small debug
-    // console.log('drop loop started, delay', delay);
   }
 
   update(){
@@ -299,7 +560,6 @@ class GameScene extends Phaser.Scene {
   }
 
   renderGrid(){
-    // render locked grid
     for (let r=0; r<GRID_ROWS; r++){
       for (let c=0; c<GRID_COLS; c++){
         const val = gameState.grid[r][c];
@@ -308,7 +568,6 @@ class GameScene extends Phaser.Scene {
         if (rect && typeof rect.updateFill === 'function') rect.updateFill(color);
       }
     }
-    // overlay active piece
     if (gameState.activePiece){
       const cells = getPieceCells(gameState.activePiece);
       cells.forEach(p=>{
@@ -321,18 +580,14 @@ class GameScene extends Phaser.Scene {
   }
 
   setupInput(){
-    // Phaser keyboard (preferred)
     this.input.keyboard.on('keydown', (ev)=>{
       if (!gameState.isPlaying) return;
       handleKey(ev.code || ev.key);
     });
-
-    // fallback window keyboard
     window.addEventListener('keydown', (ev) => {
       if (!gameState.isPlaying) return;
       handleKey(ev.code || ev.key);
     });
-
     if (!document.querySelector('.touch-controls')) setupTouchControls(this);
   }
 
@@ -344,39 +599,25 @@ class GameScene extends Phaser.Scene {
 }
 
 /* ---------------------------
-   Key handling
-   --------------------------- */
+   Game utilities (movement, scoring)
+*/
 function handleKey(code){
   switch(code){
-    case 'ArrowLeft':
-    case 'Left':
-      movePiece(-1); break;
-    case 'ArrowRight':
-    case 'Right':
-      movePiece(1); break;
-    case 'ArrowDown':
-    case 'Down':
-      softDrop(); break;
-    case 'Space':
-    case ' ':
-      hardDrop(); break;
-    case 'ArrowUp':
-    case 'Up':
-      rotatePiece(); break;
+    case 'ArrowLeft': case 'Left': movePiece(-1); break;
+    case 'ArrowRight': case 'Right': movePiece(1); break;
+    case 'ArrowDown': case 'Down': softDrop(); break;
+    case 'Space': case ' ': hardDrop(); break;
+    case 'ArrowUp': case 'Up': rotatePiece(); break;
     default: return;
   }
   updateUI();
 }
 
-/* ---------------------------
-   Piece helper & movement
-   --------------------------- */
 function getPieceCells(piece){
   const states = PIECES[piece.type];
   const state = states[piece.rot % states.length];
   return state.map(p => ({ x: p[0] + piece.x, y: p[1] + piece.y }));
 }
-
 function initGrid(){
   gameState.grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(0));
   gameState.score = 0;
@@ -385,22 +626,16 @@ function initGrid(){
   gameState.combo = 0;
   gameState.dropInterval = INITIAL_DROP_MS;
 }
-
 function spawnPiece(){
   const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   const rot = 0;
   const xStart = Math.floor((GRID_COLS - 4) / 2);
-  const yStart = 0; // visible start
+  const yStart = 0;
   gameState.activePiece = { type, rot, x: xStart, y: yStart };
   gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
   logAction('spawn', { type, x: xStart, y: yStart });
-
-  if (checkCollision(getPieceCells(gameState.activePiece))){
-    gameOver();
-  }
+  if (checkCollision(getPieceCells(gameState.activePiece))) gameOver();
 }
-
-/* collision / movement */
 function checkCollision(cells){
   for (const p of cells){
     if (p.x < 0 || p.x >= GRID_COLS) return true;
@@ -409,7 +644,6 @@ function checkCollision(cells){
   }
   return false;
 }
-
 function movePiece(dir){
   if (!gameState.activePiece) return;
   const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir };
@@ -418,7 +652,6 @@ function movePiece(dir){
     logAction('move', { dir });
   }
 }
-
 function movePieceDown(){
   if (!gameState.activePiece) return false;
   const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 };
@@ -428,37 +661,13 @@ function movePieceDown(){
   }
   return false;
 }
-
 function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); } }
-
-function hardDrop(){
-  let falls = 0; while(movePieceDown()) falls++;
-  lockPiece();
-  gameState.score += falls * 2;
-  clientState.gp += falls * 2;
-  logAction('hard_drop', { falls });
-  updateUI();
-}
-
-function rotatePiece(){
-  if (!gameState.activePiece) return;
-  const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) };
-  const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}];
-  for (const k of kicks){
-    const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy };
-    if (!checkCollision(getPieceCells(cand))){
-      gameState.activePiece.rot = cand.rot;
-      gameState.activePiece.x = cand.x;
-      gameState.activePiece.y = cand.y;
-      logAction('rotate', { rot: cand.rot, kick: k });
-      return;
-    }
-  }
-}
+function hardDrop(){ let falls = 0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; clientState.gp += falls * 2; logAction('hard_drop', { falls }); updateUI(); }
+function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate', { rot: cand.rot, kick: k }); return; } } }
 
 /* ---------------------------
    Lock / clear / scoring
-   --------------------------- */
+*/
 function lockPiece(){
   const ap = gameState.activePiece;
   if (!ap) return;
@@ -478,13 +687,11 @@ function lockPiece(){
 
   spawnPiece();
 
-  // restart drop loop in scene
   try {
     const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
     if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
   } catch(e){ console.warn('restart drop loop failed', e); }
 }
-
 function clearLines(rows){
   rows.sort((a,b)=>a-b);
   for (const r of rows){
@@ -501,14 +708,13 @@ function clearLines(rows){
   if (gameState.lines % 10 === 0){
     gameState.level++;
     gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92));
-    // drop loop will be restarted from lockPiece after spawn
   }
   updateUI();
 }
 
 /* ---------------------------
    Game over / reset
-   --------------------------- */
+*/
 async function gameOver(){
   gameState.isPlaying = false;
   logAction('gameover', { score: gameState.score, lines: gameState.lines });
@@ -528,7 +734,6 @@ async function gameOver(){
   });
   updateUI();
 }
-
 function resetForPlay(){
   initGrid();
   gameState.dropInterval = INITIAL_DROP_MS;
@@ -543,13 +748,12 @@ function resetForPlay(){
 }
 
 /* ---------------------------
-   Colors / touch controls / UI stubs
-   --------------------------- */
+   Colors / touch controls
+*/
 function colorFromVal(val){
   const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 };
   return map[val] ?? 0x0f172a;
 }
-
 function setupTouchControls(scene){
   if (document.querySelector('.touch-controls')) return;
   const wrapper = document.createElement('div');
@@ -570,174 +774,29 @@ function setupTouchControls(scene){
 }
 
 /* ---------------------------
-   Ads / Wallet / UI helpers (kept)
-   --------------------------- */
-loadAdsGram();
-
-async function handleWatchAd(){
-  if ((clientState.adsToday || 0) >= MAX_SITTINGS_PER_DAY){
-    showModal('<div class="small-muted">Daily ad sitting limit reached.</div>'); return;
-  }
-  if ((clientState.adsThisSitting || 0) >= MAX_ADS_PER_SITTING){
-    showModal('<div class="small-muted">Sitting limit reached. Play a bit then return.</div>'); return;
-  }
-  showModal('<div class="small-muted">Opening sponsored transmission...</div>');
-  if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
-    try {
-      const result = await AdController.show();
-      hideModal();
-      const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider:'AdsGram', payload: result });
-      if (resp && resp.grantedPercent){
-        clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
-        clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
-        clientState.adsToday = (clientState.adsToday||0) + 1;
-        logAction('ad_watched', { provider:'AdsGram', granted: resp.grantedPercent });
-        updateUI();
-        showModal(`<div class="small-muted">Energy credited +${resp.grantedPercent}%</div>`, ()=> setTimeout(hideModal,900));
-      } else {
-        showModal('<div class="small-muted">Ad verification failed</div>', ()=> setTimeout(hideModal,1200));
-      }
-      return;
-    } catch (err){
-      console.warn('AdController.show() rejected', err);
-      hideModal();
-      showModal('<div class="small-muted">Ad failed / skipped — no reward</div>', ()=> setTimeout(hideModal,900));
-      return;
-    }
-  }
-  await new Promise(res => setTimeout(res, 2400));
-  hideModal();
-  const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider:'Fallback', adSessionId: generateUUID() });
-  if (resp && resp.grantedPercent){
-    clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
-    clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
-    clientState.adsToday = (clientState.adsToday||0) + 1;
-    logAction('ad_watched', { provider:'Fallback', granted: resp.grantedPercent });
-    updateUI();
-    showModal(`<div class="small-muted">Energy credited +${resp.grantedPercent}%</div>`, ()=> setTimeout(hideModal,900));
-  } else {
-    showModal('<div class="small-muted">Ad verification failed</div>', ()=> setTimeout(hideModal,1200));
-  }
-}
-
-async function bindWallet(){
-  if (window.solana && window.solana.isPhantom){
-    try {
-      const resp = await window.solana.connect();
-      const publicKey = resp.publicKey.toString();
-      const res = await api('/wallet/bind','POST',{ sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.referralCode });
-      if (res && res.ok){
-        clientState.wallet = publicKey;
-        clientState.userId = res.userId ?? clientState.userId;
-        clientState.gp = res.gp ?? clientState.gp;
-        clientState.miners = res.miners ?? clientState.miners;
-        clientState.userAU = res.userAU ?? clientState.userAU;
-        updateUI(); renderMinersList();
-        alert('Wallet bound: ' + publicKey);
-      } else {
-        alert('Backend bind failed — check console.');
-        console.warn('bind response', res);
-      }
-    } catch(e){
-      console.warn('Phantom connect error', e);
-      alert('Wallet connect failed or canceled. Make sure Phantom is installed and unlocked.');
-    }
-  } else {
-    if (confirm('Phantom not detected. Open phantom.app to install?')) window.open('https://phantom.app/', '_blank');
-  }
-}
-
-/* ---------------------------
-   UI helpers
-   --------------------------- */
-function renderMinersList(){
-  const container = $('minersList'); if (!container) return;
-  container.innerHTML = '';
-  if (!clientState.miners || clientState.miners.length === 0) { container.innerHTML = '<div class="small-muted">No miners owned</div>'; return; }
-  clientState.miners.forEach(m=>{
-    const node = document.createElement('div');
-    node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0';
-    node.innerHTML = `<div><b>${m.name}</b><div class="small-muted">Hash ${m.au} AU</div></div><div class="small-muted">${m.status||'Active'}</div>`;
-    container.appendChild(node);
-  });
-}
-
-async function refreshLeaderboard(){
-  const top = await api('/leaderboard/top','GET');
-  const el = $('leaderboard');
-  if (!el) return;
-  el.innerHTML = '';
-  if (!top) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
-  top.forEach((t,idx)=>{
-    const row = document.createElement('div'); row.className = 'leader-entry';
-    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name)}</div><div>${t.score.toLocaleString()}</div>`;
-    el.appendChild(row);
-  });
-}
-
-/* ---------------------------
-   Claim rewards / modal helpers
-   --------------------------- */
-async function claimRewards(){
-  showModal('<div class="small-muted">Claiming rewards...</div>');
-  try {
-    const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId, userId: clientState.userId });
-    hideModal();
-    if (resp && resp.ok){
-      clientState.gp = resp.gp ?? clientState.gp;
-      clientState.userAU = resp.userAU ?? clientState.userAU;
-      updateUI();
-      showModal('<div class="small-muted">Rewards claimed! Closing...</div>');
-      setTimeout(()=>{ hideModal(); closeTelegramApp(); }, 900);
-    } else {
-      showModal('<div class="small-muted">Claim failed — try again later.</div>', ()=> setTimeout(hideModal,1200));
-    }
-  } catch(e){
-    hideModal();
-    console.warn('claimRewards error', e);
-    showModal('<div class="small-muted">Network error — try again later.</div>', ()=> setTimeout(hideModal,1200));
-  }
-}
-
-function showModal(html, onMounted){ const o=$('overlay'); if(!o) { console.log('Modal:', html); return; } o.classList.add('show'); $('#modalContent').innerHTML = html; if(onMounted) setTimeout(onMounted,60); }
-function hideModal(){ const o=$('overlay'); if(!o) return; o.classList.remove('show'); $('#modalContent').innerHTML = ''; }
-function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-
-function updateUI(){
-  if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
-  if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp || 0) + ' GP';
-  if ($('ui-energyFill')) $('ui-energyFill').style.width = (clientState.energy) + '%';
-  if ($('ui-level')) $('ui-level').innerText = gameState.level;
-  if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
-  if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU || 0).toFixed(2);
-  if ($('ui-hxn')) {
-    const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0;
-    $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN';
-  }
-  if ($('ui-username')) {
-    $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest');
-  }
-}
-
-/* ---------------------------
    Boot & sizing
-   --------------------------- */
+*/
 window.addEventListener('load', async ()=>{
   try {
     console.log('Hexon boot starting...');
     initTelegram();
 
-    // wire UI buttons safely (guard missing functions)
-    try { if ($('watchAdBtn')) $('watchAdBtn').onclick = handleWatchAd; } catch(e){ console.warn(e); }
-    try { if ($('openStore') && typeof openMinerShop === 'function') $('openStore').onclick = openMinerShop; } catch(e){ console.warn('openMinerShop not available', e); }
-    try { if ($('bindWalletBtn') && typeof bindWallet === 'function') $('bindWalletBtn').onclick = bindWallet; } catch(e){ console.warn(e); }
-    if ($('showRefBtn')) $('showRefBtn').onclick = ()=> showModal('<div class="small-muted">Invite friends</div>');
-    if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
-    if ($('claimRewardBtn') && typeof claimRewards === 'function') $('claimRewardBtn').onclick = claimRewards;
+    // Capture and persist referral from URL before init
+    const ref = getRefFromURL();
+    if (ref) savePendingReferral(ref);
+    else loadPendingReferral();
 
-    // attempt initial client init (best-effort)
+    // wire UI buttons safely
+    try { if ($('watchAdBtn')) $('watchAdBtn').onclick = showAdAndVerify; } catch(e){ console.warn(e); }
+    try { if ($('openStore')) $('openStore').onclick = openMinerShop; } catch(e){ console.warn(e); }
+    try { if ($('bindWalletBtn')) $('bindWalletBtn').onclick = bindWallet; } catch(e){ console.warn(e); }
+    if ($('showRefBtn')) $('showRefBtn').onclick = showReferralModal;
+    if ($('viewAlloc')) $('viewAlloc').onclick = ()=> showModal('<div class="small-muted">Allocation preview</div>');
+    if ($('claimRewardBtn')) $('claimRewardBtn').onclick = claimRewards;
+
+    // attempt initial client init (include pending referral so backend can register if desired)
     try {
-      const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.referralCode });
+      const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null });
       if (init){
         clientState.userId = init.userId ?? clientState.userId;
         clientState.gp = init.gp ?? clientState.gp;
@@ -745,44 +804,38 @@ window.addEventListener('load', async ()=>{
         clientState.userAU = init.userAU ?? clientState.userAU;
         clientState.totalAU = init.totalAU ?? clientState.totalAU;
         clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
+        clientState.referralCode = init.referralCode ?? clientState.referralCode;
         if (!clientState.username && init.username) clientState.username = init.username;
+        // if backend accepted referral at init, clear pending
+        if (init.referralAccepted) clearPendingReferral();
       }
     } catch(e){ console.warn('client init failed', e); }
 
-    // compute scale and desired canvas size
+    // compute scale and ensure parent height
     const parentEl = document.getElementById('phaserCanvas') || document.body;
-
-    // Ensure parentEl has a visible height (avoid 0x0 canvas)
-    // If clientHeight is zero, set a safe minHeight
     if (parentEl && parentEl.clientHeight < 200){
-      // mobile-friendly fallback; adjust if you want less/more
       parentEl.style.minHeight = Math.max(420, Math.floor(window.innerHeight * 0.6)) + 'px';
       parentEl.style.width = '100%';
-      // allow some breathing space
       console.log('Enforced minHeight on phaserCanvas:', parentEl.style.minHeight);
     }
 
     const rect = parentEl.getBoundingClientRect();
     const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.9, 900));
     const availH = Math.max(320, rect.height || Math.min(window.innerHeight * 0.9, 1200));
-
     const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
     const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
     const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
-
     CELL = Math.max(10, Math.floor(BASE_CELL * scale));
     GAP = Math.max(1, Math.floor(BASE_GAP * scale));
-
     const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
     const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
-    // ensure parent min size again (so Phaser doesn't get 0x0)
     if (parentEl && parentEl.style){
       parentEl.style.minWidth = Math.min(canvasWidth, Math.max(320, canvasWidth)) + 'px';
       parentEl.style.minHeight = Math.min(canvasHeight, Math.max(420, canvasHeight)) + 'px';
     }
 
-    // create Phaser game (use parent DOM id)
+    // create Phaser
     phaserGame = new Phaser.Game({
       type: Phaser.AUTO,
       parent: 'phaserCanvas',
@@ -805,3 +858,27 @@ window.addEventListener('load', async ()=>{
     console.error('Hexon boot failure:', err);
   }
 });
+
+/* ---------------------------
+   Misc: claimRewards (keeps existing behavior)
+*/
+async function claimRewards(){
+  showModal('<div class="small-muted">Claiming rewards...</div>');
+  try {
+    const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId, userId: clientState.userId });
+    hideModal();
+    if (resp && resp.ok){
+      clientState.gp = resp.gp ?? clientState.gp;
+      clientState.userAU = resp.userAU ?? clientState.userAU;
+      updateUI();
+      showModal('<div class="small-muted">Rewards claimed! Closing...</div>');
+      setTimeout(()=>{ hideModal(); closeTelegramApp(); }, 900);
+    } else {
+      showModal('<div class="small-muted">Claim failed — try again later.</div>', ()=> setTimeout(hideModal,1200));
+    }
+  } catch(e){
+    hideModal();
+    console.warn('claimRewards error', e);
+    showModal('<div class="small-muted">Network error — try again later.</div>', ()=> setTimeout(hideModal,1200));
+  }
+}
