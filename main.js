@@ -1,9 +1,11 @@
 /* main.js
-   Hexon — Phaser 3 Tetris engine (robust/redraft)
-   - Referral system (capture, share, register on bind)
-   - Miner shop (fetch, buy)
-   - AdsGram (show + verify + fallback)
-   - Stable drop loop, safe handlers, and defensive boot
+   Hexon — Phaser 3 Tetris engine (redraft to match FastAPI server)
+   - Adopt server sessionId
+   - GETs automatically append sessionId query param
+   - shop_items mapping (snake_case -> client fields)
+   - ad daily limit consistent with server (MAX_ADS_PER_DAY)
+   - persist sessionId in localStorage
+   - defensive API handling
 */
 
 'use strict';
@@ -32,20 +34,27 @@ const AUTO_RECHARGE_MINUTES = 30;
 const AUTO_RECHARGE_PERCENT = 10;
 const MAX_SITTINGS_PER_DAY = 3;
 const MAX_ADS_PER_SITTING = 3;
-const MAX_ADS_PER_DAY = 9;
+const MAX_ADS_PER_DAY = 9; // authoritative on server
 
 /* ---------------------------
    Client state & helpers
    --------------------------- */
+function loadSessionFromStorage(){
+  try { return localStorage.getItem('hexon_session') || null; } catch(e){ return null; }
+}
+function saveSessionToStorage(sid){
+  try { if(sid) localStorage.setItem('hexon_session', sid); } catch(e){}
+}
+
 let clientState = {
-  sessionId: generateUUID(),
+  sessionId: loadSessionFromStorage() || generateUUID(),
   userId: null,
   username: null,
   wallet: null,
   gp: 0,
   energy: 65,
   miners: [],        // owned miners
-  shopItems: [],     // fetched store items
+  shopItems: [],     // fetched store items (mapped)
   userAU: 0,
   totalAU: 0,
   referralCode: null,   // my own code (from server)
@@ -56,21 +65,53 @@ let clientState = {
   actionLog: []
 };
 
-function generateUUID(){ return 'xxxxxx'.replace(/[x]/g, ()=> (Math.random()*36|0).toString(36)); }
+function generateUUID(){
+  try {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    // fallback: reasonably random 16-char hex
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random()*16|0; const v = c === 'x' ? r : (r&0x3|0x8);
+      return v.toString(16);
+    });
+  } catch(e){
+    return 'sess-' + Math.floor(Math.random()*1e9).toString(36);
+  }
+}
+
 function $(id){ return document.getElementById(id); }
 function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if(clientState.actionLog.length>5000) clientState.actionLog.shift(); }
 
+/* ---------------------------
+   API helper (auto-attach sessionId to GETs)
+   - returns parsed JSON on success or error JSON when server replies non-2xx
+   - returns null on network error
+*/
 async function api(path, method='GET', body=null){
   try {
-    const url = API_BASE + path;
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
-    if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(url, opts);
-    if (!res.ok) {
-      console.warn('API non-ok', res.status, path);
-      return null;
+    // Build URL and auto-attach sessionId for GET requests
+    let url = API_BASE + path;
+    if (method.toUpperCase() === 'GET') {
+      const sid = clientState.sessionId ? encodeURIComponent(clientState.sessionId) : '';
+      if (sid && !url.includes('sessionId=')){
+        url += (url.includes('?') ? '&' : '?') + 'sessionId=' + sid;
+      }
     }
-    return await res.json();
+
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== null && body !== undefined) {
+      // allow sending already-stringified bodies, but prefer objects
+      opts.body = (typeof body === 'string') ? body : JSON.stringify(body);
+    }
+
+    const res = await fetch(url, opts);
+    // try parse JSON even on non-ok so we can bubble server errors
+    const text = await res.text();
+    const json = text ? JSON.parse(text) : null;
+    if (!res.ok) {
+      console.warn('API non-ok', res.status, path, json);
+      return json;
+    }
+    return json;
   } catch (e) {
     console.warn('API error', e);
     return null;
@@ -79,7 +120,7 @@ async function api(path, method='GET', body=null){
 
 /* ---------------------------
    Referral helpers
-   --------------------------- */
+*/
 function getRefFromURL(){
   try {
     const params = new URLSearchParams(window.location.search);
@@ -107,7 +148,7 @@ function clearPendingReferral(){
 
 /* ---------------------------
    Telegram WebApp integration (feature-detected)
-   --------------------------- */
+*/
 let tg = null;
 function initTelegram(){
   try {
@@ -117,7 +158,7 @@ function initTelegram(){
       const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
       if (u){
         clientState.userId = clientState.userId || u.id;
-        clientState.username = u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null;
+        clientState.username = clientState.username || (u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null);
       }
       console.log('Telegram WebApp detected', { username: clientState.username });
     } else {
@@ -147,7 +188,7 @@ function closeTelegramApp(){
 
 /* ---------------------------
    AdsGram loader + wrapper
-   --------------------------- */
+*/
 let AdsGramLoaded = false;
 let AdController = null;
 function loadAdsGram(){
@@ -173,9 +214,9 @@ function loadAdsGram(){
   } catch(e){ console.warn('loadAdsGram', e); }
 }
 
-// unified ad show function
+// unified ad show function (server enforces MAX_ADS_PER_DAY)
 async function showAdAndVerify(){
-  if ((clientState.adsToday || 0) >= MAX_SITTINGS_PER_DAY) { showModal('<div class="small-muted">Daily ad sitting limit reached.</div>'); return; }
+  if ((clientState.adsToday || 0) >= MAX_ADS_PER_DAY) { showModal('<div class="small-muted">Daily ad limit reached.</div>'); return; }
   if ((clientState.adsThisSitting || 0) >= MAX_ADS_PER_SITTING) { showModal('<div class="small-muted">Sitting limit reached. Play a bit then return.</div>'); return; }
 
   showModal('<div class="small-muted">Opening sponsored transmission...</div>');
@@ -210,7 +251,8 @@ async function showAdAndVerify(){
       updateUI();
       showModal(`<div class="small-muted">Energy credited +${resp.grantedPercent}%</div>`, ()=> setTimeout(hideModal,900));
     } else {
-      showModal('<div class="small-muted">Ad verification failed</div>', ()=> setTimeout(hideModal,1200));
+      const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
+      showModal(`<div class="small-muted">${escapeHtml(msg)}</div>`, ()=> setTimeout(hideModal,1200));
     }
   } catch(e){
     hideModal();
@@ -223,13 +265,26 @@ async function showAdAndVerify(){
    Miner shop (UI + backend)
    - fetch /shop/items (GET)
    - buy: /shop/buy (POST { sessionId, itemId })
+   - maps server snake_case fields to client fields
 */
 async function fetchShopItems(){
   try {
     const items = await api('/shop/items','GET');
-    if (Array.isArray(items)) clientState.shopItems = items;
+    if (Array.isArray(items)) {
+      // map server fields (description, price_gp) -> client (desc, priceGP)
+      clientState.shopItems = items.map(i => ({
+        id: i.id,
+        sku: i.sku,
+        name: i.name,
+        desc: i.description || i.desc || '',
+        priceGP: (i.price_gp != null ? i.price_gp : (i.priceGP != null ? i.priceGP : 0)),
+        au: (i.au != null ? i.au : 0)
+      }));
+    } else {
+      clientState.shopItems = [];
+    }
     return clientState.shopItems;
-  } catch(e){ console.warn('fetchShopItems', e); return []; }
+  } catch(e){ console.warn('fetchShopItems', e); clientState.shopItems = []; return []; }
 }
 
 function openMinerShop(){
@@ -247,7 +302,7 @@ function openMinerShop(){
         <div><b>${escapeHtml(it.name)}</b><div class="small-muted">${escapeHtml(it.desc || '')}</div></div>
         <div style="text-align:right">
           <div style="font-weight:700">${(it.priceGP||0)} GP</div>
-          <button class="button" data-item="${escapeHtml(it.id)}" style="margin-top:6px">Buy</button>
+          <button class="button" data-item="${escapeHtml(String(it.id))}" style="margin-top:6px">Buy</button>
         </div>
       </div>`);
     });
@@ -272,19 +327,20 @@ async function purchaseMiner(itemId){
     const resp = await api('/shop/buy','POST', { sessionId: clientState.sessionId, itemId });
     hideModal();
     if (resp && resp.ok){
-      // refresh local miners (backend should return updated miners)
+      // refresh local miners (backend returns updated miners)
       if (resp.miners) clientState.miners = resp.miners;
       else {
         // fallback: request client/init to refresh
-        const init = await api('/client/init','POST',{ sessionId: clientState.sessionId });
+        const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null });
         if (init && init.miners) clientState.miners = init.miners;
       }
       renderMinersList();
       showModal('<div class="small-muted">Purchase successful</div>', ()=> setTimeout(hideModal,900));
       logAction('buy_miner', { itemId });
     } else {
+      const err = (resp && resp.error) ? resp.error : 'Purchase failed — check funds or try later';
       console.warn('purchase failed', resp);
-      showModal('<div class="small-muted">Purchase failed — check funds or try later</div>', ()=> setTimeout(hideModal,1200));
+      showModal(`<div class="small-muted">${escapeHtml(String(err))}</div>`, ()=> setTimeout(hideModal,1200));
     }
   } catch(e){
     hideModal();
@@ -295,6 +351,7 @@ async function purchaseMiner(itemId){
 
 /* ---------------------------
    Phantom wallet integration (bind includes referral)
+   - server expects sessionId, wallet, referral (optional)
 */
 async function bindWallet(){
   if (window.solana && window.solana.isPhantom){
@@ -318,7 +375,8 @@ async function bindWallet(){
         updateUI(); renderMinersList();
         alert('Wallet bound: ' + publicKey);
       } else {
-        alert('Backend bind failed — check console.');
+        const err = (res && res.error) ? res.error : 'Backend bind failed — check console.';
+        alert('Backend bind failed — ' + err);
         console.warn('bind response', res);
       }
     } catch(e){
@@ -332,10 +390,10 @@ async function bindWallet(){
 
 /* ---------------------------
    Referral UI & sharing
+   - server endpoint /player/referral expects sessionId query param (api() attaches automatically)
 */
 async function getMyReferral(){
   try {
-    // get my referral code & stats
     const resp = await api('/player/referral','GET');
     if (resp && resp.refCode){
       clientState.referralCode = resp.refCode;
@@ -380,7 +438,7 @@ function renderMinersList(){
   clientState.miners.forEach(m=>{
     const node = document.createElement('div');
     node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0';
-    node.innerHTML = `<div><b>${m.name}</b><div class="small-muted">Hash ${m.au} AU</div></div><div class="small-muted">${m.status||'Active'}</div>`;
+    node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status || 'Active')}</div>`;
     container.appendChild(node);
   });
 }
@@ -393,7 +451,7 @@ async function refreshLeaderboard(){
   if (!top) { el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
   top.forEach((t,idx)=>{
     const row = document.createElement('div'); row.className = 'leader-entry';
-    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name)}</div><div>${t.score.toLocaleString()}</div>`;
+    row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name)}</div><div>${Number(t.score).toLocaleString()}</div>`;
     el.appendChild(row);
   });
 }
@@ -714,6 +772,7 @@ function clearLines(rows){
 
 /* ---------------------------
    Game over / reset
+   - server endpoint /game/submit-score expects sessionId in POST body
 */
 async function gameOver(){
   gameState.isPlaying = false;
@@ -721,7 +780,6 @@ async function gameOver(){
   try {
     await api('/game/submit-score','POST', {
       sessionId: clientState.sessionId,
-      userId: clientState.userId,
       score: gameState.score,
       lines: gameState.lines,
       actionLog: clientState.actionLog.slice(-2000)
@@ -775,6 +833,7 @@ function setupTouchControls(scene){
 
 /* ---------------------------
    Boot & sizing
+   - perform client /client/init and adopt server sessionId (stored locally)
 */
 window.addEventListener('load', async ()=>{
   try {
@@ -798,6 +857,13 @@ window.addEventListener('load', async ()=>{
     try {
       const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null });
       if (init){
+        // adopt authoritative sessionId from server (very important)
+        if (init.sessionId && init.sessionId !== clientState.sessionId){
+          clientState.sessionId = init.sessionId;
+          saveSessionToStorage(clientState.sessionId);
+          console.log('Adopted server sessionId:', clientState.sessionId);
+        }
+
         clientState.userId = init.userId ?? clientState.userId;
         clientState.gp = init.gp ?? clientState.gp;
         clientState.miners = init.miners ?? clientState.miners;
@@ -861,11 +927,12 @@ window.addEventListener('load', async ()=>{
 
 /* ---------------------------
    Misc: claimRewards (keeps existing behavior)
+   - server expects { sessionId }
 */
 async function claimRewards(){
   showModal('<div class="small-muted">Claiming rewards...</div>');
   try {
-    const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId, userId: clientState.userId });
+    const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId });
     hideModal();
     if (resp && resp.ok){
       clientState.gp = resp.gp ?? clientState.gp;
@@ -874,7 +941,8 @@ async function claimRewards(){
       showModal('<div class="small-muted">Rewards claimed! Closing...</div>');
       setTimeout(()=>{ hideModal(); closeTelegramApp(); }, 900);
     } else {
-      showModal('<div class="small-muted">Claim failed — try again later.</div>', ()=> setTimeout(hideModal,1200));
+      const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
+      showModal(`<div class="small-muted">${escapeHtml(String(err))}</div>`, ()=> setTimeout(hideModal,1200));
     }
   } catch(e){
     hideModal();
