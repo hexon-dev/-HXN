@@ -7,6 +7,8 @@
    - persist sessionId in localStorage
    - defensive API handling
    - reliable Phantom deep link fallback for mobile (iOS/Android)
+   - Telegram WebApp safe: deep-link only (no injected provider detection)
+   - Handles Phantom redirect return (phantom_public_key)
 */
 
 'use strict';
@@ -110,7 +112,8 @@ async function api(path, method='GET', body=null){
     const res = await fetch(url, opts);
     // try parse JSON even on non-ok so we can bubble server errors
     const text = await res.text();
-    const json = text ? JSON.parse(text) : null;
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch (err) { json = text || null; }
     if (!res.ok) {
       console.warn('API non-ok', res.status, path, json);
       return json;
@@ -357,12 +360,14 @@ async function purchaseMiner(itemId){
    Phantom wallet integration (bind includes referral)
    - server expects sessionId, wallet, referral (optional)
    - If injected provider exists (desktop / supported mobile browsers), use it.
-   - Otherwise open Phantom universal link (deep link) immediately (no await) so iOS will hand off to the app.
+   - Otherwise open Phantom universal link (deep link) immediately so iOS will hand off to the app.
+   - Telegram WebApp: always deep-link (in-app WebView can't detect injected provider)
+   - Handles Phantom return parameters (phantom_public_key)
 */
 function openPhantomDeepLink(){
   try {
     const app_url = encodeURIComponent(window.location.origin); // used by Phantom to return to your dapp domain
-    const redirect_link = encodeURIComponent(window.location.href); // where Phantom should redirect after connect (optional)
+    const redirect_link = encodeURIComponent(window.location.href); // where Phantom should redirect after connect
     const link = `https://phantom.app/ul/v1/connect?app_url=${app_url}&redirect_link=${redirect_link}`;
     // Direct assignment on user gesture - best chance to open the installed app.
     window.location.href = link;
@@ -372,8 +377,66 @@ function openPhantomDeepLink(){
   }
 }
 
+async function bindWalletWithPublicKey(publicKey){
+  try {
+    const payload = { sessionId: clientState.sessionId, wallet: publicKey, referral: clientState.pendingReferral || clientState.referralCode || null };
+    const res = await api('/wallet/bind','POST', payload);
+    if (res && res.ok){
+      clientState.wallet = publicKey;
+      clientState.userId = res.userId ?? clientState.userId;
+      clientState.gp = res.gp ?? clientState.gp;
+      clientState.miners = res.miners ?? clientState.miners;
+      clientState.userAU = res.userAU ?? clientState.userAU;
+      clientState.referralCode = res.referralCode ?? clientState.referralCode;
+      if (res.referralAccepted) clearPendingReferral();
+      updateUI(); renderMinersList();
+      console.log('Wallet bound via redirect:', publicKey);
+      return true;
+    } else {
+      console.warn('bindWalletWithPublicKey failed', res);
+      return false;
+    }
+  } catch (e) {
+    console.warn('bindWalletWithPublicKey error', e);
+    return false;
+  }
+}
+
+function readPhantomReturn(){
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const pk = params.get('phantom_public_key') || params.get('phantom_encryption_public_key');
+    if (pk){
+      // Immediately attempt to bind using returned public key
+      (async ()=>{
+        const ok = await bindWalletWithPublicKey(pk);
+        // Remove phantom params so UI is clean (preserve other path)
+        try { history.replaceState({}, document.title, window.location.pathname + window.location.hash); } catch(e){ console.warn('replaceState failed', e); }
+        if (ok) {
+          // clear pending ref locally if any (server already recorded)
+          clearPendingReferral();
+          showModal('<div class="small-muted">Wallet connected</div>', ()=> setTimeout(hideModal,900));
+        } else {
+          showModal('<div class="small-muted">Wallet connect failed — try again</div>', ()=> setTimeout(hideModal,1200));
+        }
+      })();
+      return true;
+    }
+    return false;
+  } catch(e){
+    console.warn('readPhantomReturn error', e);
+    return false;
+  }
+}
+
 async function bindWallet(){
-  // If injected Phantom provider exists (desktop/metamask-like flow), use it first.
+  // If Telegram WebApp — deep link only (webview cannot detect injected provider).
+  if (tg) {
+    openPhantomDeepLink();
+    return;
+  }
+
+  // If injected Phantom provider exists (desktop / supported mobile browsers), use it first.
   if (window.solana && window.solana.isPhantom){
     try {
       // This will prompt the Phantom extension/app if available as an injected provider.
@@ -402,16 +465,15 @@ async function bindWallet(){
       }
       return;
     } catch(e){
-      // If the injected connection failed or was canceled, fall through to deep link
+      // If injected connection failed or was canceled, fallback to deep link.
       console.warn('Injected Phantom connect error or canceled — falling back to deep link', e);
-      // NOTE: do not await anything before calling deep link — must be direct user gesture.
+      // Must be called during user gesture; this function is expected to be wired to a click.
       openPhantomDeepLink();
       return;
     }
   }
 
   // No injected provider: open Phantom universal link (deep link) immediately.
-  // This must be triggered by the user's click gesture (bindWallet should be tied directly to onclick).
   openPhantomDeepLink();
 }
 
@@ -861,11 +923,15 @@ function setupTouchControls(scene){
 /* ---------------------------
    Boot & sizing
    - perform client /client/init and adopt server sessionId (stored locally)
+   - readPhantomReturn() before init so Phantom-deep-link returns are handled
 */
 window.addEventListener('load', async ()=>{
   try {
     console.log('Hexon boot starting...');
     initTelegram();
+
+    // If Phantom redirected back with params, read and handle them first
+    try { readPhantomReturn(); } catch(e){ /* non-fatal */ console.warn('readPhantomReturn failed', e); }
 
     // Capture and persist referral from URL before init
     const ref = getRefFromURL();
