@@ -8,59 +8,142 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    body{ font-family:'Orbitron',sans-serif; background:#071027; color:#E6F7FF; margin:0; padding:18px; }
-    .card{ background:rgba(255,255,255,0.03); padding:18px; border-radius:12px; max-width:820px; margin:12px auto; }
-    .entry{ display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px dashed rgba(255,255,255,0.03); }
-    .rank{ width:40px; }
-    nav{ margin-bottom:8px; display:flex; gap:8px; }
-    nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; }
-    .button{ padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,#3b82f6,#22d3ee); color:#021125; font-weight:700; border:0; cursor:pointer; }
+    :root{
+      --bg:#071027;
+      --card-bg: rgba(255,255,255,0.03);
+      --muted:#9fcbdc;
+      --accent-from:#3b82f6;
+      --accent-to:#22d3ee;
+      --highlight: rgba(34,211,238,0.08);
+    }
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; padding:18px; }
+    nav{ margin-bottom:12px; display:flex; gap:8px; align-items:center; }
+    nav a{ color:inherit; text-decoration:none; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; display:inline-flex; gap:8px; align-items:center;}
+    .container{ max-width:920px; margin:0 auto; }
+    .card{ background:var(--card-bg); padding:18px; border-radius:12px; margin-bottom:14px; }
+    h2{ margin:0 0 6px 0; }
+    .muted{ color:var(--muted); font-size:13px; }
+    .controls{ display:flex; gap:8px; align-items:center; margin-top:12px; }
+    .button{ padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; border:0; cursor:pointer; }
+    .list{ margin-top:12px; border-radius:8px; overflow:hidden; }
+    .row{ display:grid; grid-template-columns: 56px 1fr 120px; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px dashed rgba(255,255,255,0.03); }
+    .row.header{ font-weight:800; background:rgba(0,0,0,0.03); }
+    .row.highlight{ background:var(--highlight); }
+    .rank{ font-weight:800; }
+    .name{ }
+    .score{ text-align:right; font-weight:800; }
+    .small{ font-size:13px; color:var(--muted); }
+    .toast{ position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; background: rgba(3,10,18,0.9); color:#E6F7FF; padding:8px 12px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4); display:none; z-index:9999; }
+    .balance{ margin-left:auto; display:flex; gap:8px; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); }
+    @media (max-width:720px){ .row{ grid-template-columns: 40px 1fr 96px; } .score{ font-size:14px; } }
   </style>
 </head>
 <body>
-  <nav>
-    <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
-    <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
-    <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
-    <a href="referrals.html"><i class="fa-solid fa-user-plus"></i> Referrals</a>
-  </nav>
+  <div class="container">
+    <nav aria-label="Main navigation">
+      <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
+      <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
+      <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
+      <a href="referrals.html"><i class="fa-solid fa-user-plus"></i> Referrals</a>
 
-  <div class="card">
-    <h2>Top Scorers</h2>
-    <p class="muted">Live leaderboard — updated periodically.</p>
+      <div class="balance muted small" id="balanceBadge" title="Your current GP balance" style="margin-left:auto">
+        <i class="fa-solid fa-coins"></i> <span id="gpAmount">—</span> GP
+      </div>
+    </nav>
 
-    <div id="list" style="margin-top:12px;">
-      <div class="muted">Loading leaderboard…</div>
-    </div>
+    <div class="card" role="main" aria-labelledby="lbTitle">
+      <h2 id="lbTitle">Top Scorers</h2>
+      <p class="muted">Live leaderboard — auto-refreshes. Your entry will be highlighted if we can match your username.</p>
 
-    <div style="margin-top:12px;">
-      <button id="refreshBtn" class="button"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
-      <button onclick="window.location.href='index.html'" class="button" style="margin-left:8px"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <div class="controls" aria-hidden="false">
+        <div class="small muted">Auto-refresh every 15s</div>
+        <button id="refreshBtn" class="button" title="Refresh now"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+        <button id="backBtn" class="button" style="background:transparent;border:1px solid rgba(255,255,255,0.03);color:#7EE7FF"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+
+      <div id="list" class="list" aria-live="polite">
+        <div class="muted" style="padding:12px">Loading leaderboard…</div>
+      </div>
     </div>
   </div>
 
-<script>
-const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev';
-let clientState = { sessionId: localStorage.getItem('hexon_session') || null, username: null, telegramId: null };
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-function api(path, method='GET', body=null){
-  return (async ()=>{
-    try {
-      let url = API_BASE + path;
-      if (method.toUpperCase() === 'GET' && clientState.sessionId){ url += (url.includes('?') ? '&' : '?') + 'sessionId=' + encodeURIComponent(clientState.sessionId); }
-      const headers = { 'Content-Type': 'application/json' };
-      if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
-      const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
-      if (userHandle) headers['X-User-Handle'] = userHandle;
-      const opts = { method, headers };
-      if (body && typeof body === 'object'){ body.username = body.username || clientState.username || null; body.telegramId = body.telegramId || clientState.telegramId || null; body.sessionId = body.sessionId || clientState.sessionId || null; opts.body = JSON.stringify(body); }
-      const res = await fetch(url, opts);
-      const txt = await res.text();
-      try{ return txt ? JSON.parse(txt) : null; } catch(e){ return txt; }
-    } catch(e){ console.warn(e); return null; }
-  })();
+<script>
+/* -------------------------
+   Config + state
+-------------------------*/
+/**
+ * API_BASE:
+ * - Empty string -> same origin (recommended when serving HTML from Flask).
+ * - Set to full origin (https://...) for remote API.
+ */
+const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // default same-origin
+const DISPLAY_CANDIDATES = [
+  '/leaderboard/top',
+  '/leaderboards/top',
+  '/api/leaderboard/top',
+  '/leaderboard',
+  '/leaderboards',
+  '/api/leaderboard'
+];
+
+const clientState = {
+  sessionId: localStorage.getItem('hexon_session') || null,
+  username: localStorage.getItem('hexon_username') || null,
+  telegramId: null,
+  gp: null
+};
+
+if (!clientState.sessionId){
+  clientState.sessionId = 'sess-' + Math.floor(Math.random()*1e12).toString(36);
+  localStorage.setItem('hexon_session', clientState.sessionId);
 }
 
+function $(id){ return document.getElementById(id); }
+function showToast(msg, ms=1800){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=> t.style.display='none', ms); }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* -------------------------
+   API helper
+-------------------------*/
+async function api(path, method='GET', body=null, optsExtra={}){
+  try{
+    let url = path.startsWith('http') ? path : (API_BASE ? API_BASE.replace(/\/$/,'') + path : window.location.origin + path);
+    const headers = Object.assign({}, optsExtra.headers || {});
+    if (method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+    if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+    const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
+    if (userHandle) headers['X-User-Handle'] = userHandle;
+
+    // for GET attach sessionId param
+    if (method.toUpperCase() === 'GET' && clientState.sessionId){
+      const sep = url.includes('?') ? '&' : '?';
+      url = url + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
+    }
+
+    const opts = { method, headers, ...optsExtra };
+    if (body !== null && body !== undefined){
+      if (opts.headers['Content-Type'] && opts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
+        body = Object.assign({}, body, { sessionId: body.sessionId || clientState.sessionId, username: body.username || clientState.username || null, telegramId: body.telegramId || clientState.telegramId || null });
+        opts.body = JSON.stringify(body);
+      } else {
+        opts.body = body;
+      }
+    }
+
+    const res = await fetch(url, opts);
+    const txt = await res.text();
+    try{ return txt ? JSON.parse(txt) : null; } catch(e){ return txt; }
+  }catch(e){
+    console.warn('api error', e);
+    return null;
+  }
+}
+
+/* -------------------------
+   Telegram + client init
+-------------------------*/
 function initTelegram(){
   try {
     if (window.Telegram && window.Telegram.WebApp){
@@ -69,31 +152,137 @@ function initTelegram(){
       const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
       if (u){
         clientState.telegramId = u.id;
-        clientState.username = u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null;
+        clientState.username = clientState.username || (u.username || `${u.first_name||''} ${u.last_name||''}`.trim() || null);
+        if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
       }
     }
-  } catch(e){ console.warn(e); }
+  } catch(e){ console.warn('initTelegram', e); }
 }
 
-function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+async function loadClientState(){
+  // Sync session and gp with server (idempotent)
+  const resp = await api('/client/init','POST',{ sessionId: clientState.sessionId });
+  if (resp && resp.ok){
+    clientState.sessionId = resp.sessionId || clientState.sessionId;
+    clientState.username = resp.username || clientState.username;
+    clientState.gp = typeof resp.gp !== 'undefined' ? Number(resp.gp) : clientState.gp;
+    if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+  }
+  updateBalanceUI();
+}
 
-async function refresh(){
+function updateBalanceUI(){
+  const el = $('gpAmount');
+  el.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
+}
+
+/* -------------------------
+   Discover leaderboard endpoint
+-------------------------*/
+async function discoverLeaderboardEndpoint(){
+  for (const p of DISPLAY_CANDIDATES){
+    try{
+      const res = await api(p,'GET');
+      if (!res) continue;
+      if (Array.isArray(res)) return p;
+      if (res && typeof res === 'object'){
+        if (Array.isArray(res.items)) return p;
+        if (Array.isArray(res.data)) return p;
+        // if object contains array anywhere, pick it
+        for (const k of Object.keys(res)){ if (Array.isArray(res[k])) return p; }
+      }
+    }catch(e){ /* ignore and continue */ }
+  }
+  return null;
+}
+
+/* -------------------------
+   Render leaderboard
+-------------------------*/
+let discovered = null;
+async function renderLeaderboard(){
   initTelegram();
-  const top = await api('/leaderboard/top','GET');
-  const container = document.getElementById('list');
-  container.innerHTML = '';
-  if (!top || !Array.isArray(top) || top.length === 0){ container.innerHTML = '<div class="muted">Leaderboard unavailable</div>'; return; }
-  top.forEach((t,idx)=>{
-    const row = document.createElement('div'); row.className='entry';
-    row.innerHTML = `<div style="display:flex;gap:12px;align-items:center"><div class="rank">${idx+1}</div><div>${escapeHtml(t.name || '—')}</div></div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`;
-    container.appendChild(row);
+  const list = $('list');
+  list.innerHTML = '<div class="muted" style="padding:12px">Loading leaderboard…</div>';
+
+  await loadClientState();
+
+  if (!discovered) {
+    discovered = await discoverLeaderboardEndpoint();
+    if (!discovered) {
+      list.innerHTML = '<div class="muted" style="padding:12px">Leaderboard endpoint not found</div>';
+      return;
+    }
+  }
+
+  let resp = await api(discovered,'GET');
+  if (!resp) {
+    list.innerHTML = '<div class="muted" style="padding:12px">Failed to fetch leaderboard</div>';
+    return;
+  }
+
+  // find array of entries in response
+  let arr = [];
+  if (Array.isArray(resp)) arr = resp;
+  else if (Array.isArray(resp.items)) arr = resp.items;
+  else if (Array.isArray(resp.data)) arr = resp.data;
+  else {
+    for (const k of Object.keys(resp)){ if (Array.isArray(resp[k])) { arr = resp[k]; break; } }
+  }
+
+  if (!arr || arr.length === 0){
+    list.innerHTML = '<div class="muted" style="padding:12px">No leaderboard data</div>';
+    return;
+  }
+
+  // create header row
+  const header = document.createElement('div');
+  header.className = 'row header';
+  header.innerHTML = `<div class="rank">#</div><div class="name">Player</div><div class="score">Score</div>`;
+  list.innerHTML = '';
+  list.appendChild(header);
+
+  const userLower = clientState.username ? clientState.username.toLowerCase() : null;
+  let foundSelf = false;
+
+  arr.forEach((it, idx) => {
+    const name = it.name || it.username || it.player || '—';
+    const score = (typeof it.score !== 'undefined') ? it.score : (typeof it.points !== 'undefined' ? it.points : '—');
+    const row = document.createElement('div');
+    const highlight = userLower && String(name).toLowerCase() === userLower;
+    if (highlight) { row.className = 'row highlight'; foundSelf = true; }
+    else row.className = 'row';
+
+    row.innerHTML = `<div class="rank">${idx+1}</div><div class="name">${escapeHtml(name)}</div><div class="score">${(score!==null && score!=='—')?Number(score).toLocaleString():'—'}</div>`;
+    list.appendChild(row);
   });
+
+  // if we didn't find user's name but server returned user id or user stats, try to locate them
+  if (!foundSelf && clientState.username && typeof resp.find === 'function') {
+    // some APIs might include the current user's rank in resp.meta/current or similar; try common fields
+    // (best-effort; not guaranteed)
+    if (resp.current && (resp.current.username || resp.current.name)) {
+      // append/insert user's current as a bottom row
+      const me = resp.current;
+      const meRow = document.createElement('div');
+      meRow.className = 'row highlight';
+      meRow.innerHTML = `<div class="rank">${me.rank || '—'}</div><div class="name">${escapeHtml(me.username || me.name)}</div><div class="score">${(typeof me.score!=='undefined')?Number(me.score).toLocaleString():'—'}</div>`;
+      list.appendChild(meRow);
+    }
+  }
+
+  updateBalanceUI();
 }
 
+/* -------------------------
+   Wiring & boot
+-------------------------*/
 document.addEventListener('DOMContentLoaded', ()=>{
-  refresh();
-  document.getElementById('refreshBtn').addEventListener('click', refresh);
-  setInterval(refresh, 15000);
+  initTelegram();
+  renderLeaderboard();
+  $('refreshBtn').addEventListener('click', ()=> renderLeaderboard());
+  $('backBtn').addEventListener('click', ()=> window.location.href = 'index.html');
+  setInterval(renderLeaderboard, 15000); // auto-refresh
 });
 </script>
 </body>
