@@ -2,483 +2,1071 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hexon — HXN Grid Activation</title>
+  <title>Hexon — Game</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
   <style>
-    :root{
-      --bg-top: #071027;
-      --bg-btm: #000;
-      --panel-bg: rgba(8,18,36,0.9);
-      --muted: #bfeafc;
-      --accent-from: #3b82f6;
-      --accent-to: #22d3ee;
-      --card-bg: rgba(255,255,255,0.03);
-    }
-
-    html,body{
-      height:100%;
-      margin:0;
-      font-family:'Orbitron',sans-serif;
-      background: radial-gradient(circle at top,var(--bg-top),var(--bg-btm));
-      color:#E6F7FF;
-      -webkit-font-smoothing:antialiased;
-      -moz-osx-font-smoothing:grayscale;
-      -webkit-tap-highlight-color:transparent;
-      -webkit-touch-callout:none;
-      box-sizing:border-box;
-    }
-
-    /* Layout */
+    /* Minimal styling — reuse your original variables */
+    :root{ --bg-top:#071027; --bg-btm:#000; --panel-bg:rgba(8,18,36,0.9); --muted:#bfeafc; --accent-from:#3b82f6; --accent-to:#22d3ee; --card-bg:rgba(255,255,255,0.03); }
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
     #gameContainer{ display:flex; gap:12px; padding:12px; height:100dvh; box-sizing:border-box; }
-    @supports not (height: 100dvh) { #gameContainer { height:100vh; } }
-
     #phaserCanvas{ flex:2; display:flex; align-items:center; justify-content:center; min-width:320px; border-radius:12px; overflow:hidden; }
     #uiPanel{ flex:1; min-width:320px; max-width:420px; padding:14px; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.8)); border-left:1px solid rgba(255,255,255,0.04); border-radius:12px; overflow:auto; box-sizing:border-box; }
-
     .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.5); }
     .muted{ color:var(--muted); opacity:.8; font-size:12px; }
     .stat{ font-size:20px; font-weight:700; color:#7EE7FF; }
     .small{ font-size:13px; }
     .small-muted{ font-size:12px; color:#9fcbdc; opacity:.95; }
-
     .energyBar{ width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
     .energyFill{ height:100%; width:60%; background:linear-gradient(90deg,var(--accent-to),var(--accent-from)); transition:width .25s ease; }
-
     .button{ display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; cursor:pointer; border:0; user-select:none; }
     .btn-ghost{ background:transparent; border:1px solid rgba(126,231,255,0.12); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; }
-
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
-
-    .wallet-option{ display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:10px; cursor:pointer; user-select:none; }
-    .wallet-option:hover{ background:rgba(255,255,255,0.02); }
-
-    /* bottom-sheet overlay (used inline) */
+    .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
+    .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
     .overlay.show{ display:flex; }
-
-    .bottom-sheet{
-      width:100%;
-      max-width:720px;
-      border-radius:14px;
-      background:linear-gradient(180deg,#071423,#03101a);
-      box-shadow:0 20px 60px rgba(0,0,0,0.6);
-      transform:translateY(0);
-      transition:transform .22s cubic-bezier(.2,.9,.3,1);
-      overflow:hidden;
-      max-height: min(86vh, calc(100vh - 96px));
-      display:flex;
-      flex-direction:column;
-    }
-
+    .bottom-sheet{ width:100%; max-width:720px; border-radius:14px; background:linear-gradient(180deg,#071423,#03101a); box-shadow:0 20px 60px rgba(0,0,0,0.6); overflow:hidden; max-height: min(86vh, calc(100vh - 96px)); display:flex; flex-direction:column; }
     .sheet-header{ padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .sheet-title{ font-weight:700; font-size:16px; color:#E6F7FF; }
     .sheet-body{ padding:12px 16px; overflow:auto; -webkit-overflow-scrolling:touch; max-height:60vh; }
     .sheet-actions{ padding:12px 16px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent); }
-
-    /* minimal toast (non-modal) */
-    .toast {
-      position: fixed;
-      left: 50%;
-      transform: translateX(-50%);
-      bottom: 16px;
-      background: rgba(3,10,18,0.85);
-      color: #E6F7FF;
-      padding: 8px 12px;
-      border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-      font-size: 13px;
-      z-index: 100000;
-      display: none;
-    }
-
-    @media (max-width:900px){
-      #gameContainer{ flex-direction:column; padding:10px; }
-      #phaserCanvas{ order:1; height:56dvh; min-height:320px; }
-      #uiPanel{ order:2; height:44dvh; min-height:180px; }
-      .bottom-sheet{ max-height:88vh; border-radius:12px 12px 0 0; }
-    }
+    .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; background: rgba(3,10,18,0.85); color: #E6F7FF; padding: 8px 12px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 13px; z-index: 100000; display: none; }
+    nav{ margin-bottom:8px; display:flex; gap:8px; }
+    nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; }
   </style>
 </head>
 <body>
+  <div id="gameContainer" role="application" aria-label="Hexon game">
+    <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
 
-<div id="gameContainer" role="application" aria-label="Hexon game">
-  <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
+    <aside id="uiPanel" aria-live="polite" role="complementary" aria-label="Game controls and stats">
+      <nav>
+        <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
+        <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
+        <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
+        <a href="referrals.html"><i class="fa-solid fa-user-plus"></i> Referrals</a>
+      </nav>
 
-  <aside id="uiPanel" aria-live="polite" role="complementary" aria-label="Game controls and stats">
-    <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
-      <div>
+      <div class="card">
         <div class="muted small">Player</div>
         <div class="stat small" id="ui-username">Guest</div>
         <div style="height:6px"></div>
         <div class="muted small">Wallet</div>
         <div class="small" id="ui-wallet">Not connected</div>
       </div>
-      <div style="text-align:right;">
-        <div class="muted small">Session</div>
-        <div class="small" id="ui-session">—</div>
-        <div style="height:6px"></div>
-        <div class="muted small">Provider</div>
-        <div class="small" id="ui-provider">—</div>
-      </div>
-    </div>
 
-    <div class="card">
-      <div class="small muted">Level</div>
-      <div class="stat" id="ui-level">1</div>
-      <div style="display:flex; gap:12px; margin-top:8px; align-items:center;">
-        <div>
-          <div class="muted small">Lines</div>
-          <div class="small" id="ui-lines">0</div>
-        </div>
-        <div style="margin-left:auto; text-align:right;">
-          <div class="muted small">Score</div>
-          <div class="stat" id="ui-score">0</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div class="muted small">GP</div>
-          <div id="ui-gp" class="small">0 GP</div>
-        </div>
-        <div>
-          <button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div style="flex:1">
-          <div class="small muted">Energy</div>
-          <div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div>
-        </div>
-        <div style="text-align:right; width:120px;">
-          <div class="muted small">Auto Refill</div>
-          <div class="small" id="ui-auto">+10% / 30m</div>
+      <div class="card">
+        <div class="small muted">Level</div>
+        <div class="stat" id="ui-level">1</div>
+        <div style="display:flex; gap:12px; margin-top:8px; align-items:center;">
+          <div><div class="muted small">Lines</div><div class="small" id="ui-lines">0</div></div>
+          <div style="margin-left:auto; text-align:right;"><div class="muted small">Score</div><div class="stat" id="ui-score">0</div></div>
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-        <div>
-          <div class="muted small">Sittings Left</div>
-          <div class="small" id="ui-sittings">3/3</div>
-        </div>
-        <div>
-          <div class="muted small">Ads Today</div>
-          <div class="small" id="ui-adsToday">0</div>
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div><div class="muted small">GP</div><div id="ui-gp" class="small">0 GP</div></div>
+          <div><button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button></div>
         </div>
       </div>
 
-      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button id="watchAdBtn" class="button">Watch Transmission</button>
-        <button id="showRefBtn" class="btn-ghost">Share Referral</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="small muted">Miners (Off-chain)</div>
-      <div id="minersList" class="small" aria-live="polite" style="margin-top:8px;">
-        <div class="muted small">Loading…</div>
-      </div>
-      <div style="margin-top:8px;">
-        <button id="openStore" class="button">Open Miner Shop</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div class="small muted">Claimable HXN (preview)</div>
-          <div class="stat" id="ui-hxn">0 HXN</div>
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="flex:1"><div class="small muted">Energy</div><div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div></div>
+          <div style="text-align:right; width:120px;"><div class="muted small">Auto Refill</div><div class="small" id="ui-auto">+10% / 30m</div></div>
         </div>
-        <div style="text-align:right;">
-          <div class="muted small">Hash Units</div>
-          <div class="small" id="ui-au">AU: 0</div>
+
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+          <div><div class="muted small">Sittings Left</div><div class="small" id="ui-sittings">3/3</div></div>
+          <div><div class="muted small">Ads Today</div><div class="small" id="ui-adsToday">0</div></div>
+        </div>
+
+        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="watchAdBtn" class="button"><i class="fa-solid fa-tv"></i> Watch Transmission</button>
+          <button id="showRefBtn" class="btn-ghost"><i class="fa-solid fa-share-nodes"></i> Share Referral</button>
         </div>
       </div>
 
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <button id="viewAlloc" class="btn-ghost">View Allocation</button>
-        <button id="claimRewardBtn" class="button">Claim & Close</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="small muted">Top Scorers</div>
-      <div class="leaderboard" id="leaderboard" aria-live="polite" style="margin-top:8px;">
-        <div class="muted small">Loading…</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="small muted">Daily Missions</div>
-      <div class="small" id="missions" style="margin-top:8px;">- Clear 50 lines<br>- Play 3 games today<br>- Invite friend (referral)</div>
-    </div>
-
-    <div class="footer muted small">Pre-launch • Season active • <span id="daysLeft">74</span> days left</div>
-  </aside>
-</div>
-
-<!-- overlay bottom-sheet for wallet picker + all inline dialogs -->
-<div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
-  <div class="bottom-sheet" role="document" aria-label="Inline sheet">
-    <div class="sheet-header">
-      <div class="sheet-title">Connect Wallet</div>
-      <div>
-        <button id="sheetClose" class="btn-ghost" aria-label="Close sheet">Close</button>
-      </div>
-    </div>
-
-    <div class="sheet-body" id="sheetBody" tabindex="0">
-      <!-- default wallet content (main.js may overwrite sheetBody innerHTML when used) -->
-      <div class="small-muted" style="margin-bottom:10px">Choose a wallet or paste your public key. In the Telegram mini app we open deep-links using the WebApp API when available.</div>
-
-      <div class="wallet-option" id="opt-phantom" tabindex="0" role="button" aria-pressed="false">
-        <div>Phantom</div><div class="small-muted" id="det-phantom"></div>
+      <div class="card">
+        <div class="small muted">Miners (Off-chain)</div>
+        <div id="minersList" class="small" aria-live="polite" style="margin-top:8px;">
+          <div class="muted small">Loading…</div>
+        </div>
+        <div style="margin-top:8px;">
+          <button id="openStore" class="button"><i class="fa-solid fa-store"></i> Open Miner Shop</button>
+        </div>
       </div>
 
-      <div class="wallet-option" id="opt-solflare" tabindex="0" role="button" aria-pressed="false">
-        <div>Solflare</div><div class="small-muted" id="det-solflare"></div>
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div><div class="small muted">Claimable HXN (preview)</div><div class="stat" id="ui-hxn">0 HXN</div></div>
+          <div style="text-align:right;"><div class="muted small">Hash Units</div><div class="small" id="ui-au">AU: 0</div></div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button id="viewAlloc" class="btn-ghost"><i class="fa-solid fa-layer-group"></i> View Allocation</button>
+          <button id="claimRewardBtn" class="button"><i class="fa-solid fa-gift"></i> Claim & Close</button>
+        </div>
       </div>
 
-      <div class="wallet-option" id="opt-backpack" tabindex="0" role="button" aria-pressed="false">
-        <div>Backpack</div><div class="small-muted" id="det-backpack"></div>
+      <div class="card">
+        <div class="small muted">Top Scorers</div>
+        <div class="leaderboard" id="leaderboard" aria-live="polite" style="margin-top:8px;">
+          <div class="muted small">Loading…</div>
+        </div>
       </div>
 
-      <div class="wallet-option" id="opt-wc" tabindex="0" role="button" aria-pressed="false">
-        <div>WalletConnect</div><div class="small-muted">Use a compatible mobile wallet</div>
+      <div class="card">
+        <div class="small muted">Daily Missions</div>
+        <div class="small" id="missions" style="margin-top:8px;">- Clear 50 lines<br>- Play 3 games today<br>- Invite friend (referral)</div>
       </div>
 
-      <div style="height:12px"></div>
+      <div class="footer muted small">Pre-launch • Season active • <span id="daysLeft">74</span> days left</div>
+    </aside>
+  </div>
 
-      <div class="small-muted">Manual public key</div>
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <input id="manualPublicKey" type="text" inputmode="text" placeholder="Paste public key here" aria-label="Public key" />
-        <button id="manualBindBtn" class="button" type="button">Bind</button>
+  <!-- bottom-sheet overlay (included inline so this page is self-contained) -->
+  <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="bottom-sheet" role="document" aria-label="Inline sheet">
+      <div class="sheet-header">
+        <div class="sheet-title">Connect Wallet</div>
+        <div><button id="sheetClose" class="btn-ghost" aria-label="Close sheet"><i class="fa-solid fa-xmark"></i></button></div>
       </div>
-    </div>
+      <div class="sheet-body" id="sheetBody" tabindex="0">
+        <div class="small-muted" style="margin-bottom:10px">Choose a wallet or paste your public key. In Telegram we open deep-links using WebApp API when available.</div>
 
-    <div class="sheet-actions" id="sheetActions">
-      <button id="sheetCancel" class="btn-ghost" type="button">Cancel</button>
+        <div class="wallet-option" id="opt-phantom" tabindex="0" role="button" aria-pressed="false">
+          <div>Phantom</div><div class="small-muted" id="det-phantom"></div>
+        </div>
+
+        <div class="wallet-option" id="opt-solflare" tabindex="0" role="button" aria-pressed="false">
+          <div>Solflare</div><div class="small-muted" id="det-solflare"></div>
+        </div>
+
+        <div class="wallet-option" id="opt-backpack" tabindex="0" role="button" aria-pressed="false">
+          <div>Backpack</div><div class="small-muted" id="det-backpack"></div>
+        </div>
+
+        <div class="wallet-option" id="opt-wc" tabindex="0" role="button" aria-pressed="false">
+          <div><i class="fa-solid fa-link"></i> WalletConnect</div><div class="small-muted">Use a compatible mobile wallet</div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="small-muted">Manual public key</div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <input id="manualPublicKey" type="text" inputmode="text" placeholder="Paste public key here" aria-label="Public key" />
+          <button id="manualBindBtn" class="button" type="button">Bind</button>
+        </div>
+      </div>
+
+      <div class="sheet-actions" id="sheetActions">
+        <button id="sheetCancel" class="btn-ghost" type="button">Cancel</button>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- toast (non-modal) -->
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<!-- bottom-sheet helper (keeps behavior aligned with main.js) -->
-<script>
-(function(){
-  function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
-  function openExternal(url){
-    const tg = tgInstance();
-    if (tg){
-      try {
-        if (typeof tg.openUrl === 'function'){ tg.openUrl(url); return; }
-        if (typeof tg.openLink === 'function'){ tg.openLink(url); return; }
-        if (typeof tg.openPopup === 'function'){ tg.openPopup(url); return; }
-      } catch(e){ console.warn('tg.open* failed', e); }
-    }
-    try { window.location.assign(url); } catch(e){ try { window.open(url, '_blank'); } catch(e2){ console.warn('openExternal fallback failed', e2); } }
+  <!-- phaser lib -->
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+
+  <script>
+  /* ---------------------------
+     Page-level config & shared helpers (inline per your request)
+  ---------------------------*/
+  const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev';
+  const DAILY_EMISSION_CAP = 1250000;
+  const GRID_COLS = 14, GRID_ROWS = 24;
+  const BASE_CELL = 28, BASE_GAP = 2;
+  const INITIAL_DROP_MS = 800;
+  const ADSGRAM_SRC = 'https://sad.adsgram.ai/js/sad.min.js';
+  const ADSGRAM_BLOCK_ID = 'int-22823';
+  const AUTO_RECHARGE_MINUTES = 30;
+  const AUTO_RECHARGE_PERCENT = 10;
+  const MAX_ADS_PER_DAY = 9, MAX_ADS_PER_SITTING = 3, MAX_SITTINGS_PER_DAY = 3;
+
+  /* clientState */
+  let clientState = {
+    sessionId: loadSessionFromStorage() || generateUUID(),
+    userId: null,
+    username: null,
+    telegramId: null,
+    wallet: loadBoundWalletFromStorage(),
+    walletProvider: localStorage.getItem('hexon_bound_provider') || null,
+    gp: 0,
+    energy: 100,
+    miners: [],
+    shopItems: [],
+    userAU: 0,
+    totalAU: 0,
+    referralCode: null,
+    pendingReferral: null,
+    referralsActive: 0,
+    adsThisSitting: 0,
+    adsToday: 0,
+    actionLog: []
+  };
+  saveSessionToStorage(clientState.sessionId);
+
+  /* storage helpers */
+  function loadSessionFromStorage(){ try{return localStorage.getItem('hexon_session')||null;}catch(e){return null;} }
+  function saveSessionToStorage(sid){ try{ if (sid) localStorage.setItem('hexon_session', sid); }catch(e){} }
+  function loadBoundWalletFromStorage(){ try{return localStorage.getItem('hexon_bound_wallet')||null;}catch(e){return null;} }
+  function saveBoundWalletToStorage(pk, provider){ try{ if (pk) localStorage.setItem('hexon_bound_wallet', pk); if (provider) localStorage.setItem('hexon_bound_provider', provider); }catch(e){} }
+  function clearBoundWalletFromStorage(){ try{ localStorage.removeItem('hexon_bound_wallet'); localStorage.removeItem('hexon_bound_provider'); }catch(e){} }
+
+  function generateUUID(){ try{ if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
+  function $(id){ return document.getElementById(id); }
+  function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); }
+
+  /* ---------------------------
+     API helper — ensures username & telegramId are sent
+  ---------------------------*/
+  async function api(path, method='GET', body=null, optsExtra={}){
+    try{
+      let url = API_BASE + path;
+      const sid = clientState.sessionId ? encodeURIComponent(clientState.sessionId) : '';
+      if (method.toUpperCase() === 'GET' && sid){
+        if (!url.includes('sessionId=')) url += (url.includes('?') ? '&' : '?') + 'sessionId=' + sid;
+      }
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, optsExtra.headers || {});
+      if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+      // header that backend can use for canonical username identification
+      const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
+      if (userHandle) headers['X-User-Handle'] = userHandle;
+
+      const fetchOpts = { method, headers, ...optsExtra };
+      if (body !== null && body !== undefined){
+        // if body is object, attach identifying fields for server to use
+        if (typeof body === 'object' && !Array.isArray(body)){
+          body.username = body.username || clientState.username || null;
+          body.telegramId = body.telegramId || clientState.telegramId || null;
+          body.sessionId = body.sessionId || clientState.sessionId || null;
+          fetchOpts.body = JSON.stringify(body);
+        } else {
+          fetchOpts.body = body;
+        }
+      }
+
+      const res = await fetch(url, fetchOpts);
+      const text = await res.text();
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch(err) { json = text || null; }
+      if (!res.ok) { console.warn('API non-ok', res.status, path, json); return json; }
+      return json;
+    } catch(e){ console.warn('API error', e); return null; }
   }
 
-  const overlay = document.getElementById('overlay');
-  const sheetClose = document.getElementById('sheetClose');
-  const sheetCancel = document.getElementById('sheetCancel');
-  const bindBtn = document.getElementById('bindWalletBtn');
-  const sheetBody = document.getElementById('sheetBody');
-  const sheetTitle = document.querySelector('.sheet-title');
-  const sheetActions = document.getElementById('sheetActions');
+  /* ---------------------------
+     Telegram init — ensure username and id are populated (used to identify across devices)
+  ---------------------------*/
+  function initTelegram(){
+    try {
+      if (window.Telegram && window.Telegram.WebApp){
+        const tg = window.Telegram.WebApp;
+        try{ if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
+        const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
+        if (u){
+          clientState.telegramId = u.id || clientState.telegramId;
+          // prefer username — this will be the canonical identifier on the server
+          clientState.username = clientState.username || (u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null);
+          if (clientState.username) updateUI();
+        }
+      }
+    } catch(e){ console.warn('initTelegram error', e); }
+  }
 
-  function showSheet(opts = {}) {
-    // opts: { title, bodyHtml, actionsHtml, onMounted }
-    if (!overlay) return;
-    if (opts.title !== undefined && sheetTitle) sheetTitle.textContent = opts.title;
-    if (opts.bodyHtml !== undefined && sheetBody) sheetBody.innerHTML = opts.bodyHtml;
-    if (opts.actionsHtml !== undefined && sheetActions) sheetActions.innerHTML = opts.actionsHtml;
+  /* ---------------------------
+     Inline sheet helpers (same API used on other pages)
+  ---------------------------*/
+  function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
+  function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
+    const { overlay, sheetBody, sheetTitle, sheetActions } = getSheetElements();
+    if (!overlay || !sheetBody || !sheetTitle || !sheetActions){ console.warn('Sheet elements missing'); const { showToast } = getSheetElements(); showToast('UI unavailable', 1200); return; }
+    sheetTitle.textContent = title;
+    sheetBody.innerHTML = bodyHtml;
+    sheetActions.innerHTML = actionsHtml;
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden','false');
-    try { const tg = tgInstance(); if (tg && typeof tg.expand === 'function') tg.expand(); } catch(e){}
-    try { if (sheetBody) sheetBody.focus(); } catch(e){}
-    if (typeof opts.onMounted === 'function') {
-      setTimeout(()=> { try { opts.onMounted(); } catch(e){ console.warn('sheet onMounted failed', e); } }, 50);
-    }
-    // ensure detection badges updated when showing sheet
-    setDetectionBadges();
+    try{ sheetBody.focus(); }catch(e){}
+    if (typeof onMounted === 'function'){ setTimeout(()=> { try{ onMounted(); } catch(e){ console.warn('sheet onMounted error', e); } }, 50); }
   }
+  function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
+  function showToast(msg, ms=2000){ const s = getSheetElements(); s.showToast(msg, ms); }
 
-  function hideSheet(){
-    if (!overlay) return;
-    overlay.classList.remove('show');
-    overlay.setAttribute('aria-hidden','true');
-  }
+  /* ---------------------------
+     Referral helpers */
+  function getRefFromURL(){ try{ const params = new URLSearchParams(window.location.search); return params.get('ref') || params.get('refCode') || null; } catch(e){ return null; } }
+  function savePendingReferral(code){ if (!code) return; try{ localStorage.setItem('hexon_pending_ref', code); clientState.pendingReferral = code; } catch(e){} }
+  function loadPendingReferral(){ try{ const code = localStorage.getItem('hexon_pending_ref'); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
+  function clearPendingReferral(){ try{ localStorage.removeItem('hexon_pending_ref'); clientState.pendingReferral = null; } catch(e){} }
 
-  function setDetectionBadges(){
-    const d = detectInjectedProviders();
+  /* ---------------------------
+     AdsGram loader (same as original) */
+  let AdsGramLoaded = false, AdController = null;
+  function loadAdsGram(){
     try {
-      document.getElementById('det-phantom').textContent = d.phantom ? '• detected' : '';
-      document.getElementById('det-solflare').textContent = d.solflare ? '• detected' : '';
-      document.getElementById('det-backpack').textContent = d.backpack ? '• detected' : '';
-    } catch(e){}
+      if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } }
+      if (AdsGramLoaded) return;
+      const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true;
+      s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } };
+      s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); };
+      document.head.appendChild(s);
+    } catch(e){ console.warn('loadAdsGram', e); }
   }
 
-  function buildCleanRedirect(){
-    try { return window.location.origin.replace(/\/+$/,'') + window.location.pathname; } catch(e){ return window.location.origin + '/'; }
+  async function showAdAndVerify(){
+    if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Daily ad limit reached.</div>' }); return; }
+    if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Sitting ad limit reached.</div>' }); return; }
+    showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
+    try {
+      let provider='Fallback', payload={ adSessionId: generateUUID() };
+      if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
+        provider='AdsGram';
+        try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
+      } else {
+        await new Promise(res=>setTimeout(res,1800));
+      }
+      const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
+      hideSheet();
+      if (resp && resp.grantedPercent){
+        clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
+        clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
+        clientState.adsToday = (clientState.adsToday||0) + 1;
+        logAction('ad_watched',{ provider, granted: resp.grantedPercent });
+        updateUI();
+        showToast(`Energy credited +${resp.grantedPercent}%`,1200);
+      } else {
+        const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
+        showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">${escapeHtml(msg)}</div>` });
+      }
+    } catch(e){ hideSheet(); console.warn('showAdAndVerify error', e); showToast('Ad error — try later',1200); }
   }
-  function phantomDeepLink(){
-    const origin = encodeURIComponent(window.location.origin.replace(/\/+$/,''));
-    const redirect = encodeURIComponent(buildCleanRedirect());
-    return `https://phantom.app/ul/v1/connect?app_url=${origin}&redirect_link=${redirect}`;
-  }
-  function solflareDeepLink(){
-    const redirect = encodeURIComponent(buildCleanRedirect());
-    return `https://solflare.com/access?redirect=${redirect}`;
-  }
-  function backpackDeepLink(){ return 'https://backpack.app/'; }
 
+  /* ---------------------------
+     Shop + purchase flows (used on multiple pages) */
+  async function fetchShopItems(){
+    try {
+      const items = await api('/shop/items','GET');
+      if (Array.isArray(items)){
+        clientState.shopItems = items.map(i => ({
+          id: i.id,
+          sku: i.sku,
+          name: i.name,
+          desc: i.description || i.desc || '',
+          priceGP: (i.price_gp != null ? i.price_gp : (i.priceGP != null ? i.priceGP : 0)),
+          au: (i.au != null ? i.au : 0)
+        }));
+      } else clientState.shopItems = [];
+      return clientState.shopItems;
+    } catch(e){ console.warn('fetchShopItems', e); clientState.shopItems = []; return []; }
+  }
+
+  async function purchaseMiner(itemId){
+    showSheet({ title:'Purchasing', bodyHtml:'<div class="small-muted">Purchasing…</div>' });
+    try {
+      const resp = await api('/shop/buy','POST',{ sessionId: clientState.sessionId, itemId, username: clientState.username, telegramId: clientState.telegramId });
+      if (resp && resp.ok){
+        if (resp.miners) clientState.miners = resp.miners;
+        else {
+          const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null });
+          if (init && init.miners) clientState.miners = init.miners;
+        }
+        renderMinersList();
+        hideSheet();
+        showToast('Purchase successful',1000);
+        logAction('buy_miner',{ itemId });
+      } else {
+        hideSheet();
+        const err = (resp && resp.error) ? resp.error : 'Purchase failed — check funds or try later';
+        showSheet({ title:'Purchase', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
+        setTimeout(hideSheet,1400);
+      }
+    } catch(e){ hideSheet(); console.warn('purchaseMiner error', e); showToast('Network error — try later',1200); }
+  }
+
+  /* ---------------------------
+     Utilities and UI rendering */
+  function isIOS(){ return /iP(ad|hone|od)/i.test(navigator.userAgent); }
+  function isAndroid(){ return /Android/i.test(navigator.userAgent); }
+  function isInAppBrowser(){ const ua = navigator.userAgent || ''; return /FBAN|FBAV|Instagram|Line|KAKAOTALK|Twitter|LinkedIn|Snapchat/i.test(ua); }
+  function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+
+  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
+
+  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
+
+  function updateUI(){
+    if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
+    if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp||0) + ' GP';
+    if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
+    if ($('ui-level')) $('ui-level').innerText = gameState.level;
+    if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
+    if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
+    if ($('ui-hxn')) { const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0; $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN'; }
+    if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
+    if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
+    if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
+    if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
+    if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
+    if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
+  }
+
+  /* ---------------------------
+     Game (phaser) code — reuse your original game logic (trimmed slightly)
+  ---------------------------*/
+  const PIECES = {
+    I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
+    J: [[[0,0],[0,1],[1,1],[2,1]], [[1,0],[2,0],[1,1],[1,2]], [[0,1],[1,1],[2,1],[2,2]], [[1,0],[1,1],[0,2],[1,2]]],
+    L: [[[2,0],[0,1],[1,1],[2,1]], [[1,0],[1,1],[1,2],[2,2]], [[0,1],[1,1],[2,1],[0,2]], [[0,0],[1,0],[1,1],[1,2]]],
+    O: [[[1,0],[2,0],[1,1],[2,1]]],
+    S: [[[1,0],[2,0],[0,1],[1,1]], [[1,0],[1,1],[2,1],[2,2]]],
+    T: [[[1,0],[0,1],[1,1],[2,1]], [[1,0],[1,1],[2,1],[1,2]], [[0,1],[1,1],[2,1],[1,2]], [[1,0],[0,1],[1,1],[1,2]]],
+    Z: [[[0,0],[1,0],[1,1],[2,1]], [[2,0],[1,1],[2,1],[1,2]]]
+  };
+  const PIECE_TYPES = Object.keys(PIECES);
+
+  const gameState = { grid:null, activePiece:null, nextPiece:null, score:0, level:1, lines:0, dropInterval:INITIAL_DROP_MS, isPlaying:false, combo:0 };
+
+  let phaserGame;
+  let CELL = BASE_CELL, GAP = BASE_GAP;
+
+  class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
+  class GameScene extends Phaser.Scene {
+    constructor(){ super({ key:'GameScene' }); }
+    create(){
+      this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
+      this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
+      this.gridOrigin = { x:16, y:16 };
+
+      const g = this.add.graphics();
+      g.fillStyle(0x061426,1);
+      g.fillRoundedRect(this.gridOrigin.x -8, this.gridOrigin.y -8, this.boardPixelWidth, this.boardPixelHeight, 10);
+      g.lineStyle(1, 0x0d2130, 0.6);
+      for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
+      for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
+
+      initGrid();
+
+      this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+      for (let r=0;r<GRID_ROWS;r++){
+        for (let c=0;c<GRID_COLS;c++){
+          const x = this.gridOrigin.x + c*(CELL+GAP) + CELL/2;
+          const y = this.gridOrigin.y + r*(CELL+GAP) + CELL/2;
+          const rect = this.add.rectangle(x,y,CELL,CELL,0x102033).setStrokeStyle(1,0x092033,0.6);
+          rect.updateFill = function(color){ try{ this.fillColor = color; }catch(e){} try{ if (typeof this.setFillStyle === 'function') this.setFillStyle(color); }catch(e){} };
+          rect.setInteractive({ useHandCursor: true });
+          ((rr,cc,node)=> node.on('pointerdown', ()=> { vibratePreferTelegram(); logAction('cell_click',{x:cc,y:rr}); const orig = node.fillColor || 0x102033; node.updateFill(0xFFFFFF); this.time.delayedCall(80, ()=> node.updateFill(orig)); }))(r,c,rect);
+          this.cellSprites[r][c] = rect;
+        }
+      }
+
+      spawnPiece();
+      gameState.isPlaying = true;
+      updateUI();
+      this.startDropLoop();
+      this.setupInput();
+      this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
+    }
+
+    startDropLoop(){
+      if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+      const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); } });
+    }
+
+    update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
+
+    renderGrid(){
+      for (let r=0;r<GRID_ROWS;r++) for (let c=0;c<GRID_COLS;c++){ const val = gameState.grid[r][c]; const color = val ? colorFromVal(val) : 0x102033; const rect = this.cellSprites[r][c]; if (rect && typeof rect.updateFill === 'function') rect.updateFill(color); }
+      if (gameState.activePiece){
+        const cells = getPieceCells(gameState.activePiece);
+        cells.forEach(p => { if (p.y>=0 && p.y<GRID_ROWS && p.x>=0 && p.x<GRID_COLS){ const rect = this.cellSprites[p.y][p.x]; if (rect && typeof rect.updateFill === 'function') rect.updateFill(colorFromVal(gameState.activePiece.type)); } });
+      }
+    }
+
+    setupInput(){
+      this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
+      window.addEventListener('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
+      if (!document.querySelector('.touch-controls')) setupTouchControls(this);
+    }
+
+    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); }
+  }
+
+  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); }
+  function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; }
+  function spawnPiece(){ if ((clientState.energy||0) <= 0){ gameState.isPlaying=false; showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' }); return; } const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]; const xStart = Math.floor((GRID_COLS - 4)/2); gameState.activePiece = { type, rot:0, x:xStart, y:0 }; gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]; logAction('spawn',{ type, x:xStart, y:0 }); if (checkCollision(getPieceCells(gameState.activePiece))) gameOver(); }
+  function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
+  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); } }
+  function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
+  function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); } }
+  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; clientState.gp += falls * 2; logAction('hard_drop',{ falls }); updateUI(); }
+  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); return; } } }
+  function lockPiece(){
+    const ap = gameState.activePiece; if (!ap) return;
+    const cells = getPieceCells(ap);
+    for (const p of cells){ if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){ gameState.grid[p.y][p.x] = ap.type; } }
+    clientState.energy = Math.max(0, (clientState.energy || 0) - 1);
+    const cleared = [];
+    for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
+    if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
+    spawnPiece();
+    try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
+    updateUI();
+  }
+  function clearLines(rows){
+    rows.sort((a,b)=>a-b);
+    for (const r of rows){ gameState.grid.splice(r,1); gameState.grid.unshift(Array(GRID_COLS).fill(0)); }
+    const count = rows.length; const base = [0,100,300,500,800];
+    gameState.score += base[count] * gameState.level; gameState.lines += count; gameState.combo += 1; clientState.gp += (count * 10) + (gameState.combo * 5);
+    logAction('clear',{ count, combo:gameState.combo });
+    if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); }
+    updateUI();
+  }
+  async function gameOver(){
+    gameState.isPlaying = false;
+    logAction('gameover',{ score:gameState.score, lines:gameState.lines });
+    try{ await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
+    showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
+    updateUI();
+  }
+  function resetForPlay(){ initGrid(); gameState.dropInterval = INITIAL_DROP_MS; clientState.actionLog = []; clientState.energy = Math.max(0, clientState.energy); spawnPiece(); gameState.isPlaying = true; try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){} updateUI(); }
+
+  function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
+  function setupTouchControls(scene){
+    if (document.querySelector('.touch-controls')) return;
+    const wrapper = document.createElement('div'); wrapper.classList.add('touch-controls');
+    const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
+    const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerHTML = '<i class="fa-solid fa-arrow-right"></i>';
+    const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+    const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
+    [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
+    wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
+    const ui = $('uiPanel'); if (ui) ui.append(wrapper);
+    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); };
+    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); };
+    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); };
+    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); };
+  }
+
+  function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
+
+  /* ---------------------------
+     Wallet connectors (Phantom/Solflare/Backpack/WalletConnect)
+     - We surface deep links in the sheet, and attempt injected provider connect when available
+  ---------------------------*/
   function detectInjectedProviders(){
+    const solana = window.solana || null;
     return {
-      phantom: Boolean(window.solana && window.solana.isPhantom),
-      solflare: Boolean(window.solflare || (window.solana && window.solana.isSolflare)),
-      backpack: Boolean(window.backpack || (window.solana && window.solana.isBackpack))
+      phantom: Boolean((solana && solana.isPhantom) || (window.phantom && window.phantom.isPhantom)),
+      solflare: Boolean(window.solflare || (solana && solana.isSolflare)),
+      backpack: Boolean(window.backpack || (solana && solana.isBackpack)),
+      anySolana: Boolean(solana || window.solflare || window.backpack || window.phantom)
     };
   }
 
-  // optionMap calls into main.js helpers if available (preferred)
-  const optionMap = {
-    'opt-phantom': async ()=> {
-      if (typeof window.connectWithPhantom === 'function') {
-        try { await window.connectWithPhantom(); hideSheet(); return; } catch(e){ console.warn('connectWithPhantom failed', e); }
+  function openPhantomDeepLink(){ try { const origin = window.location.origin.replace(/\/+$/, ''); const link = `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(buildCleanRedirect())}`; return openAppOrPrompt({ deepLink: link, installUrl: 'https://phantom.app/', appName: 'Phantom' }); } catch(e){ console.warn('openPhantomDeepLink failed', e); return Promise.resolve(false); } }
+  async function connectWithPhantom(){
+    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    if (tg){ openPhantomDeepLink(); return; }
+    if (window.solana && window.solana.isPhantom){
+      try {
+        const resp = await window.solana.connect();
+        const publicKey = extractPublicKeyFromProviderResponse(resp);
+        const ok = await finalizeBind(publicKey, 'phantom');
+        if (ok) hideSheet();
+        return;
+      } catch(e){
+        showSheet({ title:'Phantom', bodyHtml:'<div class="small-muted">Phantom connection canceled or failed. Open Phantom app to continue.</div>', actionsHtml:`<button id="openPhantomBtn" class="button">Open Phantom</button>` , onMounted: ()=> { const b = $('openPhantomBtn'); if (b) b.onclick = ()=> openPhantomDeepLink(); }});
+        return;
       }
-      openExternal(phantomDeepLink());
-    },
-    'opt-solflare': async ()=> {
-      if (typeof window.connectWithSolflare === 'function') {
-        try { await window.connectWithSolflare(); hideSheet(); return; } catch(e){ console.warn('connectWithSolflare failed', e); }
+    } else {
+      openPhantomDeepLink();
+    }
+  }
+
+  function openSolflareDeepLink(){ try { const link = `https://solflare.com/access?redirect=${encodeURIComponent(buildCleanRedirect())}`; return openAppOrPrompt({ deepLink: link, installUrl: 'https://solflare.com/', appName: 'Solflare' }); } catch(e){ console.warn(e); return Promise.resolve(false); } }
+  async function connectWithSolflare(){
+    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    if (tg){ openSolflareDeepLink(); return; }
+    try {
+      if (window.solflare && typeof window.solflare.connect === 'function'){
+        const resp = await window.solflare.connect();
+        const publicKey = extractPublicKeyFromProviderResponse(resp);
+        const ok = await finalizeBind(publicKey, 'solflare');
+        if (ok) hideSheet();
+        return;
+      } else if (window.solana && window.solana.isSolflare){
+        const r = await window.solana.connect();
+        const publicKey = extractPublicKeyFromProviderResponse(r);
+        const ok = await finalizeBind(publicKey, 'solflare');
+        if (ok) hideSheet();
+        return;
       }
-      openExternal(solflareDeepLink());
-    },
-    'opt-backpack': async ()=> {
-      if (typeof window.connectWithBackpack === 'function') {
-        try { await window.connectWithBackpack(); hideSheet(); return; } catch(e){ console.warn('connectWithBackpack failed', e); }
+    } catch(e){ console.warn('solflare connect failed', e); }
+    openSolflareDeepLink();
+  }
+
+  function openBackpackDeepLink(){ try { const link = `https://backpack.app/`; return openAppOrPrompt({ deepLink: link, installUrl: 'https://backpack.app/', appName: 'Backpack' }); } catch(e){ return Promise.resolve(false); } }
+  async function connectWithBackpack(){
+    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    if (tg){ openBackpackDeepLink(); return; }
+    try {
+      if (window.backpack && typeof window.backpack.connect === 'function'){
+        const resp = await window.backpack.connect();
+        const publicKey = extractPublicKeyFromProviderResponse(resp);
+        const ok = await finalizeBind(publicKey, 'backpack');
+        if (ok) hideSheet();
+        return;
+      } else if (window.solana && window.solana.isBackpack){
+        const r = await window.solana.connect();
+        const publicKey = extractPublicKeyFromProviderResponse(r);
+        const ok = await finalizeBind(publicKey, 'backpack');
+        if (ok) hideSheet();
+        return;
       }
-      openExternal(backpackDeepLink());
-    },
-    'opt-wc': async ()=> {
-      if (typeof window.connectWithWalletConnect === 'function') {
-        try { await window.connectWithWalletConnect(); hideSheet(); return; } catch(e){ console.warn('connectWithWalletConnect failed', e); alert('WalletConnect attempt failed'); return; }
+    } catch(e){ console.warn('backpack connect failed', e); }
+    openBackpackDeepLink();
+  }
+
+  async function connectWithWalletConnect(){
+    try {
+      if (window.SOL_WALLETCONNECT_CONNECTOR && typeof window.SOL_WALLETCONNECT_CONNECTOR.connect === 'function'){
+        const pk = await window.SOL_WALLETCONNECT_CONNECTOR.connect({ redirect: buildCleanRedirect() });
+        if (pk) {
+          const ok = await finalizeBind(pk, 'walletconnect');
+          if (ok) hideSheet();
+        }
+        return;
       }
-      const tg = tgInstance();
-      if (tg) {
-        const msg = 'Open your mobile wallet (Coinbase Wallet / Trust Wallet / Exodus) and choose WalletConnect. Then paste the returned public key into Hexon.';
-        alert(msg);
-      } else {
-        alert('Open your wallet app and choose WalletConnect, or use a WalletConnect-enabled wallet.');
+      showWalletConnectInstructions('No WalletConnect helper found. Use your wallet app and paste returned public key.');
+    } catch(e){ console.warn('connectWithWalletConnect failed', e); showWalletConnectInstructions('WalletConnect failed — try a mobile wallet.'); }
+  }
+
+  function showWalletConnectInstructions(qrOrText){
+    showSheet({ title:'WalletConnect', bodyHtml:`<div class="small-muted">${escapeHtml(qrOrText||'Open your wallet and choose WalletConnect or scan QR.')}</div>`, actionsHtml:`<button id="closeWc" class="btn-ghost">Close</button>`, onMounted: ()=> { const c=$('closeWc'); if (c) c.onclick = hideSheet; }});
+  }
+
+  function openAppOrPrompt({ deepLink, installUrl, appName }){
+    return new Promise(resolve => {
+      let handled=false, timeoutId=null;
+      function cleanup(){ clearTimeout(timeoutId); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', onPageHide); window.removeEventListener('blur', onBlur); }
+      function onVisibility(){ if (document.hidden){ handled=true; cleanup(); resolve(true); } }
+      function onPageHide(){ handled=true; cleanup(); resolve(true); }
+      function onBlur(){ handled=true; cleanup(); resolve(true); }
+      document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('pagehide', onPageHide);
+      window.addEventListener('blur', onBlur);
+      try{ window.location.assign(deepLink); } catch(e){ try{ window.open(deepLink, '_self'); } catch(e2){ console.warn('open deep link failed', e2); } }
+      timeoutId = setTimeout(()=> {
+        cleanup();
+        if (handled) { resolve(true); return; }
+        showSheet({
+          title: `Open ${appName}`,
+          bodyHtml: `<div class="small-muted">We couldn't open ${escapeHtml(appName)} automatically. Choose an action below or install the app.</div>`,
+          actionsHtml: `<button id="openAppNow" class="button">Try open ${escapeHtml(appName)}</button><button id="installApp" class="btn-ghost">Install / Get ${escapeHtml(appName)}</button>`,
+          onMounted: ()=> {
+            const openBtn = $('openAppNow'); if (openBtn) openBtn.onclick = ()=> { try{ window.location.assign(deepLink); } catch(e){ window.open(deepLink, '_blank'); } setTimeout(()=> hideSheet(), 600); };
+            const installBtn = $('installApp'); if (installBtn) installBtn.onclick = ()=> { try{ window.open(installUrl || deepLink, '_blank'); } catch(e){ try{ window.location.assign(installUrl || deepLink); } catch(e){} } setTimeout(()=> hideSheet(), 600); };
+          }
+        });
+        resolve(false);
+      }, 1200);
+    });
+  }
+
+  function extractPublicKeyFromProviderResponse(resp){
+    try {
+      if (!resp) return null;
+      if (typeof resp === 'string') return resp;
+      if (resp.publicKey && typeof resp.publicKey.toString === 'function') return resp.publicKey.toString();
+      if (resp.publicKey && typeof resp.publicKey === 'string') return resp.publicKey;
+      if (resp.public_key && typeof resp.public_key === 'string') return resp.public_key;
+      if (resp.address && typeof resp.address === 'string') return resp.address;
+      if (resp.data && resp.data.publicKey) return resp.data.publicKey;
+      const s = JSON.stringify(resp);
+      const match = s.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
+      if (match) return match[1];
+    } catch(e){}
+    return null;
+  }
+
+  /* ---------------------------
+     Bind finalizer (server) */
+  async function bindWalletWithPublicKey(publicKey, providerName){
+    try {
+      const payload = { sessionId: clientState.sessionId, wallet: publicKey, walletProvider: providerName||null, referral: clientState.pendingReferral || clientState.referralCode || null, username: clientState.username, telegramId: clientState.telegramId };
+      const res = await api('/wallet/bind','POST', payload);
+      if (res && res.ok){
+        if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
+        clientState.wallet = publicKey;
+        clientState.userId = res.userId ?? clientState.userId;
+        clientState.gp = res.gp ?? clientState.gp;
+        clientState.miners = res.miners ?? clientState.miners;
+        clientState.userAU = res.userAU ?? clientState.userAU;
+        clientState.totalAU = res.totalAU ?? clientState.totalAU;
+        clientState.referralCode = res.referralCode ?? clientState.referralCode;
+        clientState.referralsActive = res.referralsActive ?? clientState.referralsActive;
+        if (res.referralAccepted) clearPendingReferral();
+        saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
+        updateUI(); renderMinersList();
+        return true;
       }
+      return false;
+    } catch(e){ console.warn('bindWalletWithPublicKey error', e); return false; }
+  }
+
+  /* finalizeBind exposed to sheet */
+  window.finalizeBind = async function(publicKey, providerName){
+    if (!publicKey) { showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">No public key provided</div>' }); setTimeout(hideSheet, 900); return false; }
+    if (!isValidSolanaPublicKey(publicKey)) { showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">Public key format invalid</div>' }); setTimeout(hideSheet, 900); return false; }
+    clientState.walletProvider = providerName || clientState.walletProvider || null;
+    const ok = await bindWalletWithPublicKey(publicKey, providerName);
+    if (ok){
+      clientState.wallet = publicKey;
+      clientState.walletProvider = providerName;
+      saveBoundWalletToStorage(publicKey, providerName);
+      updateUI();
+      hideSheet();
+      showToast(`Wallet connected (${providerName || 'manual'})`, 1000);
+      return true;
+    } else {
+      showSheet({ title:'Wallet', bodyHtml:`<div class="small-muted">Server bind failed for ${escapeHtml(providerName || 'wallet')}</div>`, actionsHtml:`<button id="retryBind" class="button">Try again</button><button id="closeBind" class="btn-ghost">Close</button>`, onMounted: ()=> { const r=$('retryBind'); if (r) r.onclick = ()=> { hideSheet(); showSheet({ title:'Connect Wallet' }); }; const c=$('closeBind'); if (c) c.onclick = hideSheet; }});
+      return false;
     }
   };
 
-  async function manualBind(publicKey){
-    if (!publicKey || publicKey.length < 20){ alert('Invalid public key'); return; }
-    if (typeof window.finalizeBind === 'function'){
-      try {
-        const ok = await window.finalizeBind(publicKey, 'manual');
-        if (ok) hideSheet();
-        return;
-      } catch(e){ console.warn('finalizeBind failed', e); alert('Server bind failed'); return; }
-    }
+  /* ---------------------------
+     Parse wallet deep link returns (for deep link flows) */
+  function parseReturnParams(){
     try {
-      localStorage.setItem('hexon_bound_wallet', publicKey);
-      localStorage.setItem('hexon_bound_provider', 'manual');
-      const wEl = document.getElementById('ui-wallet');
-      const pEl = document.getElementById('ui-provider');
-      if (wEl) wEl.textContent = publicKey;
-      if (pEl) pEl.textContent = 'manual';
-      hideSheet();
-      showToast('Public key stored locally (no server bind performed).', 2000);
-    } catch(e){ console.warn(e); alert('Unable to save locally'); }
+      let combined = window.location.search || '';
+      if (window.location.hash){
+        const h = window.location.hash.replace(/^#/,'');
+        if (h.indexOf('?') !== -1) combined += (combined ? '&' : '') + h.split('?').slice(1).join('?');
+        else combined += (combined ? '&' : '') + h;
+      }
+      const params = new URLSearchParams(combined);
+      const names = ['phantom_public_key','phantom_encryption_public_key','public_key','publicKey','public-key','wallet','pk','address','account','account_id'];
+      for (const n of names){ const v = params.get(n); if (v) return v; }
+      const raw = params.get('result') || params.get('response') || params.get('data');
+      if (raw){
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && (parsed.publicKey || parsed.address || parsed.pk)) return parsed.publicKey || parsed.address || parsed.pk;
+          for (const k of Object.keys(parsed || {})){
+            const val = parsed[k];
+            if (typeof val === 'string' && isValidSolanaPublicKey(val)) return val;
+          }
+        } catch(e){}
+      }
+      const full = window.location.href;
+      const match = full.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
+      if (match) return match[1];
+      return null;
+    } catch(e){ return null; }
   }
 
-  function interceptBind(ev){
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-    if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return false; } catch(e){} }
-    // default: show the inline sheet (wallet content already present in DOM)
-    showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML, onMounted: ()=>{} });
-    return false;
+  function readWalletReturn(){
+    try {
+      const pk = parseReturnParams();
+      if (pk){
+        (async ()=> {
+          if (!isValidSolanaPublicKey(pk)){ showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">Returned public key appears invalid</div>' }); setTimeout(hideSheet,1200); return; }
+          const ok = await bindWalletWithPublicKey(pk);
+          try { const cleanUrl = window.location.origin + window.location.pathname; history.replaceState({}, document.title, cleanUrl); } catch(e){}
+          if (ok) { clearPendingReferral(); showToast('Wallet connected',1000); } else { showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">Wallet connect failed — open app and try again</div>' }); setTimeout(hideSheet,1200); }
+        })();
+        return true;
+      }
+      return false;
+    } catch(e){ console.warn('readWalletReturn error', e); return false; }
   }
 
-  function onKeyDown(e){
-    if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheet(); }
+  /* ---------------------------
+     Injected provider listeners (keep wallet state in sync) */
+  function setupInjectedProviderListeners(){
+    try {
+      if (window.solana && typeof window.solana.on === 'function'){
+        try {
+          window.solana.on('connect', async (pk) => {
+            try {
+              const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
+              if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+                clientState.walletProvider = detectInjectedProviders().phantom ? 'phantom' : clientState.walletProvider;
+                const ok = await bindWalletWithPublicKey(publicKey, clientState.walletProvider);
+                if (ok) showToast('Wallet connected',900);
+              }
+            } catch(e){ console.warn('provider connect handler error', e); }
+          });
+          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+        } catch(e){ console.warn('solana listener setup failed', e); }
+      }
+
+      if (window.solflare && typeof window.solflare.on === 'function'){
+        try {
+          window.solflare.on('connect', async (pk) => {
+            const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
+            if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+              clientState.walletProvider = 'solflare';
+              const ok = await bindWalletWithPublicKey(publicKey, 'solflare');
+              if (ok) showToast('Wallet connected',900);
+            }
+          });
+          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+        } catch(e){}
+      }
+
+      if (window.backpack && typeof window.backpack.on === 'function'){
+        try {
+          window.backpack.on('connect', async (pk) => {
+            const publicKey = (pk && pk.toString) ? pk.toString() : (pk && pk.publicKey && pk.publicKey.toString ? pk.publicKey.toString() : pk);
+            if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
+              clientState.walletProvider = 'backpack';
+              const ok = await bindWalletWithPublicKey(publicKey, 'backpack');
+              if (ok) showToast('Wallet connected',900);
+            }
+          });
+          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+        } catch(e){}
+      }
+    } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
   }
 
-  // toast helper
-  const toastEl = document.getElementById('toast');
-  function showToast(msg, ms = 2000){
-    if (!toastEl) return;
-    toastEl.textContent = msg;
-    toastEl.style.display = 'block';
-    setTimeout(()=> { try { toastEl.style.display = 'none'; } catch(e){} }, ms);
+  /* ---------------------------
+     Referral UI (sheet) */
+  async function getMyReferral(){
+    try {
+      const resp = await api('/player/referral','GET');
+      if (resp && resp.refCode){ clientState.referralCode = resp.refCode; clientState.referralsActive = resp.count ?? clientState.referralsActive; }
+      return clientState.referralCode;
+    } catch(e){ console.warn('getMyReferral', e); return clientState.referralCode; }
   }
 
-  document.addEventListener('DOMContentLoaded', ()=>{
-    // Bind button interception (keeps index.html UI binding consistent)
-    if (bindBtn){
-      bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false });
-      bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); if (typeof window._hexon_openWalletSheet === 'function'){ try { window._hexon_openWalletSheet(); return; } catch(e){} } showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML }); }, { passive:false });
-      bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML }); } });
+  function showReferralModal(){
+    (async ()=>{
+      let code = clientState.referralCode || await getMyReferral();
+      if (!code) code = 'UNKNOWN';
+      const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+      const body = `<div style="text-align:left">
+        <div class="small-muted">Share your referral — both of you can earn rewards</div>
+        <div style="margin-top:8px;"><input id="refLinkBox" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" value="${escapeHtml(link)}" readonly></div>
+      </div>`;
+      const actions = `<button id="copyRefBtn" class="button"><i class="fa-solid fa-copy"></i> Copy Link</button><button id="shareRefBtn" class="btn-ghost"><i class="fa-solid fa-share-from-square"></i> Share</button><button id="closeRef" class="btn-ghost">Close</button>`;
+      showSheet({ title:'Invite Friends', bodyHtml: body + `<div style="margin-top:8px;" class="small-muted">Referrals: ${clientState.referralsActive || 0}</div>`, actionsHtml: actions, onMounted: ()=> {
+        const copy = $('copyRefBtn'); const share = $('shareRefBtn'); const close = $('closeRef'); const box = $('refLinkBox');
+        if (copy) copy.onclick = async ()=> { try { await navigator.clipboard.writeText(box.value); showToast('Copied!',900); hideSheet(); } catch(e){ alert('Copy failed'); } };
+        if (share) share.onclick = async ()=> { try { if (navigator.share) { await navigator.share({ title:'Play Hexon', text:'Join me on Hexon', url: box.value }); hideSheet(); } else { alert('Share not supported — copy link instead'); } } catch(e){} };
+        if (close) close.onclick = hideSheet;
+      }});
+    })();
+  }
+
+  /* ---------------------------
+     Claim rewards */
+  async function claimRewards(){
+    showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Claiming rewards…</div>' });
+    try {
+      const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId });
+      if (resp && resp.ok){
+        clientState.gp = resp.gp ?? clientState.gp;
+        clientState.userAU = resp.userAU ?? clientState.userAU;
+        if (typeof resp.energy === 'number') clientState.energy = Math.max(0, Math.min(100, resp.energy));
+        updateUI();
+        showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
+        setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
+      } else {
+        const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
+        showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
+        setTimeout(hideSheet,1200);
+      }
+    } catch(e){ console.warn('claimRewards error', e); showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Network error — try again later.</div>' }); setTimeout(hideSheet,1200); }
+  }
+
+  /* ---------------------------
+     Public helpers exposed to sheet DOM */
+  window.connectWithPhantom = connectWithPhantom;
+  window.connectWithSolflare = connectWithSolflare;
+  window.connectWithBackpack = connectWithBackpack;
+  window.connectWithWalletConnect = connectWithWalletConnect;
+  window.openPhantomDeepLink = openPhantomDeepLink;
+  window.openSolflareDeepLink = openSolflareDeepLink;
+  window.openBackpackDeepLink = openBackpackDeepLink;
+  window.showWalletPicker = function(){ showSheet({ title:'Connect Wallet', bodyHtml: $('sheetBody').innerHTML }); };
+
+  /* ---------------------------
+     Public key validation */
+  function isValidSolanaPublicKey(pk){
+    if (!pk || typeof pk !== 'string') return false;
+    const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
+    if (!base58Regex.test(pk)) return false;
+    if (pk.length < 32 || pk.length > 64) return false;
+    return true;
+  }
+
+  /* ---------------------------
+     Small bottom-sheet script for the page (keeps the DOM sheet behavior) */
+  (function sheetBootstrap(){
+    function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
+    function openExternal(url){
+      const tg = tgInstance();
+      if (tg){
+        try { if (typeof tg.openUrl === 'function'){ tg.openUrl(url); return; } if (typeof tg.openLink === 'function'){ tg.openLink(url); return; } if (typeof tg.openPopup === 'function'){ tg.openPopup(url); return; } } catch(e){ console.warn('tg.open* failed', e); }
+      }
+      try { window.location.assign(url); } catch(e){ try { window.open(url, '_blank'); } catch(e2){ console.warn('openExternal fallback failed', e2); } }
     }
 
-    if (sheetClose) sheetClose.addEventListener('click', hideSheet);
-    if (sheetCancel) sheetCancel.addEventListener('click', hideSheet);
+    const overlay = document.getElementById('overlay');
+    const sheetClose = document.getElementById('sheetClose');
+    const sheetCancel = document.getElementById('sheetCancel');
+    const bindBtn = document.getElementById('bindWalletBtn');
+    const sheetBody = document.getElementById('sheetBody');
 
-    overlay.addEventListener('pointerdown', (ev)=>{ if (ev.target === overlay) hideSheet(); });
+    function showSheetLocal(opts = {}) {
+      if (!overlay) return;
+      if (opts.title !== undefined) document.querySelector('.sheet-title').textContent = opts.title;
+      if (opts.bodyHtml !== undefined) sheetBody.innerHTML = opts.bodyHtml;
+      if (opts.actionsHtml !== undefined) document.getElementById('sheetActions').innerHTML = opts.actionsHtml;
+      overlay.classList.add('show'); overlay.setAttribute('aria-hidden','false');
+      try{ const tg = tgInstance(); if (tg && typeof tg.expand === 'function') tg.expand(); }catch(e){}
+      try{ sheetBody.focus(); }catch(e){}
+      if (typeof opts.onMounted === 'function') { setTimeout(()=> { try{ opts.onMounted(); }catch(e){ console.warn('sheet onMounted failed', e); } }, 50); }
+      setDetectionBadges();
+    }
+    function hideSheetLocal(){ if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
 
-    Object.keys(optionMap).forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try { await optionMap[id](); } catch(e){ console.warn(e); showToast('Connection failed', 1200); } }, { passive:false });
-      el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
+    function setDetectionBadges(){
+      const d = detectInjectedProviders();
+      try {
+        document.getElementById('det-phantom').textContent = d.phantom ? '• detected' : '';
+        document.getElementById('det-solflare').textContent = d.solflare ? '• detected' : '';
+        document.getElementById('det-backpack').textContent = d.backpack ? '• detected' : '';
+      } catch(e){}
+    }
+
+    function buildCleanRedirect(){ try{ return window.location.origin.replace(/\/+$/,'') + window.location.pathname; }catch(e){return window.location.origin + '/';} }
+    function phantomDeepLink(){ const origin = encodeURIComponent(window.location.origin.replace(/\/+$/,'')); const redirect = encodeURIComponent(buildCleanRedirect()); return `https://phantom.app/ul/v1/connect?app_url=${origin}&redirect_link=${redirect}`; }
+    function solflareDeepLink(){ const redirect = encodeURIComponent(buildCleanRedirect()); return `https://solflare.com/access?redirect=${redirect}`; }
+    function backpackDeepLink(){ return 'https://backpack.app/'; }
+
+    const optionMap = {
+      'opt-phantom': async ()=> { if (typeof window.connectWithPhantom === 'function') { try{ await window.connectWithPhantom(); hideSheetLocal(); return; } catch(e){ console.warn('connectWithPhantom failed', e); } } openExternal(phantomDeepLink()); },
+      'opt-solflare': async ()=> { if (typeof window.connectWithSolflare === 'function') { try{ await window.connectWithSolflare(); hideSheetLocal(); return; } catch(e){ console.warn('connectWithSolflare failed', e); } } openExternal(solflareDeepLink()); },
+      'opt-backpack': async ()=> { if (typeof window.connectWithBackpack === 'function') { try{ await window.connectWithBackpack(); hideSheetLocal(); return; } catch(e){ console.warn('connectWithBackpack failed', e); } } openExternal(backpackDeepLink()); },
+      'opt-wc': async ()=> { if (typeof window.connectWithWalletConnect === 'function') { try{ await window.connectWithWalletConnect(); hideSheetLocal(); return; } catch(e){ console.warn('connectWithWalletConnect failed', e); alert('WalletConnect attempt failed'); return; } } const tg = tgInstance(); if (tg) { alert('Open your mobile wallet and choose WalletConnect. Then paste the returned public key into Hexon.'); } else { alert('Open your wallet app and choose WalletConnect, or use a WalletConnect-enabled wallet.'); } }
+    };
+
+    async function manualBind(publicKey){
+      if (!publicKey || publicKey.length < 20){ alert('Invalid public key'); return; }
+      if (typeof window.finalizeBind === 'function'){
+        try { const ok = await window.finalizeBind(publicKey, 'manual'); if (ok) hideSheetLocal(); return; } catch(e){ console.warn('finalizeBind failed', e); alert('Server bind failed'); return; }
+      }
+      try { localStorage.setItem('hexon_bound_wallet', publicKey); localStorage.setItem('hexon_bound_provider', 'manual'); const wEl = document.getElementById('ui-wallet'); const pEl = document.getElementById('ui-provider'); if (wEl) wEl.textContent = publicKey; if (pEl) pEl.textContent = 'manual'; hideSheetLocal(); showToast('Public key stored locally (no server bind performed).', 2000); } catch(e){ console.warn(e); alert('Unable to save locally'); }
+    }
+
+    function interceptBind(ev){ ev.preventDefault(); ev.stopImmediatePropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); return false; }
+
+    function onKeyDown(e){ if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheetLocal(); } }
+
+    document.addEventListener('DOMContentLoaded', ()=>{
+      if (bindBtn){ bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false }); bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); }, { passive:false }); bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); } }); }
+
+      if (sheetClose) sheetClose.addEventListener('click', hideSheetLocal);
+      if (sheetCancel) sheetCancel.addEventListener('click', hideSheetLocal);
+      overlay.addEventListener('pointerdown', (ev)=>{ if (ev.target === overlay) hideSheetLocal(); });
+
+      Object.keys(optionMap).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try{ await optionMap[id](); } catch(e){ console.warn(e); showToast('Connection failed', 1200); } }, { passive:false });
+        el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
+      });
+
+      const manualBtn = document.getElementById('manualBindBtn');
+      if (manualBtn){ manualBtn.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); const pk = (document.getElementById('manualPublicKey').value||'').trim(); await manualBind(pk); }, { passive:false }); }
+
+      setDetectionBadges();
+      try{ const sid = localStorage.getItem('hexon_session'); if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid; const wallet = localStorage.getItem('hexon_bound_wallet'); if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet; const prov = localStorage.getItem('hexon_bound_provider'); if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov; } catch(e){}
+      document.addEventListener('keydown', onKeyDown);
     });
 
-    const manualBtn = document.getElementById('manualBindBtn');
-    if (manualBtn){
-      manualBtn.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); const pk = (document.getElementById('manualPublicKey').value||'').trim(); await manualBind(pk); }, { passive:false });
-    }
+    window._hexon_openWalletSheet = ()=> showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML });
+    window._hexon_closeWalletSheet = hideSheetLocal;
+    window._hexon_showSheet = showSheetLocal;
+    window._hexon_hideSheet = hideSheetLocal;
+    window._hexon_showToast = (m,t)=> { const tEl = document.getElementById('toast'); if (!tEl) return; tEl.textContent = m; tEl.style.display='block'; setTimeout(()=> tEl.style.display='none', t || 2000); };
+  })();
 
-    setDetectionBadges();
+  /* ---------------------------
+     Boot / init logic for this page
+  ---------------------------*/
+  document.addEventListener('DOMContentLoaded', async ()=>{
     try {
-      const sid = localStorage.getItem('hexon_session');
-      if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid;
-      const wallet = localStorage.getItem('hexon_bound_wallet');
-      if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet;
-      const prov = localStorage.getItem('hexon_bound_provider');
-      if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov;
-    } catch(e){}
+      initTelegram();
+      readWalletReturn();
 
-    document.addEventListener('keydown', onKeyDown);
+      const ref = getRefFromURL();
+      if (ref) savePendingReferral(ref); else loadPendingReferral();
+
+      // wire page buttons
+      try{ const wa = $('watchAdBtn'); if (wa) wa.addEventListener('click', showAdAndVerify); } catch(e){}
+      try{ const os = $('openStore'); if (os) os.addEventListener('click', ()=> window.location.href = 'shop.html'); } catch(e){}
+      try{ const bw = $('bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); if (typeof window._hexon_openWalletSheet === 'function') { window._hexon_openWalletSheet(); } else { showSheet({ title: 'Connect Wallet' }); } }); } catch(e){}
+      try{ const sr = $('showRefBtn'); if (sr) sr.addEventListener('click', showReferralModal); } catch(e){}
+      try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
+      try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
+
+      // initial client init
+      try {
+        const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null, username: clientState.username, telegramId: clientState.telegramId });
+        if (init){
+          if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); }
+          clientState.userId = init.userId ?? clientState.userId;
+          clientState.gp = init.gp ?? clientState.gp;
+          clientState.miners = init.miners ?? clientState.miners;
+          clientState.userAU = init.userAU ?? clientState.userAU;
+          clientState.totalAU = init.totalAU ?? clientState.totalAU;
+          clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
+          clientState.referralCode = init.referralCode ?? clientState.referralCode;
+          if (!clientState.username && init.username) clientState.username = init.username;
+          if (init.referralAccepted) clearPendingReferral();
+          if (init.wallet) { clientState.wallet = init.wallet; clientState.walletProvider = init.walletProvider || clientState.walletProvider; saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider); }
+          if (typeof init.energy === 'number') clientState.energy = Math.max(0, Math.min(100, init.energy));
+        }
+      } catch(e){ console.warn('client init failed', e); }
+
+      // compute scale & start phaser
+      const parentEl = $('phaserCanvas') || document.body;
+      const rect = parentEl.getBoundingClientRect();
+      const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.9, 900));
+      const availH = Math.max(320, rect.height || Math.min(window.innerHeight * 0.9, 1200));
+      const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
+      const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
+      const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
+      CELL = Math.max(10, Math.floor(BASE_CELL * scale));
+      GAP = Math.max(1, Math.floor(BASE_GAP * scale));
+      const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
+      const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
+      if (parentEl && parentEl.style){ parentEl.style.minWidth = Math.min(canvasWidth, Math.max(320, canvasWidth)) + 'px'; parentEl.style.minHeight = Math.min(canvasHeight, Math.max(420, canvasHeight)) + 'px'; }
+
+      phaserGame = new Phaser.Game({ type: Phaser.AUTO, parent: 'phaserCanvas', width: canvasWidth, height: canvasHeight, backgroundColor: '#061426', scene: [ BootScene, GameScene ], render: { pixelArt: false, antialias: true } });
+
+      setupInjectedProviderListeners();
+      loadAdsGram();
+
+      updateUI();
+      renderMinersList();
+      refreshLeaderboard();
+      setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
+
+    } catch(err){ console.error('Hexon boot failure:', err); }
   });
-
-  // expose helpers so main.js can call into this sheet
-  window._hexon_openWalletSheet = ()=> showSheet({ title: 'Connect Wallet', bodyHtml: sheetBody.innerHTML });
-  window._hexon_closeWalletSheet = hideSheet;
-  window._hexon_showSheet = showSheet;   // generic
-  window._hexon_hideSheet = hideSheet;
-  window._hexon_showToast = (m,t)=> showToast(m,t);
-})();
-</script>
-
-<!-- phaser lib (deferred) -->
-<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" defer></script>
-
-<!-- main game file (deferred) -->
-<script src="./main.js" defer></script>
+  </script>
 </body>
 </html>
