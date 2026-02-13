@@ -1485,13 +1485,22 @@
     } catch(e){ console.warn('pauseForHidden error', e); }
   }
 
-  function resumeFromHidden(){
+  // New: resume gameplay logic extracted so the resume prompt can call it
+  function resumeGameplayFromHidden(){
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-      const was = gameState.wasPlayingBeforeHidden;
 
-      if (was === true){
-        // Only resume if it was playing before hidden
+      // If the game was playing before hidden, only then resume play.
+      if (gameState.wasPlayingBeforeHidden === true){
+        // If there is no energy, do not resume - show energy sheet instead
+        if ((clientState.energy || 0) <= 0){
+          gameState.pausedForEnergy = true;
+          gameState.isPlaying = false;
+          showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' });
+          saveGameToStorage();
+          return;
+        }
+
         gameState.isPlaying = true;
 
         if (scene) {
@@ -1523,10 +1532,60 @@
         saveGameToStorage();
       }
 
+      // clear hidden flags after we've resumed (or decided not to)
       delete gameState.hiddenAt;
       delete gameState.wasPlayingBeforeHidden;
-      // do not delete tickRemaining here — it's cleared by startDropLoop when the scheduled tick executes
+      // tickRemaining will be cleared by startDropLoop when the scheduled tick executes
+    } catch(e){ console.warn('resumeGameplayFromHidden error', e); }
+  }
+
+  // keep old resumeFromHidden for automatic flows that don't require a prompt
+  function resumeFromHidden(){
+    try {
+      // reuse the extracted resume logic directly
+      resumeGameplayFromHidden();
     } catch(e){ console.warn('resumeFromHidden error', e); }
+  }
+
+  // -----------------------
+  // Show resume prompt when appropriate
+  // -----------------------
+  function showResumePromptIfNeeded(){
+    try {
+      // Only prompt if we have a hiddenAt and it was playing before hidden and currently not playing
+      if (!gameState.hiddenAt || gameState.wasPlayingBeforeHidden !== true || gameState.isPlaying) return;
+
+      // If out of energy, show the energy sheet instead of resume prompt
+      if ((clientState.energy || 0) <= 0){
+        showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">You were playing when you left, but you have no energy to resume. Watch an ad or wait for recharge.</div>' });
+        return;
+      }
+
+      showSheet({
+        title: 'Resume game?',
+        bodyHtml: `<div class="small-muted">You left while a game was in progress. Resume where you left off?</div><div style="margin-top:8px;" class="small-muted">If you keep it paused, you can resume later from the menu.</div>`,
+        actionsHtml: `<button id="resumeBtn" class="button"><i class="fa-solid fa-play"></i> Resume</button><button id="keepPaused" class="btn-ghost">Keep Paused</button>`,
+        onMounted: () => {
+          const resumeBtn = $('resumeBtn');
+          const keepPaused = $('keepPaused');
+
+          if (resumeBtn) resumeBtn.onclick = () => {
+            hideSheet();
+            // perform resume with preserved tickRemaining
+            resumeGameplayFromHidden();
+          };
+
+          if (keepPaused) keepPaused.onclick = () => {
+            hideSheet();
+            // Keep paused: refresh lastTickAt to avoid unexpected catch-ups
+            gameState.lastTickAt = Date.now();
+            saveGameToStorage();
+            saveClientToStorage();
+            updateUI();
+          };
+        }
+      });
+    } catch(e){ console.warn('showResumePromptIfNeeded error', e); }
   }
 
   // -----------------------
@@ -1622,6 +1681,12 @@
       } else {
         if (!gameState.grid) initGrid();
         if (!gameState.activePiece) spawnPiece();
+      }
+
+      // If user left while playing, prompt them on load to resume
+      if (gameState.hiddenAt && gameState.wasPlayingBeforeHidden === true && !gameState.isPlaying){
+        // small defer so UI elements are ready
+        setTimeout(()=> showResumePromptIfNeeded(), 120);
       }
 
       try {
@@ -1729,11 +1794,28 @@
       document.addEventListener('visibilitychange', ()=> {
         try {
           if (document.hidden) pauseForHidden();
-          else resumeFromHidden();
+          else {
+            // If we left while playing, prompt to resume instead of auto-resume
+            if (gameState.hiddenAt && gameState.wasPlayingBeforeHidden === true && !gameState.isPlaying){
+              showResumePromptIfNeeded();
+            } else {
+              resumeFromHidden();
+            }
+          }
         } catch(e){ console.warn('visibilitychange handler failed', e); }
       });
       window.addEventListener('blur', ()=> { pauseForHidden(); });
-      window.addEventListener('focus', ()=> { if (!document.hidden) resumeFromHidden(); });
+      window.addEventListener('focus', ()=> {
+        try {
+          if (!document.hidden) {
+            if (gameState.hiddenAt && gameState.wasPlayingBeforeHidden === true && !gameState.isPlaying){
+              showResumePromptIfNeeded();
+            } else {
+              resumeFromHidden();
+            }
+          }
+        } catch(e){ console.warn('focus handler failed', e); }
+      });
 
       window.addEventListener('pagehide', (e) => { try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {} }, { passive: true });
       window.addEventListener('beforeunload', (e) => { try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {} });
