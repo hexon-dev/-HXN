@@ -8,6 +8,7 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
+    /* (kept your CSS mostly the same) */
     :root{
       --bg-top:#071027; --bg-btm:#000; --panel-bg:rgba(8,18,36,0.95);
       --muted:#bfeafc; --accent-from:#3b82f6; --accent-to:#22d3ee;
@@ -83,6 +84,14 @@
     body, #pageWrap { overscroll-behavior-x: none; }
     .card input, .card .small { word-break: break-word; white-space: normal; }
     @media (max-width:360px){ .stat{ font-size:18px; } .small{ font-size:12px; } .button{ padding:7px 10px; } }
+
+    /* loader overlay for init/auth feedback */
+    #appLoader{
+      position: fixed; inset: 0; z-index: 120000; display: none; align-items:center; justify-content:center;
+      background: rgba(1,6,12,0.6);
+      color: #CFF6FF; font-weight:700; font-size:16px;
+    }
+    #appLoader.show { display:flex; }
   </style>
 </head>
 <body class="tgmini-reset">
@@ -232,6 +241,7 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="appLoader">Loading…</div>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 
@@ -240,7 +250,8 @@
   // Config / constants
   // -----------------------
   const TELEGRAM_BOT_USERNAME = 'hxxxnbot';
-  const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
+  // allow overriding API_BASE at runtime (helps when testing locally)
+  const API_BASE = (window.__API_BASE__ || 'https://trainer-induced-beta-estimated.trycloudflare.com').replace(/\/+$/, '');
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
   const BASE_CELL = 20, BASE_GAP = 2;
@@ -250,7 +261,6 @@
   const AUTO_RECHARGE_MINUTES = 30;
   const AUTO_RECHARGE_PERCENT = 10;
 
-  // ad config
   const MAX_ADS_PER_DAY = 9;
   const MAX_ADS_PER_SITTING = 3;
   const MAX_SITTINGS_PER_DAY = 3;
@@ -285,10 +295,10 @@
     telegramId: null,
     wallet: loadBoundWalletFromStorage(),
     walletProvider: localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER) || null,
-    gpBase: 0,            // authoritative server GP base (server-side stored gp)
-    serverScore: null,    // latest server-reported score
+    gpBase: 0,
+    serverScore: null,
     energy: 100,
-    energyLastUpdatedAt: Date.now(), // timestamp (ms) used for offline/hidden recharge calculation
+    energyLastUpdatedAt: Date.now(),
     miners: [],
     shopItems: [],
     userAU: 0,
@@ -296,21 +306,15 @@
     referralCode: null,
     pendingReferral: null,
     referralsActive: 0,
-    // ad-related persisted fields:
     adsThisSitting: 0,
-    adsThisSittingStartedAt: null, // ms timestamp when current sitting began
+    adsThisSittingStartedAt: null,
     sittingsUsedToday: 0,
     adsToday: 0,
-    adsTodayDate: null, // ISO date string of the adsToday day
+    adsTodayDate: null,
     actionLog: [],
-    // sync tracking: last-sent totals to server (so we send deltas, not totals)
-    lastSent: {
-      gpTotal: 0,   // last total gp value acknowledged/sent to server
-      score: 0      // last score acknowledged/sent to server
-    },
-    // HXN fields (authoritative from server)
-    hxnBalance: "0",   // string decimal returned by /hxn/balance
-    hxnCredits: "0"    // sum of hxn_ledger credits returned by server
+    lastSent: { gpTotal: 0, score: 0 },
+    hxnBalance: "0",
+    hxnCredits: "0"
   };
 
   const gameState = {
@@ -329,7 +333,7 @@
     wasPlayingBeforeHidden: null,
     pausedForEnergy: false,
     tickRemaining: null,
-    _forceResume: false // internal helper
+    _forceResume: false
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -346,7 +350,6 @@
   function saveClientToStorage(){
     try {
       const toSave = Object.assign({}, clientState);
-      // keep action log trimmed
       toSave.actionLog = (clientState.actionLog || []).slice(-2000);
       localStorage.setItem(STORAGE_KEYS.CLIENT, JSON.stringify(toSave));
     } catch(e){ console.warn('saveClientToStorage error', e); }
@@ -401,7 +404,6 @@
   function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); saveClientToStorage(); }
   function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
-  // time helpers
   function isoDateStr(d = new Date()){ return d.toISOString().slice(0,10); }
   function msUntilNextLocalMidnight(){
     const n = new Date();
@@ -419,7 +421,7 @@
   }
 
   // -----------------------
-  // Energy helpers (robust offline/hidden auto-refill)
+  // Energy helpers
   // -----------------------
   function setEnergy(value, setTimestamp=true){
     try {
@@ -427,25 +429,21 @@
       const prev = Number(clientState.energy || 0);
       clientState.energy = clamped;
       if (setTimestamp) clientState.energyLastUpdatedAt = Date.now();
-      // if energy changed, persist and update UI
       if (clamped !== prev) {
         logAction('energy_set', { from: prev, to: clamped });
         saveClientToStorage();
         updateUI();
       } else {
-        // still persist timestamp change if requested
         if (setTimestamp) saveClientToStorage();
       }
     } catch(e){ console.warn('setEnergy error', e); }
   }
 
-  // Apply any missed recharges that would have occurred while the page was closed or hidden.
   function applyOfflineEnergyRecharge(){
     try {
       if (typeof clientState.energy !== 'number') clientState.energy = 100;
       const last = Number(clientState.energyLastUpdatedAt || Date.now());
       const now = Date.now();
-      // If last is in the future for some reason, clamp it
       const safeLast = last > now ? now : last;
       const elapsed = Math.max(0, now - safeLast);
       const perMs = AUTO_RECHARGE_MINUTES * 60e3;
@@ -453,14 +451,12 @@
       if (increments > 0){
         const add = increments * AUTO_RECHARGE_PERCENT;
         const newEnergy = Math.min(100, (clientState.energy || 0) + add);
-        // advance the last-updated timestamp by the consumed increments (so partial leftover time is preserved)
         clientState.energyLastUpdatedAt = safeLast + increments * perMs;
         clientState.energy = newEnergy;
         logAction('offline_recharge', { increments, add, energy: clientState.energy });
         saveClientToStorage();
         updateUI();
       } else {
-        // No full increments passed — keep things as they are (do not move timestamp)
         if (!clientState.energyLastUpdatedAt) {
           clientState.energyLastUpdatedAt = now;
           saveClientToStorage();
@@ -469,22 +465,18 @@
     } catch(e){ console.warn('applyOfflineEnergyRecharge error', e); }
   }
 
-  // force a visible immediate refill tick (called by Phaser timer while page active)
   function doAutoRechargeTick(){
     try {
-      // apply any missed recharges first (makes periodic ticks tolerant)
       applyOfflineEnergyRecharge();
-      // then apply a single tick (prevents double-adding if applyOfflineEnergyRecharge already added multiples)
       setEnergy((clientState.energy || 0) + AUTO_RECHARGE_PERCENT, true);
       logAction('auto_recharge_tick', { energy: clientState.energy });
-      // attempt to resume if we were paused for energy
       attemptResumeAfterEnergy();
       sendState('auto_recharge', { energy: clientState.energy });
     } catch(e){ console.warn('doAutoRechargeTick error', e); }
   }
 
   // -----------------------
-  // Ad / sitting helpers (REVISED)
+  // Ads helpers (unchanged)
   // -----------------------
   function resetDailyAdsIfNeeded(){
     try {
@@ -493,7 +485,6 @@
         clientState.adsTodayDate = today;
         clientState.adsToday = 0;
         clientState.sittingsUsedToday = 0;
-        // clear any in-progress sitting if its cooldown expired
         if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
           clientState.adsThisSitting = 0;
           clientState.adsThisSittingStartedAt = null;
@@ -504,14 +495,12 @@
     } catch(e){ console.warn('resetDailyAdsIfNeeded', e); }
   }
 
-  // call on load and periodically (handles midnight rollover while page open)
   function normalizeAdStateOnLoad(){
     try {
       const today = isoDateStr();
       if (!clientState.adsTodayDate){
         clientState.adsTodayDate = today;
       }
-      // reset if date mismatch
       if (clientState.adsTodayDate !== today){
         clientState.adsTodayDate = today;
         clientState.adsToday = 0;
@@ -520,12 +509,10 @@
         clientState.adsThisSittingStartedAt = null;
         saveClientToStorage();
       } else {
-        // if sitting started but cooldown expired, clear sitting so a new sitting can be started
         if (clientState.adsThisSittingStartedAt){
           if ((Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
             clientState.adsThisSitting = 0;
             clientState.adsThisSittingStartedAt = null;
-            // we do NOT change sittingsUsedToday here (sittingsUsedToday is incremented only when a sitting completes)
             saveClientToStorage();
           }
         }
@@ -538,17 +525,9 @@
     return Math.max(0, (MAX_SITTINGS_PER_DAY - (clientState.sittingsUsedToday || 0)));
   }
 
-  // returns ms until next sitting availability (0 if allowed now)
   function timeUntilNextSittingAvailable(){
-    // daily exhausted?
-    if ((clientState.sittingsUsedToday || 0) >= MAX_SITTINGS_PER_DAY){
-      return msUntilNextLocalMidnight();
-    }
-    // if currently in a sitting and not yet reached ad limit -> allowed now
-    if ((clientState.adsThisSitting || 0) < MAX_ADS_PER_SITTING){
-      return 0;
-    }
-    // sitting reached ad limit -> check cooldown from start
+    if ((clientState.sittingsUsedToday || 0) >= MAX_SITTINGS_PER_DAY) return msUntilNextLocalMidnight();
+    if ((clientState.adsThisSitting || 0) < MAX_ADS_PER_SITTING) return 0;
     if (clientState.adsThisSittingStartedAt){
       const elapsed = Date.now() - clientState.adsThisSittingStartedAt;
       const rem = Math.max(0, SITTING_COOLDOWN_MS - elapsed);
@@ -559,131 +538,130 @@
 
   function canWatchAd(){
     resetDailyAdsIfNeeded();
-    // daily ad cap
     if ((clientState.adsToday || 0) >= MAX_ADS_PER_DAY) return false;
-    // time until next sitting
     return timeUntilNextSittingAvailable() === 0;
   }
 
-  // mark start of sitting (when first ad of sitting is requested/granted)
-  // NOTE: we only set startedAt here — we increment sittingsUsedToday when the sitting completes (reaches MAX_ADS_PER_SITTING)
-  function startSittingIfNeeded(){
-    if (!clientState.adsThisSittingStartedAt || clientState.adsThisSittingStartedAt === null){
-      clientState.adsThisSittingStartedAt = Date.now();
+  function startSittingIfNeeded(){ if (!clientState.adsThisSittingStartedAt) clientState.adsThisSittingStartedAt = Date.now(); }
+  function finishSittingAndConsume(){ clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1; saveClientToStorage(); }
+
+  // -----------------------
+  // API wrapper - robust + timeout + basic retries
+  // -----------------------
+  async function api(path, method='GET', body=null, optsExtra={}) {
+    const url = API_BASE + path + ((method.toUpperCase() === 'GET' && clientState.sessionId) ? ( (API_BASE.includes('?') ? '&' : '?') + 'sessionId=' + encodeURIComponent(clientState.sessionId) ) : '');
+    const headers = Object.assign({}, optsExtra.headers || {});
+
+    // set content-type for JSON payloads (only when body is object)
+    const payloadIsObject = body !== null && typeof body === 'object' && !(body instanceof FormData);
+    if (payloadIsObject) headers['Content-Type'] = 'application/json';
+
+    if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+    const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
+    if (userHandle) headers['X-User-Handle'] = userHandle;
+
+    const controller = new AbortController();
+    const timeoutMs = optsExtra.timeout || 9000;
+    const id = setTimeout(()=> controller.abort(), timeoutMs);
+
+    const fetchOpts = {
+      method,
+      headers,
+      signal: controller.signal,
+      credentials: optsExtra.credentials || 'same-origin' // include cookies when same-origin
+    };
+
+    if (body !== null && body !== undefined) {
+      if (payloadIsObject) {
+        // attach some session metadata consistently
+        body.sessionId = body.sessionId || clientState.sessionId || null;
+        body.username = body.username || clientState.username || null;
+        body.telegramId = body.telegramId || clientState.telegramId || null;
+        fetchOpts.body = JSON.stringify(body);
+      } else {
+        fetchOpts.body = body;
+      }
+    }
+
+    try {
+      const res = await fetch(url, fetchOpts);
+      clearTimeout(id);
+      const text = await res.text();
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch(e){ json = text || null; }
+      if (!res.ok) {
+        // if 401/403, bubble up error object for caller (server side auth issue)
+        console.warn('API non-ok', res.status, path, json);
+        return { ok: false, status: res.status, error: (json && json.error) ? json.error : `HTTP ${res.status}`, raw: json };
+      }
+      return json;
+    } catch (err) {
+      clearTimeout(id);
+      if (err && err.name === 'AbortError') {
+        console.warn('API timeout', path);
+        return { ok: false, status: 0, error: 'timeout' };
+      }
+      console.warn('API error', err, path);
+      return { ok: false, status: 0, error: String(err || 'network') };
     }
   }
 
-  // When a sitting finishes (reached MAX_ADS_PER_SITTING) we call this to consume a daily sitting.
-  function finishSittingAndConsume(){
-    clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1;
-    // keep adsThisSitting and adsThisSittingStartedAt so cooldown can be computed against startedAt.
-    saveClientToStorage();
-  }
-
   // -----------------------
-  // Utilities: API and UI (with GP/Score delta sync)
+  // HXN / balance (unchanged but resilient)
   // -----------------------
-  async function api(path, method='GET', body=null, optsExtra={}){
-    try{
-      let url = API_BASE + path;
-      const sid = clientState.sessionId ? encodeURIComponent(clientState.sessionId) : '';
-      if (method.toUpperCase() === 'GET' && sid){
-        if (!url.includes('sessionId=')) url += (url.includes('?') ? '&' : '?') + 'sessionId=' + sid;
-      }
-      const headers = Object.assign({ 'Content-Type': 'application/json' }, optsExtra.headers || {});
-      if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
-      const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
-      if (userHandle) headers['X-User-Handle'] = userHandle;
-
-      const fetchOpts = { method, headers, ...optsExtra };
-      if (body !== null && body !== undefined){
-        if (typeof body === 'object' && !Array.isArray(body)){
-          body.username = body.username || clientState.username || null;
-          body.telegramId = body.telegramId || clientState.telegramId || null;
-          body.sessionId = body.sessionId || clientState.sessionId || null;
-          fetchOpts.body = JSON.stringify(body);
-        } else {
-          fetchOpts.body = body;
-        }
-      }
-
-      const res = await fetch(url, fetchOpts);
-      const text = await res.text();
-      let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch(err) { json = text || null; }
-      if (!res.ok) { console.warn('API non-ok', res.status, path, json); return json; }
-      return json;
-    } catch(e){ console.warn('API error', e); return null; }
-  }
-
-  // -----------------------
-  // HXN sync + balance wiring (new)
-  // -----------------------
-  // Call /hxn/sync (POST) to calculate & credit mined HXN for this user (non-retroactive).
   async function syncHXN(showUIFeedback = true){
     try {
       if (showUIFeedback) showToast('Syncing mining…', 900);
       const payload = { sessionId: clientState.sessionId };
-      const res = await api('/hxn/sync', 'POST', payload);
-      if (!res) {
-        if (showUIFeedback) showToast('Sync failed', 1200);
+      const res = await api('/hxn/sync','POST', payload);
+      if (!res || res.ok === false) {
+        if (showUIFeedback) showToast('Sync failed',1200);
         return null;
       }
-      if (res.ok) {
-        // server returns earnedHXN (string decimal), userAU, totalAU
+      if (res.ok || typeof res.earnedHXN !== 'undefined') {
         if (typeof res.earnedHXN !== 'undefined') {
-          // show small earned info as transient toast
-          const earned = (res.earnedHXN || '0').toString();
+          const earned = String(res.earnedHXN || '0');
           if (earned && earned !== '0') showToast('Mined +' + Number(earned).toFixed(6) + ' HXN', 1600);
         }
         clientState.userAU = Number(res.userAU || clientState.userAU || 0);
         clientState.totalAU = Number(res.totalAU || clientState.totalAU || 0);
         saveClientToStorage();
-        // fetch authoritative balance after sync to show ledger entries & balance
         await fetchHXNBalance(false);
         updateUI();
         return res;
-      } else {
-        if (showUIFeedback) showToast('Sync failed: ' + (res.error || 'server error'), 2000);
-        return res;
       }
+      if (showUIFeedback) showToast('Sync failed',1200);
+      return null;
     } catch (e) {
       console.warn('syncHXN error', e);
-      if (showUIFeedback) showToast('Sync error', 1200);
+      if (showUIFeedback) showToast('Sync error',1200);
       return null;
     }
   }
 
-  // Call /hxn/balance (GET) to retrieve the authoritative balance & ledger credits
   async function fetchHXNBalance(showUIFeedback = true){
     try {
-      if (showUIFeedback) showToast('Fetching HXN balance…', 700);
-      const res = await api('/hxn/balance', 'GET', null);
-      if (!res) {
-        if (showUIFeedback) showToast('Balance fetch failed', 1200);
+      if (showUIFeedback) showToast('Fetching HXN balance…',700);
+      const res = await api('/hxn/balance','GET', null);
+      if (!res || res.ok === false) {
+        if (showUIFeedback) showToast('Balance fetch failed',1200);
         return null;
       }
-      if (res.ok) {
-        clientState.hxnBalance = (res.balance != null) ? String(res.balance) : clientState.hxnBalance || "0";
-        clientState.hxnCredits = (res.credits != null) ? String(res.credits) : clientState.hxnCredits || "0";
-        // totalAU & userAU may be available elsewhere; keep them in sync if provided
-        if (typeof res.userAU !== 'undefined') clientState.userAU = Number(res.userAU || clientState.userAU || 0);
-        if (typeof res.totalAU !== 'undefined') clientState.totalAU = Number(res.totalAU || clientState.totalAU || 0);
-        saveClientToStorage();
-        updateUI();
-        return res;
-      } else {
-        if (showUIFeedback) showToast('Balance fetch failed: ' + (res.error || 'server error'), 1500);
-        return res;
-      }
-    } catch (e) {
+      if (res.ok === false) { if (showUIFeedback) showToast('Balance fetch failed',1200); return null; }
+      clientState.hxnBalance = (res.balance != null) ? String(res.balance) : clientState.hxnBalance || "0";
+      clientState.hxnCredits = (res.credits != null) ? String(res.credits) : clientState.hxnCredits || "0";
+      if (typeof res.userAU !== 'undefined') clientState.userAU = Number(res.userAU || clientState.userAU || 0);
+      if (typeof res.totalAU !== 'undefined') clientState.totalAU = Number(res.totalAU || clientState.totalAU || 0);
+      saveClientToStorage();
+      updateUI();
+      return res;
+    } catch(e){
       console.warn('fetchHXNBalance error', e);
-      if (showUIFeedback) showToast('Balance error', 1200);
+      if (showUIFeedback) showToast('Balance error',1200);
       return null;
     }
   }
 
-  // Compute an estimated daily allocation based on AU and the DAILY_EMISSION_CAP
   function computeDailyEstimate(userAU, totalAU){
     userAU = Number(userAU || 0);
     totalAU = Number(totalAU || 0);
@@ -720,6 +698,8 @@
   function clearPendingReferral(){ try{ localStorage.removeItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = null; saveClientToStorage(); } catch(e){} }
 
   function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display = 'block'; setTimeout(()=> el.style.display='none', ms); }
+  function showLoader(on=true, message='Loading…'){ const l = $('appLoader'); if(!l) return; l.textContent = message; if(on) l.classList.add('show'); else l.classList.remove('show'); }
+
   function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
 
   async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
@@ -729,7 +709,6 @@
 
   function updateUI(){
     if ($('ui-score')) {
-      // show local score with server score as muted subtext
       const server = (clientState.serverScore != null) ? Number(clientState.serverScore).toLocaleString() : '—';
       $('ui-score').innerHTML = `${(gameState.score || 0).toLocaleString()} <div class="small-muted" style="margin-top:4px;">server: ${server}</div>`;
     }
@@ -745,10 +724,8 @@
     if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
     if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
 
-    // HXN display: estimated daily allocation + server balance/credits when available
     const estDaily = computeDailyEstimate(clientState.userAU, clientState.totalAU);
     if ($('ui-hxn')){
-      // Primary stat shows estimated daily allocation (rounded) for immediate sense
       $('ui-hxn').innerText = estDaily.toLocaleString() + ' HXN/day (est)';
     }
     if ($('ui-hxn-details')) {
@@ -759,7 +736,6 @@
     }
 
     if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
-    if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
     if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
     if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
     if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
@@ -767,7 +743,7 @@
   }
 
   // -----------------------
-  // Pieces & core logic (unchanged)
+  // Pieces & core logic (unchanged structural logic)
   // -----------------------
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
@@ -790,14 +766,13 @@
   }
 
   // -----------------------
-  // Real-time REST sync (unchanged)
+  // Real-time REST sync (unchanged core but safer)
   // -----------------------
   const SEND_THROTTLE_MS = 400;
   let lastSendAt = 0;
   let pendingSendTimer = null;
 
   function buildStatePayload(eventType='heartbeat', extra={}){
-    // compute current displayed totals
     const displayedGP = computeDisplayedGP();
     const lastSentGp = Number((clientState.lastSent && clientState.lastSent.gpTotal) || 0);
     const gpDelta = displayedGP - lastSentGp;
@@ -806,7 +781,6 @@
     const lastSentScore = Number((clientState.lastSent && clientState.lastSent.score) || 0);
     const scoreDelta = displayedScore - lastSentScore;
 
-    // Build the base payload
     const base = {
       sessionId: clientState.sessionId,
       event: eventType,
@@ -820,10 +794,8 @@
       nextPiece: gameState.nextPiece || null,
       actionLog: (clientState.actionLog || []).slice(-200),
       ts: Date.now(),
-      // delta fields: prefer sending increments so server can add them
       gpDelta: gpDelta !== 0 ? gpDelta : 0,
       scoreDelta: scoreDelta !== 0 ? scoreDelta : 0,
-      // include totals for server convenience/audit (server may choose to ignore)
       gpTotalClient: displayedGP,
       scoreTotalClient: displayedScore
     };
@@ -849,17 +821,21 @@
     try {
       lastSendAt = Date.now();
       const res = await api('/game/submit-score','POST', payload);
-      // On success/ack, update local authoritative fields when server returns them.
-      // We only update our lastSent markers when server confirms (res.ok) or returns gp/score fields.
+      if (!res) return;
+      if (res.ok === false && res.status === 401) {
+        // If unauthorized, notify user and attempt to re-init session
+        console.warn('Server returned 401 on /game/submit-score — trying re-init');
+        showToast('Authentication required — re-initializing...', 1500);
+        await clientInitWithRetry();
+        return;
+      }
+
       if (res){
-        // if server returned authoritative gp, adopt it as gpBase and set lastSent gp total to server gp
         if (typeof res.gp !== 'undefined'){
           clientState.gpBase = Number(res.gp || 0);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.gpTotal = Number(clientState.gpBase);
         } else {
-          // If server didn't return gp but request had gpDelta we optimistically assume server added it
-          // Only update lastSent gpTotal if gpDelta > 0 (avoid overwriting if server didn't accept)
           if (payload.gpDelta && payload.gpDelta !== 0){
             clientState.lastSent = clientState.lastSent || {};
             clientState.lastSent.gpTotal = Number((clientState.lastSent.gpTotal || 0) + payload.gpDelta);
@@ -877,7 +853,6 @@
           }
         }
 
-        // if server returned any updated user fields, reconcile them
         if (typeof res.userAU !== 'undefined') clientState.userAU = res.userAU;
         if (typeof res.totalAU !== 'undefined') clientState.totalAU = res.totalAU;
         if (typeof res.miners !== 'undefined') clientState.miners = res.miners;
@@ -897,7 +872,7 @@
   setInterval(()=> { if (!gameState.isPlaying) return; sendState('heartbeat'); }, 2000);
 
   // -----------------------
-  // Phaser scenes (unchanged)
+  // Phaser scenes
   // -----------------------
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
@@ -917,7 +892,6 @@
       updateUI();
       this.catchUpMissedTicks();
 
-      // If we have a saved tickRemaining, use it to resume precisely.
       const scene = this;
       if (gameState.isPlaying){
         if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
@@ -929,11 +903,8 @@
 
       this.setupInput();
 
-      // recharge timer (doesn't touch lastTickAt)
-      // Use a Phaser timer for active ticks; offline/hidden catch-up handled by applyOfflineEnergyRecharge()
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: doAutoRechargeTick, callbackScope: this, loop: true });
 
-      // Save interval
       this.saveStateTimer = this.time.addEvent({
         delay: 2000,
         loop: true,
@@ -1016,29 +987,23 @@
             const moved = movePieceDown();
             logAction('tick_drop',{ moved, resumed:true });
             sendState('tick', { moved, resumed:true });
-            if (!moved) {
-              lockPiece();
-            }
+            if (!moved) { lockPiece(); }
             gameState.lastTickAt = Date.now();
             gameState.tickRemaining = null;
             saveGameToStorage();
             updateUI();
-            try {
-              if (this.dropEvent) { try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+            if (this.dropEvent) { try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+            gameState.lastTickAt = Date.now();
+            this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: () => {
+              if (!gameState.isPlaying) return;
+              const moved2 = movePieceDown();
+              logAction('tick_drop',{ moved: moved2 });
+              sendState('tick', { moved: moved2 });
+              if (!moved2) lockPiece();
               gameState.lastTickAt = Date.now();
-              this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: () => {
-                if (!gameState.isPlaying) return;
-                const moved2 = movePieceDown();
-                logAction('tick_drop',{ moved: moved2 });
-                sendState('tick', { moved: moved2 });
-                if (!moved2) lockPiece();
-                gameState.lastTickAt = Date.now();
-                saveGameToStorage();
-                updateUI();
-              }});
-            } catch(err){
-              console.warn('startDropLoop fallback failed', err);
-            }
+              saveGameToStorage();
+              updateUI();
+            }});
           }, [], this);
         } else {
           gameState.lastTickAt = Date.now();
@@ -1047,9 +1012,7 @@
             const moved = movePieceDown();
             logAction('tick_drop',{ moved });
             sendState('tick', { moved });
-            if (!moved) {
-              lockPiece();
-            }
+            if (!moved) { lockPiece(); }
             gameState.lastTickAt = Date.now();
             saveGameToStorage();
             updateUI();
@@ -1101,7 +1064,6 @@
     setupInput(){
       this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
       window.addEventListener('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
-      // Touch gestures are handled by pointer events on the canvas (in create)
       setupTouchControls(this);
 
       if (!this._gestureBound){
@@ -1141,28 +1103,13 @@
                 return;
               }
               if (Math.abs(dx) >= SWIPE_MIN_DIST && Math.abs(dx) > Math.abs(dy)) {
-                if (dx < 0) {
-                  movePiece(-1);
-                  vibratePreferTelegram();
-                  logAction('gesture_swipe_left_moved_left');
-                  sendState('gesture_swipe_left_moved_left');
-                } else {
-                  movePiece(1);
-                  vibratePreferTelegram();
-                  logAction('gesture_swipe_right_moved_right');
-                  sendState('gesture_swipe_right_moved_right');
-                }
+                if (dx < 0) { movePiece(-1); vibratePreferTelegram(); logAction('gesture_swipe_left_moved_left'); sendState('gesture_swipe_left_moved_left'); }
+                else { movePiece(1); vibratePreferTelegram(); logAction('gesture_swipe_right_moved_right'); sendState('gesture_swipe_right_moved_right'); }
                 updateUI(); saveGameToStorage();
                 return;
               }
               if (Math.abs(dy) >= SWIPE_MIN_DIST && Math.abs(dy) > Math.abs(dx)) {
-                if (dy > 0) {
-                  softDrop();
-                  vibratePreferTelegram();
-                  logAction('gesture_swipe_down_softdrop');
-                  sendState('gesture_swipe_down_softdrop');
-                  updateUI(); saveGameToStorage();
-                }
+                if (dy > 0) { softDrop(); vibratePreferTelegram(); logAction('gesture_swipe_down_softdrop'); sendState('gesture_swipe_down_softdrop'); updateUI(); saveGameToStorage(); }
                 return;
               }
             } catch(err){ console.warn('pointerup error', err); }
@@ -1179,7 +1126,6 @@
 
     catchUpMissedTicks(){
       try {
-        // if hiddenAt exists we don't auto-catchup here; resume logic will handle it
         if (gameState.hiddenAt) {
           return;
         }
@@ -1204,7 +1150,7 @@
   }
 
   // -----------------------
-  // Game functions (unchanged)
+  // Game functions (fixes and safety)
   // -----------------------
   function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
 
@@ -1225,15 +1171,19 @@
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
+      // compute tickRemaining safely
       try {
-        // compute tickRemaining so we can later resume the tick precisely
         const now = Date.now();
         if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
           const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
           const elapsed = Math.max(0, now - gameState.lastTickAt);
           gameState.tickRemaining = ((di - (elapsed % di)) + di) % di || di;
-        } catch(e){ gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS; }
-      } catch(e){ gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS; }
+        } else {
+          gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
+        }
+      } catch(e){
+        gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
+      }
       gameState.pausedForEnergy = true;
       gameState.isPlaying = false;
       gameState.activePiece = null;
@@ -1292,7 +1242,6 @@
     const ap = gameState.activePiece; if (!ap) return;
     const cells = getPieceCells(ap);
     for (const p of cells){ if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){ gameState.grid[p.y][p.x] = ap.type; } }
-    // decrement energy via setEnergy (updates timestamp & persistence)
     setEnergy((clientState.energy || 0) - 1, true);
     const cleared = [];
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
@@ -1325,19 +1274,17 @@
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
 
     try{
-      // Build final payload using same delta logic (server can add gpDelta/scoreDelta)
       const finalPayload = buildStatePayload('final', {
         partial: false,
-        // include a flag so server treats this as final/complete result for the run
         finalSubmission: true,
-        // include actionLog (larger)
         actionLog: (clientState.actionLog || []).slice(-2000)
       });
 
-      // send and await server acknowledgement
       const res = await api('/game/submit-score','POST', finalPayload);
-
-      // If server returns authoritative gp/score, reconcile locally
+      if (res && res.ok === false && res.status === 401) {
+        // try re-init if unauthorized
+        await clientInitWithRetry();
+      }
       if (res){
         if (typeof res.gp !== 'undefined'){
           clientState.gpBase = Number(res.gp || 0);
@@ -1349,7 +1296,6 @@
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.score = Number(clientState.serverScore);
         }
-        // save any additional fields server sends
         if (typeof res.userAU !== 'undefined') clientState.userAU = res.userAU;
         if (typeof res.totalAU !== 'undefined') clientState.totalAU = res.totalAU;
         if (typeof res.miners !== 'undefined') clientState.miners = res.miners;
@@ -1357,7 +1303,6 @@
       }
     } catch(e){ console.warn(e); }
 
-    // Show Game Over UI — do NOT modify GP here (server or bind actions control gpBase)
     showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
     saveGameToStorage();
     saveClientToStorage();
@@ -1365,12 +1310,9 @@
   }
 
   function resetForPlay(){
-    // Reset the *game* state only. Do NOT touch gpBase or last-sent gp markers.
     initGrid();
     gameState.dropInterval = INITIAL_DROP_MS;
-    // preserve action log or clear it depending on design — we'll clear to avoid repeated large logs.
     clientState.actionLog = [];
-    // energy stays as-is (we decrement when locking piece, and ads/claim update it)
     clientState.energy = Math.max(0, clientState.energy);
     spawnPiece();
     gameState.isPlaying = true;
@@ -1385,17 +1327,14 @@
   function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
 
   // -----------------------
-  // Touch controls wiring (no on-screen buttons — gestures handle everything)
+  // Touch controls wiring
   // -----------------------
-  function setupTouchControls(scene){
-    // Intentionally minimal: we rely on pointer gestures on the canvas (tap/swipe).
-    // Keep this function so calls remain valid; if we later add UI buttons we can bind them here.
-  }
+  function setupTouchControls(scene){ /* keep minimal for now */ }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet + deep link code (unchanged, except on bind we now set lastSent markers)
+  // Wallet + deep link code (fixed and hardened)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -1490,11 +1429,15 @@
     try {
       const payload = { sessionId: clientState.sessionId, wallet: publicKey, walletProvider: providerName||null, referral: clientState.pendingReferral || clientState.referralCode || null, username: clientState.username, telegramId: clientState.telegramId };
       const res = await api('/wallet/bind','POST', payload);
-      if (res && res.ok){
+      if (!res || res.ok === false) {
+        console.warn('wallet bind failed', res);
+        return false;
+      }
+      // success
+      if (res && (res.ok === true || typeof res.gp !== 'undefined' || typeof res.userAU !== 'undefined')) {
         if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.wallet = publicKey;
         clientState.userId = res.userId ?? clientState.userId;
-        // adopt authoritative gp from server and set lastSent markers so we don't double-send
         clientState.gpBase = typeof res.gp !== 'undefined' ? Number(res.gp) : clientState.gpBase;
         clientState.miners = res.miners ?? clientState.miners;
         clientState.userAU = res.userAU ?? clientState.userAU;
@@ -1502,20 +1445,14 @@
         clientState.referralCode = res.referralCode ?? clientState.referralCode;
         clientState.referralsActive = res.referralsActive ?? clientState.referralsActive;
         if (res.referralAccepted) clearPendingReferral();
-        // server may return the current authoritative score; store it and set lastSent markers
         if (typeof res.score !== 'undefined'){
           clientState.serverScore = Number(res.score);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.score = Number(res.score);
         }
-        // set lastSent gp total equal to server gp base (server is authoritative)
         clientState.lastSent = clientState.lastSent || {};
         clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
-
-        // if server provided energy, set via setEnergy (this will update timestamp)
-        if (typeof res.energy === 'number') {
-          setEnergy(Math.max(0, Math.min(100, res.energy)), true);
-        }
+        if (typeof res.energy === 'number') setEnergy(Math.max(0, Math.min(100, res.energy)), true);
 
         saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
         saveClientToStorage();
@@ -1678,27 +1615,26 @@
     showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Claiming rewards…</div>' });
     try {
       const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId });
-      if (resp && resp.ok){
-        clientState.gpBase = resp.gp ?? clientState.gpBase;
-        clientState.userAU = resp.userAU ?? clientState.userAU;
-        if (typeof resp.energy === 'number') setEnergy(Math.max(0, Math.min(100, resp.energy)), true);
-        // sync lastSent marker to server gp so we don't re-send already-credited gp
-        clientState.lastSent = clientState.lastSent || {};
-        clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
-        if (typeof resp.score !== 'undefined'){
-          clientState.serverScore = Number(resp.score);
-          clientState.lastSent.score = Number(resp.score);
-        }
-        saveClientToStorage();
-        updateUI();
-        showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
-        setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
-        attemptResumeAfterEnergy();
-      } else {
+      if (!resp || resp.ok === false) {
         const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
-        showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
+        showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(err)}</div>` });
         setTimeout(hideSheet,1200);
+        return;
       }
+      clientState.gpBase = resp.gp ?? clientState.gpBase;
+      clientState.userAU = resp.userAU ?? clientState.userAU;
+      if (typeof resp.energy === 'number') setEnergy(Math.max(0, Math.min(100, resp.energy)), true);
+      clientState.lastSent = clientState.lastSent || {};
+      clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
+      if (typeof resp.score !== 'undefined'){
+        clientState.serverScore = Number(resp.score);
+        clientState.lastSent.score = Number(resp.score);
+      }
+      saveClientToStorage();
+      updateUI();
+      showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
+      setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
+      attemptResumeAfterEnergy();
     } catch(e){ console.warn('claimRewards error', e); showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Network error — try again later.</div>' }); setTimeout(hideSheet,1200); }
   }
 
@@ -1711,7 +1647,7 @@
   }
 
   // -----------------------
-  // Bottom sheet wiring (unchanged behavior)
+  // Bottom sheet wiring
   // -----------------------
   (function sheetBootstrap(){
     function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
@@ -1825,12 +1761,11 @@
   })();
 
   // -----------------------
-  // Pause / resume (page visibility) helpers (HARDENED)
+  // Pause / resume (page visibility)
   // -----------------------
   function pauseForHidden(){
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-      // store whether the game was running before we hide — needed to resume later
       gameState.wasPlayingBeforeHidden = gameState.isPlaying;
 
       if (!gameState.isPlaying) {
@@ -1839,7 +1774,6 @@
         return;
       }
 
-      // compute tickRemaining so we can resume exactly where we left off
       try {
         const now = Date.now();
         const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
@@ -1853,7 +1787,6 @@
         gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
       }
 
-      // pause visual ticking
       gameState.isPlaying = false;
       gameState.hiddenAt = Date.now();
       if (scene){
@@ -1867,14 +1800,12 @@
 
   function resumeFromHidden(){
     try {
-      // first, apply any offline recharges that occurred while hidden
       applyOfflineEnergyRecharge();
 
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
       const was = gameState.wasPlayingBeforeHidden;
       const forced = gameState._forceResume === true;
 
-      // Resume if it was playing before hidden OR resume was forced by loader
       if (was === true || forced) {
         gameState.isPlaying = true;
 
@@ -1895,32 +1826,27 @@
           }
         }
 
-        // update lastTickAt so catch-up math is consistent
         gameState.lastTickAt = Date.now();
         sendState('resume');
         saveGameToStorage();
         saveClientToStorage();
         updateUI();
       } else {
-        // If it wasn't playing before hidden, just refresh tick time so no catch-up runs unexpectedly.
         gameState.lastTickAt = Date.now();
         saveGameToStorage();
       }
 
-      // cleanup flags
       delete gameState.hiddenAt;
       delete gameState.wasPlayingBeforeHidden;
       delete gameState._forceResume;
-      // do not delete tickRemaining here — it's cleared by startDropLoop when the scheduled tick executes
     } catch(e){ console.warn('resumeFromHidden error', e); }
   }
 
   // -----------------------
-  // Helper: resume after energy refill
+  // Resume after energy refill
   // -----------------------
   function attemptResumeAfterEnergy(){
     try {
-      // ensure any offline recharges are applied first
       applyOfflineEnergyRecharge();
 
       if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
@@ -1928,7 +1854,6 @@
         if (!gameState.activePiece) spawnPiece();
         gameState.isPlaying = true;
 
-        // ensure tickRemaining exists (compute best-effort)
         if (!gameState.tickRemaining){
           try {
             if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
@@ -1944,12 +1869,6 @@
         }
 
         try {
-          const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.scene && phaserGame.scene.keys.GameScene || phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          const sceneRef = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          const sceneRef2 = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          const sceneRefReal = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          const sceneRefChosen = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          const sceneRefFinal = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           const sceneRefObj = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           if (sceneRefObj){
             if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
@@ -1971,11 +1890,48 @@
   }
 
   // -----------------------
-  // Boot / init & Phaser startup
+  // Boot / init & Phaser startup (with improved init and retries)
   // -----------------------
+  async function clientInitWithRetry(maxRetries = 2) {
+    showLoader(true, 'Initializing…');
+    let attempt = 0;
+    let init = null;
+    while (attempt <= maxRetries) {
+      try {
+        init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null, username: clientState.username, telegramId: clientState.telegramId }, { timeout: 9000 });
+        if (init && init.ok === false && init.status === 401) {
+          // server says session invalid — clear session and try once to create new
+          console.warn('init returned 401 — regenerating session id');
+          clientState.sessionId = generateUUID();
+          saveSessionToStorage(clientState.sessionId);
+          attempt++;
+          continue;
+        }
+        break;
+      } catch(e){
+        attempt++;
+        await new Promise(r => setTimeout(r, 400 * attempt));
+      }
+    }
+    showLoader(false);
+    return init;
+  }
+
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
+      // global error handlers to surface loading/auth problems quickly
+      window.addEventListener('error', (ev) => {
+        console.error('Runtime error', ev.error || ev.message);
+        showToast('Runtime error — check console', 2200);
+      });
+      window.addEventListener('unhandledrejection', (ev) => {
+        console.error('Unhandled promise rejection', ev.reason);
+        showToast('Network/error — check console', 1800);
+      });
+
       initTelegram();
+
+      // read return params early (so deep-link binds are handled right after page opens)
       readWalletReturn();
 
       const ref = getRefFromURL();
@@ -1986,7 +1942,6 @@
       try{ const bw = $('bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); if (typeof window._hexon_openWalletSheet === 'function') { window._hexon_openWalletSheet(); } else { showSheet({ title: 'Connect Wallet' }); } }); } catch(e){}
       try{ const sr = $('showRefBtn'); if (sr) sr.addEventListener('click', showReferralModal); } catch(e){}
       try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> {
-          // show allocation breakdown using server totals (best-effort)
           const estDaily = computeDailyEstimate(clientState.userAU, clientState.totalAU);
           const body = `<div class="small-muted">Allocation preview</div>
                         <div style="margin-top:8px;"><b>Your AU:</b> ${clientState.userAU || 0}<br><b>Total AU:</b> ${clientState.totalAU || 0}</div>
@@ -2005,26 +1960,20 @@
         setTimeout(()=> syncBtn.disabled = false, 900);
       });
 
-      // Load saved client and game state from localStorage
+      // Load saved client and game state
       const savedClient = loadClientFromStorage();
       if (savedClient){
         const keepSession = clientState.sessionId;
         Object.assign(clientState, savedClient);
         clientState.sessionId = keepSession || clientState.sessionId;
       }
-
-      // If clientState.lastSent missing, initialize sensible defaults
       clientState.lastSent = clientState.lastSent || { gpTotal: Number(clientState.gpBase || 0), score: Number(clientState.serverScore || 0) };
 
-      // Ensure ad state normalized for date / cooldowns
       normalizeAdStateOnLoad();
-      // Periodic check for midnight rollover (while page open)
       setInterval(resetDailyAdsIfNeeded, 60e3);
 
-      // Apply offline energy recharges (if any) BEFORE attempting to resume game
       applyOfflineEnergyRecharge();
 
-      // Load saved game and determine whether to attempt resume
       const savedGame = loadGameFromStorage();
       let shouldAttemptResume = false;
       let resumeTickRemaining = null;
@@ -2048,14 +1997,12 @@
             gameState.pausedForEnergy = savedGame.pausedForEnergy || false;
             gameState.tickRemaining = savedGame.tickRemaining || null;
 
-            // Decide if we should attempt resume:
             const wasPlayingFlag = Boolean(savedGame.wasPlayingBeforeHidden);
             const savedMarkedPlaying = Boolean(savedGame.isPlaying);
             const hadHidden = Boolean(savedGame.hiddenAt);
 
             if (wasPlayingFlag || savedMarkedPlaying || hadHidden) {
               shouldAttemptResume = true;
-              // prefer stored tickRemaining; otherwise compute from lastTickAt + dropInterval
               if (savedGame.tickRemaining && Number.isFinite(savedGame.tickRemaining)) {
                 resumeTickRemaining = savedGame.tickRemaining;
               } else if (savedGame.lastTickAt && savedGame.dropInterval) {
@@ -2067,10 +2014,8 @@
               }
             }
 
-            // If savedGame indicated it was hidden when last saved, ensure the game isn't started until we attempt resume
             if (gameState.hiddenAt) gameState.isPlaying = false;
 
-            // If the game was paused for energy but we've since got energy, allow resume (attempt now)
             if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
               gameState.pausedForEnergy = false;
               if (!gameState.activePiece) spawnPiece();
@@ -2089,39 +2034,44 @@
         if (!gameState.activePiece) spawnPiece();
       }
 
-      // Server init
-      try {
-        const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null, username: clientState.username, telegramId: clientState.telegramId });
-        if (init){
-          if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); }
-          clientState.userId = init.userId ?? clientState.userId;
-          clientState.gpBase = init.gp ?? clientState.gpBase;
-          clientState.miners = init.miners ?? clientState.miners;
-          clientState.userAU = init.userAU ?? clientState.userAU;
-          clientState.totalAU = init.totalAU ?? clientState.totalAU;
-          clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
-          clientState.referralCode = init.referralCode ?? clientState.referralCode;
-          if (!clientState.username && init.username) clientState.username = init.username;
-          if (init.referralAccepted) clearPendingReferral();
-          if (init.wallet) { clientState.wallet = init.wallet; clientState.walletProvider = init.walletProvider || clientState.walletProvider; saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider); }
-          if (typeof init.energy === 'number') setEnergy(Math.max(0, Math.min(100, init.energy)), true);
+      // Server init (with retry)
+      showLoader(true, 'Contacting server…');
+      const init = await clientInitWithRetry(2);
+      showLoader(false);
 
-          // server may return the authoritative server score
-          if (typeof init.score !== 'undefined'){
-            clientState.serverScore = Number(init.score);
-            clientState.lastSent = clientState.lastSent || {};
-            clientState.lastSent.score = Number(init.score);
-          }
+      if (init && init.ok === false && init.status === 401) {
+        // if still unauthorized, show an actionable message
+        showSheet({ title:'Server auth', bodyHtml:`<div class="small-muted">Server rejected session (401). Please reload or try connecting your wallet.</div>`, actionsHtml:`<button id="reloadBtn" class="button">Reload</button><button id="closeAuth" class="btn-ghost">Close</button>`, onMounted: ()=> { const r=$('reloadBtn'); if (r) r.onclick = ()=> location.reload(); const c=$('closeAuth'); if (c) c.onclick = hideSheet; }});
+      } else if (init) {
+        if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); }
+        clientState.userId = init.userId ?? clientState.userId;
+        clientState.gpBase = init.gp ?? clientState.gpBase;
+        clientState.miners = init.miners ?? clientState.miners;
+        clientState.userAU = init.userAU ?? clientState.userAU;
+        clientState.totalAU = init.totalAU ?? clientState.totalAU;
+        clientState.referralsActive = init.referralsActive ?? clientState.referralsActive;
+        clientState.referralCode = init.referralCode ?? clientState.referralCode;
+        if (!clientState.username && init.username) clientState.username = init.username;
+        if (init.referralAccepted) clearPendingReferral();
+        if (init.wallet) { clientState.wallet = init.wallet; clientState.walletProvider = init.walletProvider || clientState.walletProvider; saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider); }
+        if (typeof init.energy === 'number') setEnergy(Math.max(0, Math.min(100, init.energy)), true);
 
-          // set lastSent gpTotal to server gpBase so we don't double-send previously credited gp
+        if (typeof init.score !== 'undefined'){
+          clientState.serverScore = Number(init.score);
           clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
-
-          saveClientToStorage();
+          clientState.lastSent.score = Number(init.score);
         }
-      } catch(e){ console.warn('client init failed', e); }
 
-      // Size the Phaser canvas to available area
+        clientState.lastSent = clientState.lastSent || {};
+        clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
+
+        saveClientToStorage();
+      } else {
+        // network or server error — show a hint but continue (session may still be usable for local play)
+        showToast('Server init failed — offline or server issue. Local play active.', 2200);
+      }
+
+      // Size the Phaser canvas
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
@@ -2159,18 +2109,15 @@
         }
       });
 
-      // If we decided previously that a saved game should be resumed, try now.
+      // Attempt resume if we decided so earlier
       if (shouldAttemptResume) {
         setTimeout(()=> {
-          // If energy is available resume; otherwise mark pausedForEnergy
           if ((clientState.energy || 0) > 0) {
-            // flag forced resume and pass tickRemaining
             gameState._forceResume = true;
             gameState.tickRemaining = resumeTickRemaining || gameState.tickRemaining || gameState.dropInterval || INITIAL_DROP_MS;
             resumeFromHidden();
             showToast('Resuming previous game…', 1200);
           } else {
-            // restore paused-for-energy state so UI will allow resume once energy is available
             gameState.pausedForEnergy = true;
             saveGameToStorage();
             updateUI();
@@ -2222,12 +2169,10 @@
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
-      // visibility / focus handlers keep timing precise
       document.addEventListener('visibilitychange', ()=> {
         try {
           if (document.hidden) pauseForHidden();
           else {
-            // when becoming visible, apply any missed energy recharges and resume
             applyOfflineEnergyRecharge();
             resumeFromHidden();
           }
@@ -2239,14 +2184,11 @@
       window.addEventListener('pagehide', (e) => { try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {} }, { passive: true });
       window.addEventListener('beforeunload', (e) => { try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {} });
 
-      // Immediately sync HXN and balance on load so UI reflects DB-mined values
-      // If user is not bound, these endpoints will still use sessionId to map user.
       setTimeout(async ()=>{
-        await syncHXN(false);     // attempt to credit any mined HXN since last 'mined' ledger row for this user
+        await syncHXN(false);
         await fetchHXNBalance(false);
       }, 600);
 
-      // Poll for HXN updates every 60s
       setInterval(async ()=> {
         try {
           await syncHXN(false);
@@ -2254,11 +2196,11 @@
         } catch(e){ /* ignore poll errors */ }
       }, 60e3);
 
-    } catch(err){ console.error('Hexon boot failure:', err); }
+    } catch(err){ console.error('Hexon boot failure:', err); showSheet({ title:'Boot error', bodyHtml:`<div class="small-muted">Critical error during boot — check console: ${escapeHtml(String(err))}</div>` }); }
   });
 
   // -----------------------
-  // AdsGram loader + showAdAndVerify (REVISED)
+  // Ads loader + showAdAndVerify
   // -----------------------
   let AdsGramLoaded = false, AdController = null;
   function loadAdsGram(){ try { if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } } if (AdsGramLoaded) return; const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true; s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } }; s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); }; document.head.appendChild(s); } catch(e){ console.warn('loadAdsGram', e); } }
@@ -2267,21 +2209,18 @@
     try {
       resetDailyAdsIfNeeded();
 
-      // daily ad cap
       if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){
         const rem = msUntilNextLocalMidnight();
         showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Daily ad limit reached. Next reset in <b>${formatMs(rem)}</b>.</div>` });
         return;
       }
 
-      // If current sitting already reached max and cooldown not expired -> block
       if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
         if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) < SITTING_COOLDOWN_MS){
           const rem = Math.max(0, SITTING_COOLDOWN_MS - (Date.now() - clientState.adsThisSittingStartedAt));
           showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Sitting limit reached. Next sitting available in <b>${formatMs(rem)}</b>.</div>` });
           return;
         } else {
-          // cooldown expired — clear sitting so new sitting may start
           clientState.adsThisSitting = 0;
           clientState.adsThisSittingStartedAt = null;
           saveClientToStorage();
@@ -2297,10 +2236,8 @@
         return;
       }
 
-      // OK to show an ad — show explanatory sheet and start ad flow
       showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
 
-      // start sitting timestamp (do not consume the daily sitting allowance yet — consume on sitting completion)
       startSittingIfNeeded();
       saveClientToStorage();
       updateUI();
@@ -2310,28 +2247,22 @@
         provider='AdsGram';
         try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
       } else {
-        // fallback simulated ad delay if SDK not available
         await new Promise(res=>setTimeout(res,1800));
       }
 
       const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
       hideSheet();
       if (resp && resp.grantedPercent){
-        // apply reward
         setEnergy((clientState.energy || 0) + resp.grantedPercent, true);
 
-        // increment counters
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
 
-        // ensure we do not exceed max ads per sitting
         if (clientState.adsThisSitting > MAX_ADS_PER_SITTING){
           clientState.adsThisSitting = MAX_ADS_PER_SITTING;
         }
 
-        // If this sitting reached the per-sitting max, consume one sitting from daily allowance now.
         if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
-          // increment daily sittings used (this reduces Sittings Left)
           finishSittingAndConsume();
         }
 
@@ -2348,7 +2279,7 @@
   }
 
   // -----------------------
-  // Small UI sheet helpers (unchanged)
+  // Small UI sheet helpers
   // -----------------------
   function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display = 'block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
   function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
