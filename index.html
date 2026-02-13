@@ -35,13 +35,17 @@
     }
 
     @media (min-width: 900px) {
+      /* ensure left column can shrink without overflowing (min-width:0) and right column is constrained */
       #pageWrap {
-        grid-template-columns: 1fr 340px;
+        grid-template-columns: minmax(320px, 1fr) 340px;
         gap: 18px;
         padding: 18px;
         align-items: start;
       }
     }
+
+    /* ensure grid children can shrink (prevents accidental overlap) */
+    #pageWrap > * { min-width: 0; }
 
     /* Phaser container */
     #phaserCanvas {
@@ -58,6 +62,9 @@
       min-height: 260px;
       max-height: 80vh;
       margin: 0 auto;
+      position: relative;
+      z-index: 0;
+      min-width: 0; /* critical to allow the grid cell to shrink properly */
     }
     /* ensure canvas fills container width, keep aspect */
     #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-width:100%; }
@@ -74,6 +81,9 @@
       overflow:auto;
       -webkit-overflow-scrolling: touch;
       box-sizing:border-box;
+      position: relative;
+      z-index: 1; /* ensure panel sits beside canvas but does not overlay */
+      min-width: 0;
     }
     .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.45); }
     .muted{ color:var(--muted); opacity:.85; font-size:12px; }
@@ -265,8 +275,6 @@
   // -----------------------
   // Config / constants
   // -----------------------
-  // IMPORTANT: replace TELEGRAM_BOT_USERNAME with your real Telegram bot username (without @),
-  // e.g. const TELEGRAM_BOT_USERNAME = 'HexonGameBot';
   const TELEGRAM_BOT_USERNAME = 'HexonGameBot';
 
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
@@ -328,7 +336,10 @@
     isPlaying: false,
     combo: 0,
     lastSavedAt: null,
-    lastTickAt: null
+    lastTickAt: null,
+    /* paused due to tab hidden */
+    hiddenAt: null,
+    wasPlayingBeforeHidden: null
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -363,7 +374,9 @@
         isPlaying: gameState.isPlaying,
         combo: gameState.combo,
         lastSavedAt: Date.now(),
-        lastTickAt: gameState.lastTickAt || Date.now()
+        lastTickAt: gameState.lastTickAt,
+        hiddenAt: gameState.hiddenAt,
+        wasPlayingBeforeHidden: gameState.wasPlayingBeforeHidden
       };
       localStorage.setItem(STORAGE_KEYS.GAME, JSON.stringify(toSave));
     } catch(e){ console.warn('saveGameToStorage error', e); }
@@ -547,7 +560,7 @@
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
   class GameScene extends Phaser.Scene {
-    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; }
+    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; this.dropEvent = null; }
     create(){
       this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
       this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
@@ -570,6 +583,7 @@
       this.startDropLoop();
       this.setupInput();
 
+      // auto recharge event - keep running even if paused (but will check gameState)
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
       this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
     }
@@ -630,20 +644,23 @@
     }
 
     startDropLoop(){
-      if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
-      const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> {
-        if (!gameState.isPlaying) return;
-        const moved = movePieceDown();
-        logAction('tick_drop',{ moved });
-        sendState('tick', { moved });
-        if (!moved) {
-          lockPiece();
-        }
-        gameState.lastTickAt = Date.now();
-        saveGameToStorage();
-        updateUI();
-      }});
+      try {
+        if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+        const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+        // create a time event that will check gameState.isPlaying before acting
+        this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> {
+          if (!gameState.isPlaying) return;
+          const moved = movePieceDown();
+          logAction('tick_drop',{ moved });
+          sendState('tick', { moved });
+          if (!moved) {
+            lockPiece();
+          }
+          gameState.lastTickAt = Date.now();
+          saveGameToStorage();
+          updateUI();
+        }});
+      } catch(e){ console.warn('startDropLoop error', e); }
     }
 
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
@@ -678,6 +695,13 @@
 
     catchUpMissedTicks(){
       try {
+        // if game was hidden/paused intentionally, do not apply missed ticks — treat as paused
+        if (gameState.hiddenAt) {
+          // reset tick baseline so we don't apply ticks for the hidden period
+          gameState.lastTickAt = Date.now();
+          saveGameToStorage();
+          return;
+        }
         if (!gameState.lastTickAt || !gameState.isPlaying) return;
         const now = Date.now();
         const elapsed = Math.max(0, now - gameState.lastTickAt);
@@ -1209,12 +1233,8 @@
       let code = clientState.referralCode || await getMyReferral();
       if (!code) code = 'UNKNOWN';
 
-      // Prefer Telegram mini-app deep link for referrals (tg://resolve deep link),
-      // and include a clickable t.me web fallback for users who open outside Telegram.
-      // Replace TELEGRAM_BOT_USERNAME above with your real bot username for this to open the Mini App properly.
       const miniLink = `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&start=${encodeURIComponent(code)}`;
       const webTme = `https://t.me/${encodeURIComponent(TELEGRAM_BOT_USERNAME)}?start=${encodeURIComponent(code)}`;
-      // fallback: plain web share (if bot username not configured)
       const fallback = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
 
       const body = `<div style="text-align:left">
@@ -1256,7 +1276,6 @@
               await navigator.share({ title:'Play Hexon', text:'Join me on Hexon', url: box.value || fallbackBox.value || siteBox.value });
               hideSheet();
             } else {
-              // fallback: open Telegram share url with text param (works in many clients)
               const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(box.value || fallbackBox.value || siteBox.value)}&text=${encodeURIComponent('Join me on Hexon!')}`;
               try { window.open(shareUrl, '_blank'); } catch(e){ try { location.href = shareUrl; } catch(e2){} }
             }
@@ -1265,15 +1284,12 @@
 
         if (openMiniBtn){
           openMiniBtn.onclick = ()=> {
-            // attempt to open tg deep link first (will open Telegram client)
             try {
               const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
               if (tg && typeof tg.openUrl === 'function') {
                 tg.openUrl(box.value);
               } else {
-                // try native protocol
                 window.location.assign(box.value);
-                // as fallback open web t.me
                 setTimeout(()=> { try { window.open(fallback, '_blank'); } catch(_){} }, 800);
               }
             } catch(e){ try { window.open(fallback, '_blank'); } catch(_){} }
@@ -1428,6 +1444,55 @@
   })();
 
   // -----------------------
+  // Pause / resume (page visibility) helpers
+  // -----------------------
+  function pauseForHidden(){
+    try {
+      const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+      gameState.wasPlayingBeforeHidden = gameState.isPlaying;
+      if (!gameState.isPlaying) {
+        // still remember that we were not playing
+        gameState.hiddenAt = Date.now();
+        saveGameToStorage();
+        return;
+      }
+      gameState.isPlaying = false;
+      gameState.hiddenAt = Date.now();
+      // try to pause the drop event to avoid firing callbacks while hidden
+      if (scene && scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
+        try { scene.dropEvent.paused = true; } catch(e){}
+      }
+      sendState('pause');
+      saveGameToStorage();
+      saveClientToStorage();
+    } catch(e){ console.warn('pauseForHidden error', e); }
+  }
+
+  function resumeFromHidden(){
+    try {
+      const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+      const was = gameState.wasPlayingBeforeHidden;
+      // if the game was playing before hidden, resume; else preserve previous paused state
+      if (was === true){
+        gameState.isPlaying = true;
+        // reset baseline so we don't advance ticks while hidden
+        gameState.lastTickAt = Date.now();
+        if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop();
+        sendState('resume');
+        saveGameToStorage();
+        saveClientToStorage();
+        updateUI();
+      } else {
+        // ensure lastTickAt is fresh for future play
+        gameState.lastTickAt = Date.now();
+        saveGameToStorage();
+      }
+      delete gameState.hiddenAt;
+      delete gameState.wasPlayingBeforeHidden;
+    } catch(e){ console.warn('resumeFromHidden error', e); }
+  }
+
+  // -----------------------
   // Boot / init & Phaser startup (redone sizing + robust resize)
   // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
@@ -1472,6 +1537,10 @@
             gameState.combo = savedGame.combo || 0;
             gameState.lastSavedAt = savedGame.lastSavedAt || Date.now();
             gameState.lastTickAt = savedGame.lastTickAt || Date.now();
+            gameState.hiddenAt = savedGame.hiddenAt || null;
+            gameState.wasPlayingBeforeHidden = savedGame.wasPlayingBeforeHidden || null;
+            // if game was hidden at the time of saving, keep it paused
+            if (gameState.hiddenAt) gameState.isPlaying = false;
           } else {
             initGrid();
             clearSavedGame();
@@ -1570,6 +1639,13 @@
         } catch(e){ console.warn('onResize error', e); }
       }
       window.addEventListener('resize', onResize);
+      // also handle layout changes (grid columns collapsing) via ResizeObserver to avoid UI overlap
+      try {
+        const ro = new ResizeObserver(onResize);
+        const container = document.getElementById('pageWrap');
+        if (container) ro.observe(container);
+      } catch(e){ /* ResizeObserver may not be supported, ok */ }
+
       // small delay to allow Telegram to expand; then resize
       setTimeout(onResize, 250);
 
@@ -1583,6 +1659,16 @@
 
       // lightweight autosave every 3s (global)
       setInterval(()=>{ gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); }, 3000);
+
+      // visibility handling: pause when page not visible and resume when visible
+      document.addEventListener('visibilitychange', ()=> {
+        try {
+          if (document.hidden) pauseForHidden();
+          else resumeFromHidden();
+        } catch(e){ console.warn('visibilitychange handler failed', e); }
+      });
+      window.addEventListener('blur', ()=> { pauseForHidden(); });
+      window.addEventListener('focus', ()=> { if (!document.hidden) resumeFromHidden(); });
 
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
@@ -1649,7 +1735,7 @@
   function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
 
   // expose small helper
-  window._hexon_showToast = (m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); };
+  window._hexon_showToast = (m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display = 'block'; setTimeout(()=> el.style.display='none', t||2000); };
 
   </script>
 </body>
