@@ -16,9 +16,9 @@
       --safe-pad: env(safe-area-inset-top,12px);
     }
     /* Reset / base */
-    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; overflow:hidden;}
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; overflow:hidden; max-width:100%; }
     *,*:before,*:after{ box-sizing: inherit; }
-    a { color:inherit; }
+    a { color:inherit; text-decoration:none; }
 
     /* Layout: responsive grid on wide screens, stacked on narrow */
     #pageWrap {
@@ -30,6 +30,8 @@
       gap: 12px;
       align-items: start;
       justify-items: stretch;
+      width: 100%;
+      overflow-x: hidden;
     }
 
     @media (min-width: 900px) {
@@ -37,12 +39,14 @@
         grid-template-columns: 1fr 340px;
         gap: 18px;
         padding: 18px;
+        align-items: start;
       }
     }
 
     /* Phaser container */
     #phaserCanvas {
       width: 100%;
+      max-width: 100%;
       border-radius: 12px;
       overflow: hidden;
       background: linear-gradient(180deg,#061426,#041016);
@@ -53,13 +57,15 @@
       /* The height will be set from JS to match the canvas height precisely */
       min-height: 260px;
       max-height: 80vh;
+      margin: 0 auto;
     }
     /* ensure canvas fills container width, keep aspect */
-    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; }
+    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-width:100%; }
 
     /* UI Panel */
     #uiPanel{
       width:100%;
+      max-width: 100%;
       background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88));
       padding:12px;
       border-radius:12px;
@@ -95,7 +101,7 @@
 
     .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; background: rgba(3,10,18,0.85); color: #E6F7FF; padding: 8px 12px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 13px; z-index: 100000; display: none; }
 
-    nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; }
+    nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; flex-wrap:wrap; }
     nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; white-space:nowrap; }
 
     /* Small accessibility / telegram friendly */
@@ -103,6 +109,14 @@
 
     /* ensure no accidental horizontal scroll */
     body, #pageWrap { overscroll-behavior-x: none; }
+    /* ensure long values wrap inside cards */
+    .card input, .card .small { word-break: break-word; white-space: normal; }
+    /* reduce font-size on very narrow screens */
+    @media (max-width:360px){
+      .stat{ font-size:18px; }
+      .small{ font-size:12px; }
+      .button{ padding:7px 10px; }
+    }
   </style>
 </head>
 <body class="tgmini-reset">
@@ -251,6 +265,10 @@
   // -----------------------
   // Config / constants
   // -----------------------
+  // IMPORTANT: replace TELEGRAM_BOT_USERNAME with your real Telegram bot username (without @),
+  // e.g. const TELEGRAM_BOT_USERNAME = 'HexonGameBot';
+  const TELEGRAM_BOT_USERNAME = 'HexonGameBot';
+
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
@@ -438,7 +456,7 @@
   function loadPendingReferral(){ try{ const code = localStorage.getItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
   function clearPendingReferral(){ try{ localStorage.removeItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = null; saveClientToStorage(); } catch(e){} }
 
-  function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display='block'; setTimeout(()=> el.style.display='none', ms); }
+  function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display = 'block'; setTimeout(()=> el.style.display='none', ms); }
   function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
 
   async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
@@ -1190,16 +1208,78 @@
     (async ()=>{
       let code = clientState.referralCode || await getMyReferral();
       if (!code) code = 'UNKNOWN';
-      const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+
+      // Prefer Telegram mini-app deep link for referrals (tg://resolve deep link),
+      // and include a clickable t.me web fallback for users who open outside Telegram.
+      // Replace TELEGRAM_BOT_USERNAME above with your real bot username for this to open the Mini App properly.
+      const miniLink = `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&start=${encodeURIComponent(code)}`;
+      const webTme = `https://t.me/${encodeURIComponent(TELEGRAM_BOT_USERNAME)}?start=${encodeURIComponent(code)}`;
+      // fallback: plain web share (if bot username not configured)
+      const fallback = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+
       const body = `<div style="text-align:left">
         <div class="small-muted">Share your referral — both of you can earn rewards</div>
-        <div style="margin-top:8px;"><input id="refLinkBox" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" value="${escapeHtml(link)}" readonly></div>
+        <div style="margin-top:8px;">
+          <label class="small-muted">Primary (Telegram deep link)</label>
+          <input id="refLinkBox" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" value="${escapeHtml(miniLink)}" readonly>
+        </div>
+        <div style="margin-top:8px;">
+          <label class="small-muted">Telegram web fallback</label>
+          <input id="refLinkFallback" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); margin-top:6px;" value="${escapeHtml(webTme)}" readonly>
+        </div>
+        <div style="margin-top:8px;" class="small-muted">If your bot username isn't set (TELEGRAM_BOT_USERNAME variable), use this web URL:</div>
+        <div style="margin-top:6px;"><input id="refLinkSite" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);" value="${escapeHtml(fallback)}" readonly></div>
       </div>`;
-      const actions = `<button id="copyRefBtn" class="button"><i class="fa-solid fa-copy"></i> Copy Link</button><button id="shareRefBtn" class="btn-ghost"><i class="fa-solid fa-share-from-square"></i> Share</button><button id="closeRef" class="btn-ghost">Close</button>`;
+
+      const actions = `<button id="copyRefBtn" class="button"><i class="fa-solid fa-copy"></i> Copy Link</button><button id="shareRefBtn" class="btn-ghost"><i class="fa-solid fa-share-from-square"></i> Share</button><button id="openMini" class="button"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open in Telegram</button><button id="closeRef" class="btn-ghost">Close</button>`;
       showSheet({ title:'Invite Friends', bodyHtml: body + `<div style="margin-top:8px;" class="small-muted">Referrals: ${clientState.referralsActive || 0}</div>`, actionsHtml: actions, onMounted: ()=> {
         const copy = $('copyRefBtn'); const share = $('shareRefBtn'); const close = $('closeRef'); const box = $('refLinkBox');
-        if (copy) copy.onclick = async ()=> { try { await navigator.clipboard.writeText(box.value); showToast('Copied!',900); hideSheet(); } catch(e){ alert('Copy failed'); } };
-        if (share) share.onclick = async ()=> { try { if (navigator.share) { await navigator.share({ title:'Play Hexon', text:'Join me on Hexon', url: box.value }); hideSheet(); } else { alert('Share not supported — copy link instead'); } } catch(e){} };
+        const openMiniBtn = $('openMini');
+        const fallbackBox = $('refLinkFallback');
+        const siteBox = $('refLinkSite');
+
+        if (copy) copy.onclick = async ()=> {
+          try {
+            const textToCopy = box.value || fallbackBox.value || siteBox.value;
+            await navigator.clipboard.writeText(textToCopy);
+            showToast('Copied!',900);
+            hideSheet();
+          } catch(e){
+            alert('Copy failed — please long-press the link and copy manually.');
+          }
+        };
+
+        if (share) share.onclick = async ()=> {
+          try {
+            const textToShare = `Join me on Hexon! ${box.value || fallbackBox.value || siteBox.value}`;
+            if (navigator.share) {
+              await navigator.share({ title:'Play Hexon', text:'Join me on Hexon', url: box.value || fallbackBox.value || siteBox.value });
+              hideSheet();
+            } else {
+              // fallback: open Telegram share url with text param (works in many clients)
+              const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(box.value || fallbackBox.value || siteBox.value)}&text=${encodeURIComponent('Join me on Hexon!')}`;
+              try { window.open(shareUrl, '_blank'); } catch(e){ try { location.href = shareUrl; } catch(e2){} }
+            }
+          } catch(e){}
+        };
+
+        if (openMiniBtn){
+          openMiniBtn.onclick = ()=> {
+            // attempt to open tg deep link first (will open Telegram client)
+            try {
+              const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+              if (tg && typeof tg.openUrl === 'function') {
+                tg.openUrl(box.value);
+              } else {
+                // try native protocol
+                window.location.assign(box.value);
+                // as fallback open web t.me
+                setTimeout(()=> { try { window.open(fallback, '_blank'); } catch(_){} }, 800);
+              }
+            } catch(e){ try { window.open(fallback, '_blank'); } catch(_){} }
+          };
+        }
+
         if (close) close.onclick = hideSheet;
       }});
     })();
@@ -1344,7 +1424,7 @@
     window._hexon_closeWalletSheet = hideSheetLocal;
     window._hexon_showSheet = showSheetLocal;
     window._hexon_hideSheet = hideSheetLocal;
-    window._hexon_showToast = (m,t)=> { const tEl = document.getElementById('toast'); if (!tEl) return; tEl.textContent = m; tEl.style.display='block'; setTimeout(()=> tEl.style.display='none', t || 2000); };
+    window._hexon_showToast = (m,t)=> { const tEl = document.getElementById('toast'); if (!tEl) return; tEl.textContent = m; tEl.style.display = 'block'; setTimeout(()=> tEl.style.display='none', t || 2000); };
   })();
 
   // -----------------------
@@ -1438,14 +1518,15 @@
       const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
       const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
-      // set explicit container size so layout engines allocate correct space
+      // set container sizing in a responsive way so it won't overspread Telegram mini-app
       if (parentEl && parentEl.style){
-        parentEl.style.minWidth = Math.min(canvasWidth, Math.max(260, canvasWidth)) + 'px';
-        parentEl.style.minHeight = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px';
-        parentEl.style.height = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px';
+        parentEl.style.width = '100%';
+        parentEl.style.maxWidth = canvasWidth + 'px';
+        parentEl.style.height = canvasHeight + 'px';
         parentEl.style.display = 'flex';
         parentEl.style.alignItems = 'center';
         parentEl.style.justifyContent = 'center';
+        parentEl.style.margin = '0 auto';
       }
 
       // Create Phaser with scale mode FIT and auto-center
@@ -1478,8 +1559,9 @@
           if (sc && typeof sc.resize === 'function') sc.resize(w, h);
           if (document.getElementById('phaserCanvas')) {
             const p = document.getElementById('phaserCanvas');
-            p.style.minHeight = h + 'px';
             p.style.height = h + 'px';
+            p.style.maxWidth = '100%';
+            p.style.width = '100%';
           }
           const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           if (scene && typeof scene.onResizeRebuild === 'function') scene.onResizeRebuild();
