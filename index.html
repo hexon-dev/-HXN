@@ -306,7 +306,8 @@
     lastTickAt: null,
     hiddenAt: null,
     wasPlayingBeforeHidden: null,
-    pausedForEnergy: false // NEW: track if the game is paused because energy ran out
+    pausedForEnergy: false, // track if the game is paused because energy ran out
+    tickRemaining: null // ms remaining until next drop when paused
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -344,7 +345,8 @@
         lastTickAt: gameState.lastTickAt,
         hiddenAt: gameState.hiddenAt,
         wasPlayingBeforeHidden: gameState.wasPlayingBeforeHidden,
-        pausedForEnergy: gameState.pausedForEnergy
+        pausedForEnergy: gameState.pausedForEnergy,
+        tickRemaining: gameState.tickRemaining
       };
       localStorage.setItem(STORAGE_KEYS.GAME, JSON.stringify(toSave));
     } catch(e){ console.warn('saveGameToStorage error', e); }
@@ -540,7 +542,15 @@
       gameState.isPlaying = gameState.isPlaying !== undefined ? gameState.isPlaying : true;
       updateUI();
       this.catchUpMissedTicks();
-      this.startDropLoop();
+      // If we have a saved tickRemaining, use it to resume precisely.
+      if (gameState.isPlaying){
+        if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
+          // schedule first tick after the remaining time and then start normal repeating loop
+          this.startDropLoop(gameState.tickRemaining);
+        } else {
+          this.startDropLoop();
+        }
+      }
       this.setupInput();
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
       this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
@@ -590,24 +600,72 @@
       this.drawBoard();
       this.rebuildCellSprites();
     }
-    startDropLoop(){
+
+    /**
+     * startDropLoop(initialDelay)
+     * - if initialDelay is provided (ms), schedule a single delayed tick after that delay,
+     *   then start the normal repeating loop which uses gameState.dropInterval.
+     * - if initialDelay is not provided, start the repeating loop immediately using dropInterval.
+     */
+    startDropLoop(initialDelay){
       try {
+        // Remove existing event(s)
         if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
-        const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-        this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> {
-          if (!gameState.isPlaying) return;
-          const moved = movePieceDown();
-          logAction('tick_drop',{ moved });
-          sendState('tick', { moved });
-          if (!moved) {
-            lockPiece();
-          }
-          gameState.lastTickAt = Date.now();
-          saveGameToStorage();
-          updateUI();
-        }});
+
+        const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+
+        if (Number.isFinite(initialDelay) && initialDelay > 0){
+          // Schedule a one-shot delayed tick to respect saved remaining time
+          this.dropEvent = this.time.delayedCall(initialDelay, () => {
+            if (!gameState.isPlaying) return;
+            const moved = movePieceDown();
+            logAction('tick_drop',{ moved, resumed:true });
+            sendState('tick', { moved, resumed:true });
+            if (!moved) {
+              lockPiece();
+            }
+            gameState.lastTickAt = Date.now();
+            // clear tickRemaining because we just executed that delayed tick
+            gameState.tickRemaining = null;
+            saveGameToStorage();
+            updateUI();
+            // Now start normal repeating loop
+            try {
+              if (this.dropEvent) { try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+              this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: () => {
+                if (!gameState.isPlaying) return;
+                const moved2 = movePieceDown();
+                logAction('tick_drop',{ moved: moved2 });
+                sendState('tick', { moved: moved2 });
+                if (!moved2) lockPiece();
+                gameState.lastTickAt = Date.now();
+                saveGameToStorage();
+                updateUI();
+              }});
+            } catch(err){
+              console.warn('startDropLoop fallback to single loop failed', err);
+            }
+          }, [], this);
+          // Set lastTickAt for consistent bookkeeping so pause uses it.
+          // lastTickAt remains the last tick time (we don't advance it until tick occurs).
+        } else {
+          // Normal repeating loop
+          this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: ()=> {
+            if (!gameState.isPlaying) return;
+            const moved = movePieceDown();
+            logAction('tick_drop',{ moved });
+            sendState('tick', { moved });
+            if (!moved) {
+              lockPiece();
+            }
+            gameState.lastTickAt = Date.now();
+            saveGameToStorage();
+            updateUI();
+          }});
+        }
       } catch(e){ console.warn('startDropLoop error', e); }
     }
+
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
     renderGrid(){
       for (let r=0;r<GRID_ROWS;r++){
@@ -757,13 +815,24 @@
     return state.map(p => ({ x: (p[0] + (piece.x||0)), y: (p[1] + (piece.y||0)) }));
   }
 
-  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); gameState.pausedForEnergy = false; saveGameToStorage(); sendState('init'); }
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); gameState.pausedForEnergy = false; gameState.tickRemaining = null; saveGameToStorage(); sendState('init'); }
 
   function getSpawnYOffset(type){ if (type === 'I') return -2; return -1; }
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
       // mark that the game is paused because of energy so we can resume later automatically
+      // compute tickRemaining so we resume where we left off
+      try {
+        const now = Date.now();
+        if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
+          const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+          const elapsed = Math.max(0, now - gameState.lastTickAt);
+          gameState.tickRemaining = di - (elapsed % di);
+        } else {
+          gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
+        }
+      } catch(e){ gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS; }
       gameState.pausedForEnergy = true;
       gameState.isPlaying = false;
       gameState.activePiece = null;
@@ -880,6 +949,7 @@
     spawnPiece();
     gameState.isPlaying = true;
     gameState.pausedForEnergy = false;
+    gameState.tickRemaining = null;
     clearSavedGame();
     saveClientToStorage();
     updateUI();
@@ -1283,7 +1353,7 @@
     function onKeyDown(e){ if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheetLocal(); } }
 
     document.addEventListener('DOMContentLoaded', ()=>{
-      if (bindBtn){ bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false }); bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); }, { passive:false }); bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); } }); }
+      if (bindBtn){ bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false }); bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); }, { passive:false }); bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); } }); }
 
       if (sheetClose) sheetClose.addEventListener('click', hideSheetLocal);
       if (sheetCancel) sheetCancel.addEventListener('click', hideSheetLocal);
@@ -1319,12 +1389,28 @@
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
       // store whether the game was running before we hide — needed to resume later
       gameState.wasPlayingBeforeHidden = gameState.isPlaying;
+
       if (!gameState.isPlaying) {
-        // if already not playing, still note hiddenAt so resume code behaves predictably
+        // still note hiddenAt for predictable resume behavior
         gameState.hiddenAt = Date.now();
         saveGameToStorage();
         return;
       }
+
+      // compute tickRemaining so we can resume exactly where we left off
+      try {
+        const now = Date.now();
+        const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+        if (gameState.lastTickAt && Number.isFinite(gameState.lastTickAt)){
+          const elapsed = Math.max(0, now - gameState.lastTickAt);
+          gameState.tickRemaining = di - (elapsed % di);
+        } else {
+          gameState.tickRemaining = di;
+        }
+      } catch(e){
+        gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
+      }
+
       // pause visual ticking
       gameState.isPlaying = false;
       gameState.hiddenAt = Date.now();
@@ -1341,22 +1427,31 @@
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
       const was = gameState.wasPlayingBeforeHidden;
+
       if (was === true){
         // Only resume if it was playing before hidden
         gameState.isPlaying = true;
-        gameState.lastTickAt = Date.now();
+
+        // If we have a saved tickRemaining, schedule exactly that amount for the next tick
         if (scene) {
           try {
-            // If there's an existing dropEvent, unpause it; otherwise restart drop loop.
-            if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
-              scene.dropEvent.paused = false;
-            } else if (typeof scene.startDropLoop === 'function'){
-              scene.startDropLoop();
+            if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
+              scene.startDropLoop(gameState.tickRemaining);
+            } else {
+              // no stored remainder -> start standard loop
+              if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
+                scene.dropEvent.paused = false;
+              } else if (typeof scene.startDropLoop === 'function'){
+                scene.startDropLoop();
+              }
             }
           } catch(e){
             try { if (typeof scene.startDropLoop === 'function') scene.startDropLoop(); } catch(_) {}
           }
         }
+
+        // set lastTickAt to now so subsequent catchup/tick maths are consistent
+        gameState.lastTickAt = Date.now();
         sendState('resume');
         saveGameToStorage();
         saveClientToStorage();
@@ -1366,8 +1461,10 @@
         gameState.lastTickAt = Date.now();
         saveGameToStorage();
       }
+
       delete gameState.hiddenAt;
       delete gameState.wasPlayingBeforeHidden;
+      // do not delete tickRemaining here — it's cleared by startDropLoop when the scheduled tick executes
     } catch(e){ console.warn('resumeFromHidden error', e); }
   }
 
@@ -1382,11 +1479,13 @@
         // spawn piece if none present
         if (!gameState.activePiece) spawnPiece();
         gameState.isPlaying = true;
-        // restart / unpause drop loop
+        // restart / unpause drop loop using any stored tickRemaining so we preserve fraction
         try {
           const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           if (scene){
-            if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
+            if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
+              scene.startDropLoop(gameState.tickRemaining);
+            } else if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
               scene.dropEvent.paused = false;
             } else if (typeof scene.startDropLoop === 'function'){
               scene.startDropLoop();
@@ -1447,6 +1546,7 @@
             gameState.hiddenAt = savedGame.hiddenAt || null;
             gameState.wasPlayingBeforeHidden = savedGame.wasPlayingBeforeHidden || null;
             gameState.pausedForEnergy = savedGame.pausedForEnergy || false;
+            gameState.tickRemaining = savedGame.tickRemaining || null;
             if (gameState.hiddenAt) gameState.isPlaying = false;
             // If paused for energy and energy is now > 0, attempt to resume
             if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
