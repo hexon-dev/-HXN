@@ -19,8 +19,7 @@
     a { color:inherit; text-decoration:none; -webkit-tap-highlight-color: transparent; }
     #pageWrap {
       min-height: 100vh;
-      /* brought UI down a bit so the full canvas can display better on devices with safe insets */
-      padding: calc(var(--safe-pad) + 36px);
+      padding: calc(var(--safe-pad) + 12px);
       padding-bottom: calc(env(safe-area-inset-bottom,12px) + 80px);
       display: grid;
       grid-template-columns: 1fr;
@@ -67,7 +66,7 @@
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
     .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
     .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
-    .touch-footer { display:none; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom,12px) + 8px); z-index:120000; gap: 8px; padding: 8px; border-radius: 12px; background: rgba(2,6,12,0.6); backdrop-filter: blur(6px); box-shadow: 0 10px 30px rgba(0,0,0,0.6); align-items:center; }
+    .touch-footer { display:none; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom,12px) + 8px); z-index: 120000; gap: 8px; padding: 8px; border-radius: 12px; background: rgba(2,6,12,0.6); backdrop-filter: blur(6px); box-shadow: 0 10px 30px rgba(0,0,0,0.6); align-items:center; }
     .touch-footer .touch-btn { margin: 0 6px; }
     @media (max-width: 900px){ .touch-footer { display:flex; } }
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
@@ -306,7 +305,9 @@
     lastSavedAt: null,
     lastTickAt: null,
     hiddenAt: null,
-    wasPlayingBeforeHidden: null
+    wasPlayingBeforeHidden: null,
+    // NEW: explicit flag to track whether the game was auto-paused because energy ran out
+    autoPausedDueToEnergy: false
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -343,7 +344,8 @@
         lastSavedAt: Date.now(),
         lastTickAt: gameState.lastTickAt,
         hiddenAt: gameState.hiddenAt,
-        wasPlayingBeforeHidden: gameState.wasPlayingBeforeHidden
+        wasPlayingBeforeHidden: gameState.wasPlayingBeforeHidden,
+        autoPausedDueToEnergy: gameState.autoPausedDueToEnergy
       };
       localStorage.setItem(STORAGE_KEYS.GAME, JSON.stringify(toSave));
     } catch(e){ console.warn('saveGameToStorage error', e); }
@@ -756,15 +758,18 @@
     return state.map(p => ({ x: (p[0] + (piece.x||0)), y: (p[1] + (piece.y||0)) }));
   }
 
-  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); sendState('init'); }
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); gameState.autoPausedDueToEnergy = false; saveGameToStorage(); sendState('init'); }
 
   function getSpawnYOffset(type){ if (type === 'I') return -2; return -1; }
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
+      // Mark that the game auto-paused due to energy so we can resume after refill
       gameState.isPlaying=false;
+      gameState.autoPausedDueToEnergy = true;
       showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' });
       saveGameToStorage();
+      saveClientToStorage();
       return;
     }
     const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
@@ -1016,7 +1021,7 @@
 
   window.finalizeBind = async function(publicKey, providerName){
     if (!publicKey) { showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">No public key provided</div>' }); setTimeout(hideSheet, 900); return false; }
-    if (!isValidSolanaPublicKey(publicKey)) { showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">Public key format invalid</div>' }); setTimeout(hideSheet,1200); return false; }
+    if (!isValidSolanaPublicKey(publicKey)) { showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">Public key format invalid</div>' }); setTimeout(hideSheet, 900); return false; }
     clientState.walletProvider = providerName || clientState.walletProvider || null;
     const ok = await bindWalletWithPublicKey(publicKey, providerName);
     if (ok){
@@ -1174,6 +1179,12 @@
         updateUI();
         showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
         setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
+
+        // NEW: if we were auto-paused due to energy and now energy > 0, resume the game
+        if (gameState.autoPausedDueToEnergy && (clientState.energy || 0) > 0 && gameState.activePiece){
+          attemptResumeDueToEnergy();
+        }
+
       } else {
         const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
         showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
@@ -1310,55 +1321,43 @@
   function pauseForHidden(){
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-      gameState.wasPlayingBeforeHidden = gameState.isPlaying;
-      if (!gameState.isPlaying) {
+      // remember whether it was playing
+      gameState.wasPlayingBeforeHidden = !!gameState.isPlaying;
+
+      // if it was playing, pause it; otherwise just persist hiddenAt (we still need hiddenAt for bookkeeping)
+      if (gameState.isPlaying) {
+        gameState.isPlaying = false;
         gameState.hiddenAt = Date.now();
-        saveGameToStorage();
-        return;
+        if (scene && scene.dropEvent){
+          try { if (typeof scene.dropEvent.paused !== 'undefined') scene.dropEvent.paused = true; } catch(e){}
+        }
+        // send pause event to server
+        sendState('pause');
+      } else {
+        // if it wasn't playing we still record the hiddenAt timestamp
+        gameState.hiddenAt = Date.now();
       }
-      gameState.isPlaying = false;
-      gameState.hiddenAt = Date.now();
-      if (scene && scene.dropEvent){
-        try { if (typeof scene.dropEvent.paused !== 'undefined') scene.dropEvent.paused = true; } catch(e){}
-      }
-      sendState('pause');
+
       saveGameToStorage();
       saveClientToStorage();
     } catch(e){ console.warn('pauseForHidden error', e); }
   }
 
-  function resumeFromHidden(){
+  function attemptResumeDueToEnergy(){
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-      const was = gameState.wasPlayingBeforeHidden;
-
-      // clear hidden flags early so re-entrancy is safe
-      delete gameState.hiddenAt;
-      delete gameState.wasPlayingBeforeHidden;
-
-      if (was === true){
-        // If player was playing before hidden — attempt to fully resume.
-        // If player has no energy, keep paused but refresh timestamps.
-        if ((clientState.energy||0) <= 0){
-          gameState.isPlaying = false;
-          gameState.lastTickAt = Date.now();
-          saveGameToStorage();
-          saveClientToStorage();
-          updateUI();
-          return;
-        }
-
+      // Only resume if we have an active piece (a playable game) and energy > 0
+      if (!gameState.activePiece) {
+        gameState.autoPausedDueToEnergy = false;
+        saveGameToStorage();
+        return;
+      }
+      if ((clientState.energy || 0) > 0) {
         gameState.isPlaying = true;
+        gameState.autoPausedDueToEnergy = false;
         gameState.lastTickAt = Date.now();
-
-        // Ensure an active piece exists — spawn if missing (important when spawn was blocked by 0 energy while hidden).
-        if (!gameState.activePiece){
-          spawnPiece();
-        }
-
         if (scene) {
           try {
-            // If there's an existing dropEvent, unpause it; otherwise restart drop loop.
             if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
               scene.dropEvent.paused = false;
             } else if (typeof scene.startDropLoop === 'function'){
@@ -1372,11 +1371,53 @@
         saveGameToStorage();
         saveClientToStorage();
         updateUI();
+      }
+    } catch(e){ console.warn('attemptResumeDueToEnergy error', e); }
+  }
+
+  function resumeFromHidden(){
+    try {
+      const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+      const was = gameState.wasPlayingBeforeHidden;
+
+      // If it was playing before hidden, resume normally.
+      // Also: if it was NOT playing before hidden but it was auto-paused due to energy and energy is now > 0,
+      // resume the game automatically (user gets continuity after refill).
+      const shouldResumeBecauseEnergy = (!was && gameState.autoPausedDueToEnergy && (clientState.energy || 0) > 0);
+
+      if (was === true || shouldResumeBecauseEnergy){
+        gameState.isPlaying = true;
+        gameState.lastTickAt = Date.now();
+
+        if (scene) {
+          try {
+            // If there's an existing dropEvent, unpause it; otherwise restart drop loop.
+            if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
+              scene.dropEvent.paused = false;
+            } else if (typeof scene.startDropLoop === 'function'){
+              scene.startDropLoop();
+            }
+          } catch(e){
+            try { if (typeof scene.startDropLoop === 'function') scene.startDropLoop(); } catch(_) {}
+          }
+        }
+
+        // If resuming due to energy refill, clear the autoPaused flag.
+        if (shouldResumeBecauseEnergy) gameState.autoPausedDueToEnergy = false;
+
+        sendState('resume');
+        saveGameToStorage();
+        saveClientToStorage();
+        updateUI();
       } else {
-        // Not playing before hidden — only refresh timestamps.
+        // Not resuming play: still refresh lastTick to avoid huge backlog
         gameState.lastTickAt = Date.now();
         saveGameToStorage();
       }
+
+      // clear hidden markers
+      delete gameState.hiddenAt;
+      delete gameState.wasPlayingBeforeHidden;
     } catch(e){ console.warn('resumeFromHidden error', e); }
   }
 
@@ -1424,6 +1465,7 @@
             gameState.lastTickAt = savedGame.lastTickAt || Date.now();
             gameState.hiddenAt = savedGame.hiddenAt || null;
             gameState.wasPlayingBeforeHidden = savedGame.wasPlayingBeforeHidden || null;
+            gameState.autoPausedDueToEnergy = savedGame.autoPausedDueToEnergy || false;
             if (gameState.hiddenAt) gameState.isPlaying = false;
           } else {
             initGrid();
@@ -1579,23 +1621,11 @@
         updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
 
-        // If the game was paused due to missing energy and the page is visible, try to resume now.
-        try {
-          const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          if (!gameState.isPlaying && (!gameState.hiddenAt) && (clientState.energy||0) > 0 && gameState.wasPlayingBeforeHidden !== false) {
-            // spawn piece if none and start drop loop
-            if (!gameState.activePiece) spawnPiece();
-            if (scene) {
-              try { if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined') scene.dropEvent.paused = false; else if (typeof scene.startDropLoop === 'function') scene.startDropLoop(); } catch(e){}
-            }
-            gameState.isPlaying = true;
-            gameState.lastTickAt = Date.now();
-            saveGameToStorage();
-            saveClientToStorage();
-            updateUI();
-            sendState('resume-after-ad');
-          }
-        } catch(e){}
+        // NEW: if the game was auto-paused due to energy, attempt resume
+        if (gameState.autoPausedDueToEnergy && (clientState.energy || 0) > 0 && gameState.activePiece){
+          attemptResumeDueToEnergy();
+        }
+
       } else {
         const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
         showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">${escapeHtml(msg)}</div>` });
