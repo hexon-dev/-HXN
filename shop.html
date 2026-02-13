@@ -4,112 +4,176 @@
   <meta charset="utf-8" />
   <title>Hexon — Miner Shop</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
     :root{
-      --bg:#071027;
-      --card-bg: rgba(255,255,255,0.03);
-      --muted:#9fcbdc;
-      --accent-from:#3b82f6;
-      --accent-to:#22d3ee;
+      --bg: linear-gradient(180deg,#030616 0%, #071027 45%, #041123 100%);
+      --panel: rgba(255,255,255,0.03);
+      --glass: rgba(255,255,255,0.04);
+      --muted: #9fcbdc;
+      --accent-from: #6EE7B7;
+      --accent-to: #60A5FA;
+      --neon: rgba(96,165,250,0.14);
+      --glass-border: rgba(255,255,255,0.06);
+      --card-radius: 14px;
+      --card-pad: 16px;
     }
-    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; padding:18px; }
-    nav{ margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    nav a{ color:inherit; text-decoration:none; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; display:inline-flex; gap:8px; align-items:center;}
-    .container{ max-width:1100px; margin:0 auto; }
-    .card{ background:var(--card-bg); padding:18px; border-radius:12px; margin-bottom:14px; }
-    .card h2{ margin:0 0 6px 0; }
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#DFF6FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; padding:20px; }
+    .container{ max-width:1200px; margin:0 auto; display:flex; gap:18px; align-items:flex-start; }
+    /* Left column = Shop, Right column = Your Miners + profile */
+    .col { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02)); border-radius:var(--card-radius); padding:18px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); min-width:0; }
+    .col--main{ flex:1; }
+    .col--side{ width:360px; max-width:36%; min-width:260px; display:flex; flex-direction:column; gap:12px; }
+
+    header{ display:flex; gap:12px; align-items:center; margin-bottom:12px;}
+    .brand { display:flex; gap:10px; align-items:center; }
+    .logo { width:46px; height:46px; border-radius:10px; background: linear-gradient(135deg,var(--accent-from),var(--accent-to)); display:flex; align-items:center; justify-content:center; color:#021125; font-weight:900; font-size:18px; box-shadow: 0 6px 22px rgba(96,165,250,0.12); }
+    nav{ margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    nav a{ color:inherit; text-decoration:none; padding:8px 12px; border-radius:10px; border:1px solid var(--glass-border); background:transparent; font-weight:700; display:inline-flex; gap:8px; align-items:center; font-size:13px; }
+    .balance{ padding:6px 10px; border-radius:10px; display:inline-flex; gap:8px; align-items:center; font-weight:700; color:#021125; background: linear-gradient(90deg,var(--accent-from),var(--accent-to)); }
+
+    h1{ margin:0 0 6px 0; font-size:20px; letter-spacing:0.6px; }
     .muted{ color:var(--muted); font-size:13px; }
-    .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; margin-top:12px; }
+
+    /* grid for shop items */
+    .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:12px; margin-top:12px; }
     .item{
       background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));
-      border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-      min-height: 220px;
+      border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:8px;
+      border: 1px solid rgba(255,255,255,0.02);
+      box-shadow: 0 10px 30px rgba(2,8,18,0.6);
+      min-height:230px;
+      transition: transform .16s ease, box-shadow .16s ease;
     }
-    .media{
-      width:100%; aspect-ratio: 16 / 9; overflow:hidden; border-radius:8px; display:flex; align-items:center; justify-content:center; background:#041123;
-    }
+    .item:hover{ transform: translateY(-6px); box-shadow: 0 20px 40px rgba(2,8,18,0.75); }
+    .media{ width:100%; aspect-ratio:16/9; overflow:hidden; border-radius:10px; display:flex; align-items:center; justify-content:center; background:#041123; border:1px solid rgba(255,255,255,0.02); }
     .media img{ width:100%; height:100%; object-fit:cover; display:block; }
-    .meta{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; }
-    .meta-left{ max-width:70%; }
-    .name{ font-weight:800; font-size:15px; margin-bottom:6px; }
-    .desc{ font-size:13px; color:var(--muted); line-height:1.2; }
-    .price{ font-weight:800; font-size:16px; color:#7EE7FF; }
+
+    .name{ font-weight:900; font-size:15px; color:#EAF8FF; }
+    .desc{ color:var(--muted); font-size:13px; line-height:1.2; min-height:36px; }
+    .meta-row{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; }
+    .price{ font-weight:900; color:#8EE7FF; font-size:14px; }
+    .au-badge{ font-weight:800; color:#021125; background: linear-gradient(90deg,#FFD86B,#FF9E6B); padding:6px 10px; border-radius:8px; font-size:13px; }
+
     .actions{ display:flex; gap:8px; margin-top:auto; align-items:center; }
-    .button{ padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; border:0; cursor:pointer; }
-    .btn-ghost{ background:transparent; border:1px solid rgba(255,255,255,0.06); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .small{ font-size:13px; }
-    .toast{ position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; background: rgba(3,10,18,0.9); color:#E6F7FF; padding:8px 12px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4); display:none; z-index:9999; }
+    .btn{ padding:9px 12px; border-radius:10px; border:0; cursor:pointer; font-weight:900; letter-spacing:0.3px; }
+    .btn--primary{ background: linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; }
+    .btn--ghost{ background:transparent; border:1px solid rgba(255,255,255,0.06); color:#9EEAFF; }
+
+    /* sidebar miners list */
+    .miners-list{ display:flex; flex-direction:column; gap:10px; margin-top:8px; }
+    .miner-card{ display:flex; gap:10px; align-items:center; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02)); padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.02); }
+    .miner-icon{ width:56px; height:56px; border-radius:10px; background: linear-gradient(135deg,#9BE7FF,#7EE7FF); display:flex; align-items:center; justify-content:center; color:#021125; font-weight:900; }
+    .miner-meta{ flex:1; min-width:0; }
+    .small{ font-size:12px; color:var(--muted); }
+
+    /* toast & lightbox */
+    .toast{ position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; background: rgba(3,10,18,0.95); color:#E6F7FF; padding:8px 12px; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.4); display:none; z-index:9999; }
     .lightbox{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); z-index:99999; padding:18px; box-sizing:border-box; }
     .lightbox.show{ display:flex; }
     .lightbox img{ max-width:100%; max-height:95vh; object-fit:contain; border-radius:8px; box-shadow:0 12px 40px rgba(0,0,0,0.6); }
-    .balance{ margin-left:auto; display:flex; gap:8px; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); }
-    @media (max-width:720px){
-      .grid{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-      nav{ gap:6px; }
-      .balance{ width:100%; margin-left:0; justify-content:center; }
+
+    @media (max-width:980px){
+      .container{ flex-direction:column; padding:12px; }
+      .col--side{ width:100%; max-width:100%; }
     }
-    /* disabled state */
-    button[disabled]{ opacity:0.6; cursor:not-allowed; }
+    button[disabled]{ opacity:0.5; cursor:not-allowed; }
   </style>
 </head>
 <body>
   <div class="container">
-    <nav aria-label="Main navigation">
-      <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
-      <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
-      <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
-      <a href="referrals.html"><i class="fa-solid fa-user-plus"></i> Referrals</a>
+    <div class="col col--main">
+      <header>
+        <div class="brand">
+          <div class="logo">HX</div>
+          <div>
+            <h1>Hexon Miner Shop</h1>
+            <div class="muted">Web3-style shop — buy miners & upgrade with reward ads</div>
+          </div>
+        </div>
 
-      <div class="balance muted small" id="balanceBadge" title="Your current GP balance">
-        <i class="fa-solid fa-coins"></i> <span id="gpAmount">—</span> GP
-      </div>
+        <nav>
+          <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
+          <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
+          <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
+          <div class="balance" id="balanceBadge"><i class="fa-solid fa-coins"></i> <span id="gpAmount">—</span> GP</div>
+          <button id="refreshBtn" class="btn btn--ghost" style="margin-left:8px"><i class="fa-solid fa-arrows-rotate"></i></button>
+        </nav>
+      </header>
 
-      <button id="refreshBtn" class="btn-ghost" style="margin-left:8px"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
-    </nav>
+      <section class="card" aria-labelledby="shopTitle" style="border-radius:12px;">
+        <h2 id="shopTitle">Available Miners & Items</h2>
+        <p class="muted">Buy miners to increase your AU (hash units). Purchased miners appear in "Your Miners".</p>
 
-    <div class="card" role="main" aria-labelledby="shopTitle">
-      <h2 id="shopTitle">Miner Shop</h2>
-      <p class="muted">Buy miners to increase your Hash Units.</p>
-
-      <div id="itemsContainer" class="grid" aria-live="polite">
-        <div class="muted">Loading items…</div>
-      </div>
+        <div id="itemsContainer" class="grid" aria-live="polite">
+          <div class="muted">Loading items…</div>
+        </div>
+      </section>
     </div>
+
+    <aside class="col col--side">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="margin:0">Your Miners</h3>
+          <div class="muted small">Purchased miners & upgrade actions</div>
+        </div>
+        <div style="text-align:right">
+          <div class="small muted">AU total</div>
+          <div id="totalAu" class="au-badge" style="margin-top:6px">—</div>
+        </div>
+      </div>
+
+      <div id="minersList" class="miners-list" aria-live="polite">
+        <div class="muted small">No miners yet — buy one from the shop.</div>
+      </div>
+
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button id="claimReward" class="btn btn--primary">Claim daily reward</button>
+        <button id="bindWallet" class="btn btn--ghost">Bind wallet</button>
+      </div>
+
+      <div style="margin-top:12px; font-size:12px; color:var(--muted);">
+        <div><strong>Ads provider:</strong> AdsGram (blockId: <code id="adsBlockId">22918</code>)</div>
+        <div style="margin-top:6px">Upgrades require watching a reward ad. After 3 ad engagements per miner, a 30-minute cooldown applies.</div>
+      </div>
+    </aside>
   </div>
 
-  <!-- toast -->
+  <!-- toast and lightbox -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-  <!-- Lightbox -->
-  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" tabindex="-1" onclick="hideLightbox(event)">
-    <img id="lightboxImg" alt="Preview" />
-  </div>
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" tabindex="-1" onclick="hideLightbox(event)"><img id="lightboxImg" alt="Preview" /></div>
 
 <script>
 /* -------------------------
    Config + state
 -------------------------*/
-const API_BASE = 'https://sites-kick-nottingham-seems.trycloudflare.com'; // set to '' to use same-origin (recommended). Replace with your backend origin if needed.
+const ADSGRAM_BLOCK_ID = '22918'; // provided block id
+const API_BASE = 'https://sites-kick-nottingham-seems.trycloudflare.com'; // adjust to your backend if needed
+
 const clientState = {
   sessionId: localStorage.getItem('hexon_session') || generateUUID(),
   username: localStorage.getItem('hexon_username') || null,
   telegramId: null,
-  gp: null
+  gp: null,
+  miners: [] // local cache of purchased miners
 };
 localStorage.setItem('hexon_session', clientState.sessionId);
 
+/* -------------------------
+   small utilities
+-------------------------*/
 function generateUUID(){ try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
 function $(id){ return document.getElementById(id); }
-function showToast(msg, ms = 2500){ const t = $('toast'); if (!t) return; t.textContent = msg; t.style.display = 'block'; clearTimeout(t._hide); t._hide = setTimeout(()=> t.style.display = 'none', ms); }
+function showToast(msg, ms = 3000){ const t = $('toast'); if (!t) return; t.textContent = msg; t.style.display = 'block'; clearTimeout(t._hide); t._hide = setTimeout(()=> t.style.display = 'none', ms); }
 function escapeHtml(s){ return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function nowTs(){ return Date.now(); }
 
 /* -------------------------
-   API helper (adds headers + body fields)
+   API helper
 -------------------------*/
 async function api(path, method='GET', body=null, optsExtra={}) {
   try {
@@ -124,7 +188,6 @@ async function api(path, method='GET', body=null, optsExtra={}) {
     const fetchOpts = { method, headers, ...optsExtra };
     if (body !== null && body !== undefined){
       if (fetchOpts.headers['Content-Type'] && fetchOpts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
-        // ensure session/user fields are present
         body = Object.assign({}, body, {
           sessionId: body.sessionId || clientState.sessionId,
           username: body.username || clientState.username || null,
@@ -140,7 +203,6 @@ async function api(path, method='GET', body=null, optsExtra={}) {
     const txt = await res.text();
     let parsed = null;
     try { parsed = txt ? JSON.parse(txt) : null; } catch(e) { parsed = txt; }
-    // attach status for debug
     if (parsed && typeof parsed === 'object') parsed._httpStatus = res.status;
     else parsed = { raw: parsed, _httpStatus: res.status };
     return parsed;
@@ -169,7 +231,101 @@ function initTelegram(){
 }
 
 /* -------------------------
-   Discover display endpoint candidates (keeps backward compat)
+   Purchases/miners storage helpers
+   - store purchased miners locally so UI immediately reflects them
+-------------------------*/
+function loadLocalMiners(){
+  try {
+    const raw = localStorage.getItem('hexon_miners_v1');
+    if (!raw) return [];
+    return JSON.parse(raw || '[]');
+  } catch(e){ return []; }
+}
+function saveLocalMiners(list){
+  try { localStorage.setItem('hexon_miners_v1', JSON.stringify(list || [])); } catch(e){}
+}
+
+/* -------------------------
+   Ad engagement tracker per miner
+   keeps: { count, cooldownStart } where cooldownStart is timestamp when the 30-min cooldown started
+-------------------------*/
+function getAdState(minerId){
+  const raw = localStorage.getItem('hexon_adstate_v1') || '{}';
+  try {
+    const map = JSON.parse(raw);
+    return map[minerId] || { count: 0, cooldownStart: null };
+  } catch(e){ return { count:0, cooldownStart:null }; }
+}
+function setAdState(minerId, state){
+  const raw = localStorage.getItem('hexon_adstate_v1') || '{}';
+  const map = (()=>{ try { return JSON.parse(raw); } catch(e){ return {}; } })();
+  map[minerId] = state;
+  localStorage.setItem('hexon_adstate_v1', JSON.stringify(map));
+}
+
+/* -------------------------
+   UI renderers
+-------------------------*/
+function updateBalanceUI(){
+  const gpEl = $('gpAmount');
+  gpEl.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
+}
+
+function renderMinersList(){
+  const list = $('minersList');
+  const miners = clientState.miners || loadLocalMiners() || [];
+  if (!miners || miners.length === 0){
+    list.innerHTML = '<div class="muted small">No miners yet — buy one from the shop.</div>';
+    $('totalAu').textContent = '0';
+    return;
+  }
+  list.innerHTML = '';
+  let totalAu = 0;
+  for (const m of miners){
+    totalAu += Number(m.au || 0);
+    const el = document.createElement('div');
+    el.className = 'miner-card';
+    el.innerHTML = `
+      <div class="miner-icon">${escapeHtml(String(m.name || m.sku || 'M').charAt(0))}</div>
+      <div class="miner-meta">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="min-width:0">
+            <div style="font-weight:900">${escapeHtml(m.name || m.sku || 'Unnamed Miner')}</div>
+            <div class="small">ID: <code style="color:var(--muted)">${escapeHtml(String(m.item_id ?? m.id ?? m.itemId ?? '—'))}</code></div>
+          </div>
+          <div style="text-align:right">
+            <div class="small">AU</div>
+            <div class="au-badge" style="margin-top:6px">${Number(m.au || 0)}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:8px;">
+          <button class="btn btn--primary btn-upgrade small">Upgrade (watch ad)</button>
+          <button class="btn btn--ghost btn-view small">View</button>
+        </div>
+      </div>
+    `;
+    // attach dataset
+    const upgradeBtn = el.querySelector('.btn-upgrade');
+    const viewBtn = el.querySelector('.btn-view');
+
+    upgradeBtn.dataset.minerId = String(m.id ?? m.item_id ?? m.itemId ?? m._id ?? m.sku ?? `${m.name}`);
+    upgradeBtn.dataset.au = String(m.au || 0);
+    upgradeBtn.dataset.name = String(m.name || m.sku || '');
+    upgradeBtn.addEventListener('click', ()=> handleUpgradeClick(upgradeBtn.dataset.minerId, m, upgradeBtn));
+
+    viewBtn.addEventListener('click', ()=> {
+      if (m.image_url) showLightbox(m.image_url);
+      else showToast('No preview image for this miner.');
+    });
+
+    list.appendChild(el);
+  }
+  $('totalAu').textContent = totalAu;
+  saveLocalMiners(miners);
+}
+
+/* -------------------------
+   Load shop items (keeps original compatibility heuristics)
 -------------------------*/
 const DISPLAY_ENDPOINT_CANDIDATES = [
   '/shop/items',
@@ -185,11 +341,9 @@ async function discoverDisplayEndpoint() {
     try {
       const resp = await api(p, 'GET');
       if (!resp) continue;
-      // accept: array, {items:[]}, {data:[]}, {items: [] inside object}
       if (Array.isArray(resp)) return p;
       if (resp && typeof resp === 'object') {
         if (Array.isArray(resp.items) || Array.isArray(resp.data)) return p;
-        // sometimes endpoint returns { ok:true, items: [...] }
         for (const k of Object.keys(resp)) {
           if (Array.isArray(resp[k])) return p;
         }
@@ -199,43 +353,39 @@ async function discoverDisplayEndpoint() {
   return null;
 }
 
-/* -------------------------
-   Client init (sync session/gp)
--------------------------*/
-async function loadClientState() {
+let discoveredEndpoint = null;
+
+async function loadClientState(){
   const resp = await api('/client/init', 'POST', { sessionId: clientState.sessionId });
   if (resp && resp.ok) {
     clientState.sessionId = resp.sessionId || clientState.sessionId;
     clientState.username = resp.username || clientState.username;
     clientState.gp = (typeof resp.gp !== 'undefined') ? Number(resp.gp) : clientState.gp;
+    // merge any returned miners if present
+    if (resp.miners && Array.isArray(resp.miners) && resp.miners.length){
+      clientState.miners = resp.miners.slice();
+      saveLocalMiners(clientState.miners);
+    } else {
+      // preserve local miners
+      const local = loadLocalMiners();
+      if (local && local.length) clientState.miners = local;
+    }
     localStorage.setItem('hexon_session', clientState.sessionId);
     if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
   } else {
-    // don't treat absence as fatal; just log
     console.debug('client/init failed or returned non-ok', resp);
   }
   updateBalanceUI();
+  renderMinersList();
 }
-
-function updateBalanceUI(){
-  const gpEl = $('gpAmount');
-  gpEl.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
-}
-
-/* -------------------------
-   Render shop & buy flow (aligned to server)
--------------------------*/
-let discoveredEndpoint = null;
 
 async function loadShop(){
   initTelegram();
   const container = $('itemsContainer');
   container.innerHTML = '<div class="muted">Loading items…</div>';
 
-  // sync client state
   await loadClientState();
 
-  // find display endpoint
   if (!discoveredEndpoint) {
     discoveredEndpoint = await discoverDisplayEndpoint();
     if (!discoveredEndpoint) {
@@ -244,14 +394,12 @@ async function loadShop(){
     }
   }
 
-  // fetch items
   const itemsResp = await api(discoveredEndpoint, 'GET');
   if (!itemsResp) {
     container.innerHTML = '<div class="muted">Shop unavailable (failed to fetch items)</div>';
     return;
   }
 
-  // normalize items (array may be top-level or nested)
   let items = [];
   if (Array.isArray(itemsResp)) items = itemsResp;
   else if (Array.isArray(itemsResp.items)) items = itemsResp.items;
@@ -269,80 +417,50 @@ async function loadShop(){
 
   container.innerHTML = '';
   for (const rawItem of items){
-    // SAFELY extract canonical fields from server item
-    const item = Object.assign({}, rawItem); // shallow copy
-    const numericId = (typeof item.id === 'number') ? item.id : (typeof item.item_id === 'number' ? item.item_id : null);
-    // If id is string but digits, coerce
-    if (numericId === null && typeof item.id === 'string' && /^[0-9]+$/.test(item.id)) {
-      item.id = Number(item.id);
-    }
-    const rawIdCandidates = [
-      item.id,
-      item.item_id,
-      item.sku,
-      item.code,
-      item.miner_id,
-      item._id
-    ];
-    let chosenToken = null;
-    for (const c of rawIdCandidates) {
-      if (typeof c !== 'undefined' && c !== null && String(c).trim() !== '') {
-        chosenToken = c;
-        break;
-      }
-    }
-    if (chosenToken === null) {
-      // skip malformed item
-      console.warn('Skipping malformed shop item (no usable id):', item);
-      continue;
-    }
-    // string form for display and sending
+    const item = Object.assign({}, rawItem);
+    const chosenToken = item.id ?? item.item_id ?? item.sku ?? item.code ?? item._id;
+    if (!chosenToken) continue;
     const chosenIdStr = String(chosenToken);
     const name = String(item.name || item.title || 'Unnamed Miner');
     const desc = String(item.description || item.desc || '');
     const price = Number(item.price_gp ?? item.priceGP ?? item.price ?? 0);
     const imageUrl = String(item.image_url || item.image || item.imageUrl || '') || null;
 
-    // build card
     const card = document.createElement('div');
     card.className = 'item';
-
-    // Build inner HTML but avoid embedding unescaped user data into attributes; we'll set dataset values via JS
     card.innerHTML = `
       <div class="media" role="button" tabindex="0" aria-label="Preview ${escapeHtml(name)}">
         ${ imageUrl ? `<img loading="lazy" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}">` : `<div class="muted small" style="padding:12px">No image</div>` }
       </div>
-      <div class="meta">
-        <div class="meta-left">
-          <div class="name">${escapeHtml(name)}</div>
-          <div class="desc">${escapeHtml(desc)}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="price">${price.toLocaleString()} GP</div>
-          <div class="small muted" style="margin-top:6px">ID: ${escapeHtml(chosenIdStr)}</div>
-        </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="name">${escapeHtml(name)}</div>
+        <div class="desc">${escapeHtml(desc)}</div>
+      </div>
+      <div class="meta-row">
+        <div class="price">${price.toLocaleString()} GP</div>
+        <div class="au-badge">${Number(item.au || 0)} AU</div>
       </div>
       <div class="actions">
-        <button class="button buyBtn"><i class="fa-solid fa-cart-plus"></i> Buy</button>
-        <button class="btn-ghost viewBtn" ${imageUrl ? '' : 'disabled'}>${ imageUrl ? '<i class="fa-solid fa-eye"></i> View' : '<i class="fa-solid fa-image"></i> No preview'}</button>
+        <button class="btn btn--primary buyBtn"><i class="fa-solid fa-cart-plus"></i> Buy</button>
+        <button class="btn btn--ghost viewBtn">${ imageUrl ? '<i class="fa-solid fa-eye"></i> View' : '<i class="fa-solid fa-image"></i> No preview'}</button>
       </div>
     `;
     container.appendChild(card);
 
-    // attach dataset metadata (safe)
+    // attach dataset
     const buyBtn = card.querySelector('.buyBtn');
     const viewBtn = card.querySelector('.viewBtn');
     const mediaEl = card.querySelector('.media');
 
-    // dataset: include multiple identifiers to maximize backend compatibility
-    buyBtn.dataset.itemId = chosenIdStr;                       // itemId (string form)
-    if (typeof item.id !== 'undefined' && item.id !== null) buyBtn.dataset.id = String(item.id);
-    if (typeof item.item_id !== 'undefined' && item.item_id !== null) buyBtn.dataset.item_id = String(item.item_id);
-    if (typeof item.sku !== 'undefined' && item.sku !== null) buyBtn.dataset.sku = String(item.sku);
+    buyBtn.dataset.itemId = chosenIdStr;
+    if (item.id) buyBtn.dataset.id = String(item.id);
+    if (item.item_id) buyBtn.dataset.item_id = String(item.item_id);
+    if (item.sku) buyBtn.dataset.sku = String(item.sku);
     buyBtn.dataset.price = String(price);
     buyBtn.dataset.name = String(name);
+    buyBtn.dataset.au = String(item.au || 0);
+    if (imageUrl) buyBtn.dataset.image = imageUrl;
 
-    // initial enable/disable depending on GP
     function refreshBuyState(){
       if (clientState.gp === null || typeof clientState.gp === 'undefined') {
         buyBtn.disabled = false;
@@ -362,7 +480,6 @@ async function loadShop(){
     }
     refreshBuyState();
 
-    // view/lightbox handler
     const openPreview = () => {
       if (!imageUrl) return;
       showLightbox(imageUrl);
@@ -373,26 +490,17 @@ async function loadShop(){
       mediaEl.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') openPreview(); });
     }
 
-    // BUY handler (robust payload that backend accepts)
     buyBtn.addEventListener('click', async () => {
-      // gather ids to send
       const idStr = buyBtn.dataset.itemId || buyBtn.dataset.id || buyBtn.dataset.sku || buyBtn.dataset.item_id || '';
-      if (!idStr) {
-        showToast('Invalid item id — cannot buy.');
-        return;
-      }
+      if (!idStr) { showToast('Invalid item id — cannot buy.'); return; }
       const nameLabel = buyBtn.dataset.name || 'item';
       const priceNum = Number(buyBtn.dataset.price || 0);
       if (!confirm(`Buy "${nameLabel}" for ${priceNum.toLocaleString()} GP?`)) return;
 
-      // disable UI while processing
       buyBtn.disabled = true;
       const origHtml = buyBtn.innerHTML;
       buyBtn.innerHTML = 'Processing…';
 
-      // prepare a payload that increases compatibility:
-      // - itemId (string), id (string), sku (if present)
-      // - item_id (numeric) if this is numeric
       const payload = {
         sessionId: clientState.sessionId,
         username: clientState.username || null,
@@ -400,29 +508,18 @@ async function loadShop(){
         id: buyBtn.dataset.id || idStr,
       };
       if (buyBtn.dataset.sku) payload.sku = buyBtn.dataset.sku;
-      // add numeric item_id when possible (server expects bigint)
-      if (buyBtn.dataset.item_id && /^[0-9]+$/.test(buyBtn.dataset.item_id)) {
-        payload.item_id = Number(buyBtn.dataset.item_id);
-      } else if (/^[0-9]+$/.test(idStr)) {
-        // if chosen id string is numeric, include numeric item_id too
-        payload.item_id = Number(idStr);
-      }
+      if (buyBtn.dataset.item_id && /^[0-9]+$/.test(buyBtn.dataset.item_id)) payload.item_id = Number(buyBtn.dataset.item_id);
+      else if (/^[0-9]+$/.test(idStr)) payload.item_id = Number(idStr);
 
-      // Try the preferred buy path first (/shop/buy) — backend expects this
       const buyPaths = ['/shop/buy', '/buy', '/miners/buy', '/api/shop/buy'];
       let resp = null;
       for (const p of buyPaths) {
         try {
           resp = await api(p, 'POST', payload);
-        } catch(e) {
-          console.warn('buy attempt error', e);
-          resp = null;
-        }
-        // if we got a clear response object with ok/error fields, stop trying
+        } catch(e) { resp = null; }
         if (resp && (typeof resp.ok !== 'undefined' || typeof resp.error !== 'undefined' || resp._httpStatus)) break;
       }
 
-      // handle response cases
       if (!resp) {
         showToast('Network/server error while buying. Check console for details.', 3500);
         console.error('Buy failed: no response', payload);
@@ -432,39 +529,200 @@ async function loadShop(){
       }
 
       if (resp.ok) {
-        // server returned success. Prefer authoritative gp if provided
-        if (typeof resp.gp !== 'undefined') {
-          clientState.gp = Number(resp.gp);
-        } else if (resp.purchased && typeof resp.purchased.price !== 'undefined') {
-          // fallback: subtract price locally if server didn't send gp
+        if (typeof resp.gp !== 'undefined') clientState.gp = Number(resp.gp);
+        else if (resp.purchased && typeof resp.purchased.price !== 'undefined') {
           clientState.gp = (clientState.gp === null ? null : clientState.gp - Number(resp.purchased.price));
         }
         updateBalanceUI();
 
-        const purchasedId = resp.purchased && typeof resp.purchased.itemId !== 'undefined' ? resp.purchased.itemId : (payload.item_id ?? payload.id ?? payload.itemId);
-        showToast(`Purchase successful — id: ${purchasedId}`, 1800);
-        console.info('Purchase response:', resp);
+        // If server returned miner object, use it. Otherwise build a local miner entry.
+        let newMiner = null;
+        if (resp.purchased && resp.purchased.miner) {
+          newMiner = resp.purchased.miner;
+        } else {
+          // build conservative miner object
+          newMiner = {
+            id: resp.purchased && resp.purchased.itemId ? resp.purchased.itemId : idStr,
+            item_id: resp.purchased && resp.purchased.itemId ? resp.purchased.itemId : idStr,
+            name: nameLabel,
+            au: Number(buyBtn.dataset.au || 0),
+            image_url: buyBtn.dataset.image || null,
+            created_at: (new Date()).toISOString()
+          };
+        }
 
-        // refresh shop to reflect updated gp/miners
+        // add to local miners cache (dedupe by id/item_id)
+        const miners = clientState.miners || loadLocalMiners() || [];
+        const key = String(newMiner.id ?? newMiner.item_id ?? newMiner._id ?? newMiner.sku ?? newMiner.name);
+        const exists = miners.find(x => String(x.id ?? x.item_id ?? x._id ?? x.sku ?? x.name) === key);
+        if (!exists) miners.push(newMiner);
+        clientState.miners = miners;
+        saveLocalMiners(miners);
+        renderMinersList();
+
+        showToast('Purchase successful');
+        // refresh full client state
         await loadClientState();
         await loadShop();
         return;
       } else {
-        // error case — surface server-provided error if available
         let errMsg = 'Purchase failed';
         if (typeof resp.error !== 'undefined') errMsg = String(resp.error);
         else if (resp && resp.raw) errMsg = String(resp.raw);
         else if (resp && resp.message) errMsg = String(resp.message);
         showToast(errMsg, 3500);
-        console.warn('Buy failed response:', resp);
         buyBtn.disabled = false;
         buyBtn.innerHTML = origHtml;
         return;
       }
-    }); // end buy handler
-  } // end for items
-
+    });
+  }
   updateBalanceUI();
+}
+
+/* -------------------------
+   Upgrade flow (reward ad) for a specific miner
+   - Up to 3 ad engagements, then 30-minute cooldown per miner
+   - Call /ad/verify (provider = "adsgram", payload contains blockId + minerId)
+   - On success use grantedPercent to increase AU by small percentage
+   - Attempt to call /miners/upgrade to persist change; if missing, perform optimistic local update
+-------------------------*/
+const MAX_ADS_PER_CYCLE = 3;
+const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+
+async function handleUpgradeClick(minerId, minerObj, btnEl){
+  const adState = getAdState(minerId);
+  // reset if cooldown elapsed
+  if (adState.cooldownStart){
+    const elapsed = nowTs() - adState.cooldownStart;
+    if (elapsed >= COOLDOWN_MS){
+      adState.count = 0;
+      adState.cooldownStart = null;
+      setAdState(minerId, adState);
+    }
+  }
+
+  if (adState.count >= MAX_ADS_PER_CYCLE){
+    const remaining = Math.max(0, COOLDOWN_MS - (nowTs() - (adState.cooldownStart || nowTs())));
+    const mins = Math.ceil(remaining / 60000);
+    showToast(`Cooldown active — try again in ~${mins} minute(s).`);
+    return;
+  }
+
+  // Show a friendly prompt explaining user must watch reward ad
+  if (!confirm('Watch a short rewarded ad to upgrade this miner? (small AU increase)')) return;
+
+  // NOTE: you asked to use AdsGram API (not SDK) for verification.
+  // The client will notify backend to verify using provider "adsgram".
+  // The backend should call AdsGram API and validate that the ad was completed.
+  // This client calls /ad/verify which in your current server returns grantedPercent: 10.
+  showToast('Opening ad…');
+  // OPTIONAL: open AdsGram ad page in a new window to let user view ad if you use a web redirect integration.
+  // window.open(`https://partner.adsgram.ai/ads?blockId=${encodeURIComponent(ADSGRAM_BLOCK_ID)}`, '_blank');
+
+  // attempt verification call to backend (backend should verify with AdsGram API)
+  const verifyPayload = {
+    sessionId: clientState.sessionId,
+    provider: 'adsgram',
+    payload: {
+      blockId: ADSGRAM_BLOCK_ID,
+      minerId: minerId,
+      clientTs: (new Date()).toISOString()
+    }
+  };
+
+  // optimistic UI locked while verifying
+  btnEl.disabled = true;
+  const originalText = btnEl.innerHTML;
+  btnEl.innerHTML = 'Verifying…';
+
+  const vresp = await api('/ad/verify', 'POST', verifyPayload).catch(e => null);
+
+  if (!vresp) {
+    showToast('Ad verify failed (network).');
+    btnEl.disabled = false;
+    btnEl.innerHTML = originalText;
+    return;
+  }
+  if (!vresp.ok && typeof vresp.grantedPercent === 'undefined') {
+    // still treat as failure but allow info from server
+    showToast('Ad not verified or rejected by server.');
+    console.warn('/ad/verify response', vresp);
+    btnEl.disabled = false;
+    btnEl.innerHTML = originalText;
+    return;
+  }
+
+  const grantedPercent = Number(vresp.grantedPercent || 0) || 10; // fallback to 10%
+  // compute AU increase (small): at least +1 AU
+  const currentAu = Number(minerObj.au || 0);
+  const delta = Math.max(1, Math.floor(currentAu * (grantedPercent / 100)));
+  const newAu = currentAu + delta;
+
+  // attempt to call a server endpoint to persist the upgrade (you said you'll add this later).
+  // We'll try /miners/upgrade and if it fails we'll perform optimistic local update and save to localStorage.
+  const upgradePayload = {
+    sessionId: clientState.sessionId,
+    minerId: minerId,
+    grantedPercent,
+    delta
+  };
+
+  let upgradeResp = null;
+  try {
+    upgradeResp = await api('/miners/upgrade', 'POST', upgradePayload);
+  } catch(e){ upgradeResp = null; }
+
+  if (upgradeResp && upgradeResp.ok) {
+    // server applied the upgrade; refresh local miners from server-provided miners or optimistic update
+    if (upgradeResp.miner) {
+      // replace miner in local cache
+      clientState.miners = (clientState.miners || loadLocalMiners() || []).map(m => {
+        const key = String(m.id ?? m.item_id ?? m._id ?? m.sku ?? m.name);
+        if (key === String(minerId)) return upgradeResp.miner;
+        return m;
+      });
+      saveLocalMiners(clientState.miners);
+      renderMinersList();
+    } else {
+      // server returned ok but no miner payload; perform update locally as best-effort
+      applyLocalMinerAUUpdate(minerId, newAu);
+      renderMinersList();
+    }
+    showToast(`Upgrade applied! AU +${delta}`);
+  } else {
+    // missing endpoint or server error — perform optimistic update locally and log
+    applyLocalMinerAUUpdate(minerId, newAu);
+    renderMinersList();
+    console.warn('/miners/upgrade not available or failed. optimistic local update applied.', upgradeResp);
+    showToast(`Upgrade applied locally (server endpoint missing). AU +${delta}`);
+  }
+
+  // increment ad count and if reached cycle limit set cooldownStart
+  adState.count = (adState.count || 0) + 1;
+  if (adState.count >= MAX_ADS_PER_CYCLE) {
+    adState.cooldownStart = nowTs();
+    showToast('Reached 3 ad engagements — 30 min cooldown started.');
+  }
+  setAdState(minerId, adState);
+
+  btnEl.disabled = false;
+  btnEl.innerHTML = originalText;
+}
+
+/* update Miner AU locally */
+function applyLocalMinerAUUpdate(minerId, newAu){
+  const miners = clientState.miners || loadLocalMiners() || [];
+  for (let i=0;i<miners.length;i++){
+    const m = miners[i];
+    const key = String(m.id ?? m.item_id ?? m._id ?? m.sku ?? m.name);
+    if (key === String(minerId)){
+      miners[i].au = Number(newAu);
+      break;
+    }
+  }
+  clientState.miners = miners;
+  saveLocalMiners(miners);
 }
 
 /* -------------------------
@@ -491,9 +749,24 @@ document.addEventListener('keydown', (e)=> { if (e.key === 'Escape') hideLightbo
 $('refreshBtn').addEventListener('click', ()=> {
   loadClientState().then(() => loadShop());
 });
+$('claimReward').addEventListener('click', async ()=> {
+  const resp = await api('/rewards/claim', 'POST', {});
+  if (resp && resp.ok) {
+    clientState.gp = Number(resp.gp || clientState.gp);
+    updateBalanceUI();
+    showToast('Reward claimed!');
+  } else {
+    showToast('Claim failed.');
+  }
+});
+$('bindWallet').addEventListener('click', ()=> showToast('Wallet bind flow — implement wallet popup to POST /wallet/bind'));
 
 document.addEventListener('DOMContentLoaded', ()=>{
   initTelegram();
+  // load local miners first
+  const local = loadLocalMiners();
+  if (local && local.length) clientState.miners = local;
+  renderMinersList();
   loadClientState().then(() => loadShop());
 });
 </script>
