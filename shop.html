@@ -51,7 +51,10 @@
     @media (max-width:720px){
       .grid{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
       nav{ gap:6px; }
+      .balance{ width:100%; margin-left:0; justify-content:center; }
     }
+    /* disabled state */
+    button[disabled]{ opacity:0.6; cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -91,12 +94,7 @@
 /* -------------------------
    Config + state
 -------------------------*/
-/**
- * API_BASE:
- * - If left as an empty string, uses same origin (recommended for deploying alongside Flask).
- * - Otherwise set to full origin e.g. https://your-domain.com
- */
-const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com'; // default: same origin
+const API_BASE = ''; // set to '' to use same-origin (recommended). Replace with your backend origin if needed.
 const clientState = {
   sessionId: localStorage.getItem('hexon_session') || generateUUID(),
   username: localStorage.getItem('hexon_username') || null,
@@ -107,35 +105,26 @@ localStorage.setItem('hexon_session', clientState.sessionId);
 
 function generateUUID(){ try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
 function $(id){ return document.getElementById(id); }
-function showToast(msg, ms = 2000){ const t = $('toast'); if (!t) return; t.textContent = msg; t.style.display = 'block'; setTimeout(()=> t.style.display = 'none', ms); }
+function showToast(msg, ms = 2500){ const t = $('toast'); if (!t) return; t.textContent = msg; t.style.display = 'block'; clearTimeout(t._hide); t._hide = setTimeout(()=> t.style.display = 'none', ms); }
 function escapeHtml(s){ return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* -------------------------
    API helper (adds headers + body fields)
-   - Accepts full path starting with '/' OR full URL
-   - Returns parsed JSON or null on error
 -------------------------*/
 async function api(path, method='GET', body=null, optsExtra={}) {
   try {
-    // normalize url
-    let url = path.startsWith('http') ? path : (API_BASE ? API_BASE.replace(/\/$/, '') + path : (window.location.origin + path));
+    const base = API_BASE ? API_BASE.replace(/\/$/, '') : window.location.origin;
+    const url = path.startsWith('http') ? path : (base + path);
     const headers = Object.assign({}, optsExtra.headers || {});
     if (!optsExtra.skipJsonHeader && method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
     if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
-
     const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
     if (userHandle) headers['X-User-Handle'] = userHandle;
-
-    // attach sessionId for GET endpoints (helps server routing)
-    if (method.toUpperCase() === 'GET' && clientState.sessionId){
-      const sep = url.includes('?') ? '&' : '?';
-      url = url + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
-    }
 
     const fetchOpts = { method, headers, ...optsExtra };
     if (body !== null && body !== undefined){
       if (fetchOpts.headers['Content-Type'] && fetchOpts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
-        // ensure session/user fields are present for the server compatibility
+        // ensure session/user fields are present
         body = Object.assign({}, body, {
           sessionId: body.sessionId || clientState.sessionId,
           username: body.username || clientState.username || null,
@@ -149,7 +138,12 @@ async function api(path, method='GET', body=null, optsExtra={}) {
 
     const res = await fetch(url, fetchOpts);
     const txt = await res.text();
-    try { return txt ? JSON.parse(txt) : null; } catch(e) { return txt; }
+    let parsed = null;
+    try { parsed = txt ? JSON.parse(txt) : null; } catch(e) { parsed = txt; }
+    // attach status for debug
+    if (parsed && typeof parsed === 'object') parsed._httpStatus = res.status;
+    else parsed = { raw: parsed, _httpStatus: res.status };
+    return parsed;
   } catch(err) {
     console.warn('api error', err);
     return null;
@@ -157,7 +151,7 @@ async function api(path, method='GET', body=null, optsExtra={}) {
 }
 
 /* -------------------------
-   Telegram init (username fallback)
+   Telegram init (optional)
 -------------------------*/
 function initTelegram(){
   try {
@@ -175,8 +169,7 @@ function initTelegram(){
 }
 
 /* -------------------------
-   Discover a "display" endpoint for miners/shop items
-   Tries several likely endpoints in order until one returns an array
+   Discover display endpoint candidates (keeps backward compat)
 -------------------------*/
 const DISPLAY_ENDPOINT_CANDIDATES = [
   '/shop/items',
@@ -189,40 +182,27 @@ const DISPLAY_ENDPOINT_CANDIDATES = [
 
 async function discoverDisplayEndpoint() {
   for (const p of DISPLAY_ENDPOINT_CANDIDATES) {
-    const u = p.startsWith('http') ? p : (API_BASE ? API_BASE.replace(/\/$/, '') + p : window.location.origin + p);
-    // try a GET with sessionId appended
-    const sep = u.includes('?') ? '&' : '?';
-    const url = u + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
     try {
-      const res = await fetch(url, { method: 'GET', headers: { 'X-Session-Id': clientState.sessionId }});
-      if (!res) continue;
-      const text = await res.text();
-      if (!text) continue;
-      let parsed;
-      try { parsed = JSON.parse(text); } catch(e) { parsed = text; }
-      // Expect an array of items (shop items)
-      if (Array.isArray(parsed) && parsed.length >= 0) {
-        // if we found items (maybe empty) — return the candidate path (not full url)
-        return p;
+      const resp = await api(p, 'GET');
+      if (!resp) continue;
+      // accept: array, {items:[]}, {data:[]}, {items: [] inside object}
+      if (Array.isArray(resp)) return p;
+      if (resp && typeof resp === 'object') {
+        if (Array.isArray(resp.items) || Array.isArray(resp.data)) return p;
+        // sometimes endpoint returns { ok:true, items: [...] }
+        for (const k of Object.keys(resp)) {
+          if (Array.isArray(resp[k])) return p;
+        }
       }
-      // Some APIs return object { items: [...] }
-      if (parsed && typeof parsed === 'object') {
-        if (Array.isArray(parsed.items)) return p;
-        // some endpoints respond { ok: true, data: [...]}
-        if (Array.isArray(parsed.data)) return p;
-      }
-    } catch (e) {
-      // ignore and continue trying other endpoints
-    }
+    } catch(e){ /* continue */ }
   }
   return null;
 }
 
 /* -------------------------
-   Load user's client state (calls /client/init to sync session and gp)
+   Client init (sync session/gp)
 -------------------------*/
 async function loadClientState() {
-  // Call /client/init to ensure server knows our session (safe, idempotent)
   const resp = await api('/client/init', 'POST', { sessionId: clientState.sessionId });
   if (resp && resp.ok) {
     clientState.sessionId = resp.sessionId || clientState.sessionId;
@@ -230,32 +210,32 @@ async function loadClientState() {
     clientState.gp = (typeof resp.gp !== 'undefined') ? Number(resp.gp) : clientState.gp;
     localStorage.setItem('hexon_session', clientState.sessionId);
     if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+  } else {
+    // don't treat absence as fatal; just log
+    console.debug('client/init failed or returned non-ok', resp);
   }
   updateBalanceUI();
 }
 
-/* -------------------------
-   Update balance UI
--------------------------*/
 function updateBalanceUI(){
   const gpEl = $('gpAmount');
   gpEl.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
 }
 
 /* -------------------------
-   Load & render shop (displays images/gifs when provided)
-   Expects backend items with optional field: image_url (string)
+   Render shop & buy flow (aligned to server)
 -------------------------*/
 let discoveredEndpoint = null;
+
 async function loadShop(){
   initTelegram();
   const container = $('itemsContainer');
   container.innerHTML = '<div class="muted">Loading items…</div>';
 
-  // ensure client state synced (so we know gp & session id)
+  // sync client state
   await loadClientState();
 
-  // discover endpoint if not known
+  // find display endpoint
   if (!discoveredEndpoint) {
     discoveredEndpoint = await discoverDisplayEndpoint();
     if (!discoveredEndpoint) {
@@ -264,19 +244,19 @@ async function loadShop(){
     }
   }
 
-  // fetch items (allow endpoints that return { items: [...] } or { data: [...] } or plain array)
-  let itemsResp = await api(discoveredEndpoint, 'GET');
+  // fetch items
+  const itemsResp = await api(discoveredEndpoint, 'GET');
   if (!itemsResp) {
     container.innerHTML = '<div class="muted">Shop unavailable (failed to fetch items)</div>';
     return;
   }
+
+  // normalize items (array may be top-level or nested)
   let items = [];
   if (Array.isArray(itemsResp)) items = itemsResp;
   else if (Array.isArray(itemsResp.items)) items = itemsResp.items;
   else if (Array.isArray(itemsResp.data)) items = itemsResp.data;
   else {
-    // try common shapes (e.g. { ok:true, items: [...] } or maybe top-level object with fields)
-    // fallback: look for any array value inside the object
     for (const k of Object.keys(itemsResp)) {
       if (Array.isArray(itemsResp[k])) { items = itemsResp[k]; break; }
     }
@@ -288,37 +268,81 @@ async function loadShop(){
   }
 
   container.innerHTML = '';
-  for (const it of items){
-    const id = escapeHtml(String(it.id || it.sku || it.code || ''));
-    const name = escapeHtml(it.name || it.title || 'Unnamed Miner');
-    const desc = escapeHtml(it.description || it.desc || it.summary || '');
-    const price = Number(it.price_gp ?? it.priceGP ?? it.price ?? 0);
-    const imageUrl = (it.image_url || it.image || it.imageUrl || null);
+  for (const rawItem of items){
+    // SAFELY extract canonical fields from server item
+    const item = Object.assign({}, rawItem); // shallow copy
+    const numericId = (typeof item.id === 'number') ? item.id : (typeof item.item_id === 'number' ? item.item_id : null);
+    // If id is string but digits, coerce
+    if (numericId === null && typeof item.id === 'string' && /^[0-9]+$/.test(item.id)) {
+      item.id = Number(item.id);
+    }
+    const rawIdCandidates = [
+      item.id,
+      item.item_id,
+      item.sku,
+      item.code,
+      item.miner_id,
+      item._id
+    ];
+    let chosenToken = null;
+    for (const c of rawIdCandidates) {
+      if (typeof c !== 'undefined' && c !== null && String(c).trim() !== '') {
+        chosenToken = c;
+        break;
+      }
+    }
+    if (chosenToken === null) {
+      // skip malformed item
+      console.warn('Skipping malformed shop item (no usable id):', item);
+      continue;
+    }
+    // string form for display and sending
+    const chosenIdStr = String(chosenToken);
+    const name = String(item.name || item.title || 'Unnamed Miner');
+    const desc = String(item.description || item.desc || '');
+    const price = Number(item.price_gp ?? item.priceGP ?? item.price ?? 0);
+    const imageUrl = String(item.image_url || item.image || item.imageUrl || '') || null;
 
+    // build card
     const card = document.createElement('div');
     card.className = 'item';
-    const mediaHtml = imageUrl ? `<img loading="lazy" src="${escapeHtml(imageUrl)}" alt="${name}">` : `<div class="muted small">No image</div>`;
+
+    // Build inner HTML but avoid embedding unescaped user data into attributes; we'll set dataset values via JS
     card.innerHTML = `
-      <div class="media" role="button" tabindex="0" aria-label="Preview ${name}">${mediaHtml}</div>
+      <div class="media" role="button" tabindex="0" aria-label="Preview ${escapeHtml(name)}">
+        ${ imageUrl ? `<img loading="lazy" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}">` : `<div class="muted small" style="padding:12px">No image</div>` }
+      </div>
       <div class="meta">
         <div class="meta-left">
-          <div class="name">${name}</div>
-          <div class="desc">${desc}</div>
+          <div class="name">${escapeHtml(name)}</div>
+          <div class="desc">${escapeHtml(desc)}</div>
         </div>
         <div style="text-align:right">
           <div class="price">${price.toLocaleString()} GP</div>
-          <div class="small muted" style="margin-top:6px">ID: ${id}</div>
+          <div class="small muted" style="margin-top:6px">ID: ${escapeHtml(chosenIdStr)}</div>
         </div>
       </div>
       <div class="actions">
-        <button class="button buyBtn" data-id="${id}"><i class="fa-solid fa-cart-plus"></i> Buy</button>
-        <button class="btn-ghost viewBtn" ${imageUrl ? '' : 'disabled'}>${imageUrl ? '<i class="fa-solid fa-eye"></i> View' : '<i class="fa-solid fa-image"></i> No preview'}</button>
+        <button class="button buyBtn"><i class="fa-solid fa-cart-plus"></i> Buy</button>
+        <button class="btn-ghost viewBtn" ${imageUrl ? '' : 'disabled'}>${ imageUrl ? '<i class="fa-solid fa-eye"></i> View' : '<i class="fa-solid fa-image"></i> No preview'}</button>
       </div>
     `;
     container.appendChild(card);
 
-    // disable buy if insufficient GP (clientState.gp may be null initially; treat null as enabled)
+    // attach dataset metadata (safe)
     const buyBtn = card.querySelector('.buyBtn');
+    const viewBtn = card.querySelector('.viewBtn');
+    const mediaEl = card.querySelector('.media');
+
+    // dataset: include multiple identifiers to maximize backend compatibility
+    buyBtn.dataset.itemId = chosenIdStr;                       // itemId (string form)
+    if (typeof item.id !== 'undefined' && item.id !== null) buyBtn.dataset.id = String(item.id);
+    if (typeof item.item_id !== 'undefined' && item.item_id !== null) buyBtn.dataset.item_id = String(item.item_id);
+    if (typeof item.sku !== 'undefined' && item.sku !== null) buyBtn.dataset.sku = String(item.sku);
+    buyBtn.dataset.price = String(price);
+    buyBtn.dataset.name = String(name);
+
+    // initial enable/disable depending on GP
     function refreshBuyState(){
       if (clientState.gp === null || typeof clientState.gp === 'undefined') {
         buyBtn.disabled = false;
@@ -338,36 +362,7 @@ async function loadShop(){
     }
     refreshBuyState();
 
-    // buy handler
-    buyBtn.addEventListener('click', async () => {
-      if (!confirm(`Buy "${name}" for ${price.toLocaleString()} GP?`)) return;
-      buyBtn.disabled = true;
-      const origHtml = buyBtn.innerHTML;
-      buyBtn.innerHTML = 'Processing…';
-      // POST to discoveredEndpoint mapping: prefer /shop/buy, else fallback to /buy or /miners/buy
-      const buyPaths = ['/shop/buy', '/buy', '/miners/buy', '/api/shop/buy'];
-      let resp = null;
-      for (const p of buyPaths) {
-        resp = await api(p, 'POST', { sessionId: clientState.sessionId, itemId: id });
-        // if resp is null, try next; if resp has ok or error, break
-        if (resp && (typeof resp.ok !== 'undefined' || typeof resp.error !== 'undefined')) break;
-      }
-
-      if (resp && resp.ok) {
-        // update gp state if provided
-        if (typeof resp.gp !== 'undefined') clientState.gp = Number(resp.gp);
-        await loadShop(); // refresh item list and gp
-        showToast('Purchase successful', 1200);
-      } else {
-        showToast((resp && resp.error) ? resp.error : 'Purchase failed', 2400);
-        buyBtn.disabled = false;
-        buyBtn.innerHTML = origHtml;
-      }
-    });
-
-    // view (lightbox)
-    const viewBtn = card.querySelector('.viewBtn');
-    const mediaEl = card.querySelector('.media');
+    // view/lightbox handler
     const openPreview = () => {
       if (!imageUrl) return;
       showLightbox(imageUrl);
@@ -377,13 +372,103 @@ async function loadShop(){
       mediaEl.addEventListener('click', openPreview);
       mediaEl.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') openPreview(); });
     }
-  }
+
+    // BUY handler (robust payload that backend accepts)
+    buyBtn.addEventListener('click', async () => {
+      // gather ids to send
+      const idStr = buyBtn.dataset.itemId || buyBtn.dataset.id || buyBtn.dataset.sku || buyBtn.dataset.item_id || '';
+      if (!idStr) {
+        showToast('Invalid item id — cannot buy.');
+        return;
+      }
+      const nameLabel = buyBtn.dataset.name || 'item';
+      const priceNum = Number(buyBtn.dataset.price || 0);
+      if (!confirm(`Buy "${nameLabel}" for ${priceNum.toLocaleString()} GP?`)) return;
+
+      // disable UI while processing
+      buyBtn.disabled = true;
+      const origHtml = buyBtn.innerHTML;
+      buyBtn.innerHTML = 'Processing…';
+
+      // prepare a payload that increases compatibility:
+      // - itemId (string), id (string), sku (if present)
+      // - item_id (numeric) if this is numeric
+      const payload = {
+        sessionId: clientState.sessionId,
+        username: clientState.username || null,
+        itemId: idStr,
+        id: buyBtn.dataset.id || idStr,
+      };
+      if (buyBtn.dataset.sku) payload.sku = buyBtn.dataset.sku;
+      // add numeric item_id when possible (server expects bigint)
+      if (buyBtn.dataset.item_id && /^[0-9]+$/.test(buyBtn.dataset.item_id)) {
+        payload.item_id = Number(buyBtn.dataset.item_id);
+      } else if (/^[0-9]+$/.test(idStr)) {
+        // if chosen id string is numeric, include numeric item_id too
+        payload.item_id = Number(idStr);
+      }
+
+      // Try the preferred buy path first (/shop/buy) — backend expects this
+      const buyPaths = ['/shop/buy', '/buy', '/miners/buy', '/api/shop/buy'];
+      let resp = null;
+      for (const p of buyPaths) {
+        try {
+          resp = await api(p, 'POST', payload);
+        } catch(e) {
+          console.warn('buy attempt error', e);
+          resp = null;
+        }
+        // if we got a clear response object with ok/error fields, stop trying
+        if (resp && (typeof resp.ok !== 'undefined' || typeof resp.error !== 'undefined' || resp._httpStatus)) break;
+      }
+
+      // handle response cases
+      if (!resp) {
+        showToast('Network/server error while buying. Check console for details.', 3500);
+        console.error('Buy failed: no response', payload);
+        buyBtn.disabled = false;
+        buyBtn.innerHTML = origHtml;
+        return;
+      }
+
+      if (resp.ok) {
+        // server returned success. Prefer authoritative gp if provided
+        if (typeof resp.gp !== 'undefined') {
+          clientState.gp = Number(resp.gp);
+        } else if (resp.purchased && typeof resp.purchased.price !== 'undefined') {
+          // fallback: subtract price locally if server didn't send gp
+          clientState.gp = (clientState.gp === null ? null : clientState.gp - Number(resp.purchased.price));
+        }
+        updateBalanceUI();
+
+        const purchasedId = resp.purchased && typeof resp.purchased.itemId !== 'undefined' ? resp.purchased.itemId : (payload.item_id ?? payload.id ?? payload.itemId);
+        showToast(`Purchase successful — id: ${purchasedId}`, 1800);
+        console.info('Purchase response:', resp);
+
+        // refresh shop to reflect updated gp/miners
+        await loadClientState();
+        await loadShop();
+        return;
+      } else {
+        // error case — surface server-provided error if available
+        let errMsg = 'Purchase failed';
+        if (typeof resp.error !== 'undefined') errMsg = String(resp.error);
+        else if (resp && resp.raw) errMsg = String(resp.raw);
+        else if (resp && resp.message) errMsg = String(resp.message);
+        showToast(errMsg, 3500);
+        console.warn('Buy failed response:', resp);
+        buyBtn.disabled = false;
+        buyBtn.innerHTML = origHtml;
+        return;
+      }
+    }); // end buy handler
+  } // end for items
 
   updateBalanceUI();
 }
 
 /* -------------------------
-   Lightbox
+   Lightbox helpers
 -------------------------*/
 function showLightbox(url){
   const lb = $('lightbox');
@@ -393,7 +478,6 @@ function showLightbox(url){
   lb.focus();
 }
 function hideLightbox(ev){
-  // allow clicking backdrop or pressing escape; don't hide if clicking image
   if (ev && ev.target && ev.target.id === 'lightboxImg') return;
   const lb = $('lightbox');
   lb.classList.remove('show');
@@ -405,13 +489,11 @@ document.addEventListener('keydown', (e)=> { if (e.key === 'Escape') hideLightbo
    Wiring & boot
 -------------------------*/
 $('refreshBtn').addEventListener('click', ()=> {
-  // refresh gp first then items
   loadClientState().then(() => loadShop());
 });
 
 document.addEventListener('DOMContentLoaded', ()=>{
   initTelegram();
-  // first attempt to sync state then render shop
   loadClientState().then(() => loadShop());
 });
 </script>
