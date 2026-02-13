@@ -2,110 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hexon — Miner Shop (Telegram Mini App)</title>
+  <title>Hexon — Miner Shop</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" id="metaThemeColor" content="#071027">
+
+  <!-- AdsGram SDK (official) -->
+  <script src="https://sad.adsgram.ai/js/sad.min.js" async></script>
+
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <!-- AdsGram SDK (required for Rewarded / Interstitial) -->
-  <script src="https://sad.adsgram.ai/js/sad.min.js" defer></script>
 
   <style>
-    /* (kept most of your visual design, but tightened spacing for Telegram mini-app) */
     :root{
-      --bg: linear-gradient(180deg,#030616 0%, #071027 45%, #041123 100%);
-      --accent-from: #6EE7B7; --accent-to:#60A5FA;
-      --muted:#9fcbdc; --card-radius:12px; --pad:12px;
+      --bg-from:#030616; --bg-to:#041123; --accent:linear-gradient(90deg,#6EE7B7,#60A5FA);
+      --panel: rgba(255,255,255,0.03); --muted:#9fcbdc; --glass-border: rgba(255,255,255,0.06);
+      --card-radius:12px; --pad:12px;
     }
-    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#DFF6FF; -webkit-font-smoothing:antialiased; padding:12px; box-sizing:border-box; }
-    .app{ max-width:980px; margin:0 auto; display:flex; gap:12px; align-items:flex-start; }
-    .col{ background: rgba(255,255,255,0.03); border-radius:var(--card-radius); padding:14px; box-shadow:0 8px 30px rgba(0,0,0,0.5); }
-    .col--main{ flex:1; }
-    .col--side{ width:320px; min-width:240px; display:flex; flex-direction:column; gap:10px; }
-    header{ display:flex; gap:10px; align-items:center; }
-    .logo{ width:44px; height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:18px; color:#021125; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); }
-    nav{ margin-left:auto; display:flex; gap:8px; align-items:center; }
-    nav button{ background:transparent; border:1px solid rgba(255,255,255,0.06); color:inherit; padding:8px 10px; border-radius:10px; font-weight:700; }
-    h1{ font-size:18px; margin:0; }
-    .muted{ color:var(--muted); font-size:13px; }
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:linear-gradient(180deg,var(--bg-from),var(--bg-to)); color:#DFF6FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
+    .app { max-width:1100px; margin:0 auto; padding:18px; display:flex; gap:16px; align-items:flex-start; min-height:100vh; }
+    /* compact for Telegram mini app */
+    header{ display:flex; gap:12px; align-items:center; width:100%; }
+    .logo{ width:44px; height:44px; border-radius:10px; background:var(--accent); display:flex; align-items:center; justify-content:center; color:#021125; font-weight:900; font-size:16px; }
+    h1{ margin:0; font-size:18px; }
+    .muted{ color:var(--muted); font-size:12px; }
+    .col { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02)); border-radius:var(--card-radius); padding:var(--pad); box-shadow:0 10px 30px rgba(0,0,0,0.5); }
+    .main { flex:1; min-width:0; }
+    .side { width:320px; display:flex; flex-direction:column; gap:12px; }
 
-    .grid{ display:grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-top:12px; }
-    .item{ border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; min-height:210px; }
+    /* shop grid */
+    .grid{ display:grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-top:10px; }
+    .item{ border-radius:10px; padding:10px; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); display:flex; flex-direction:column; gap:8px; min-height:180px; }
     .media{ width:100%; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:#041123; display:flex; align-items:center; justify-content:center; }
-    .name{ font-weight:900; }
-    .desc{ color:var(--muted); font-size:13px; min-height:36px; }
-
-    .meta-row{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
-    .au-badge{ background:linear-gradient(90deg,#FFD86B,#FF9E6B); color:#021125; padding:6px 10px; border-radius:8px; font-weight:800; }
+    .name{ font-weight:900; font-size:14px; }
+    .desc{ font-size:12px; color:var(--muted); min-height:36px; }
+    .meta{ display:flex; justify-content:space-between; align-items:center; }
+    .au-badge{ font-weight:800; color:#021125; background: linear-gradient(90deg,#FFD86B,#FF9E6B); padding:6px 8px; border-radius:8px; font-size:12px; }
 
     .actions{ display:flex; gap:8px; margin-top:auto; }
-    .btn{ padding:8px 10px; border-radius:10px; font-weight:900; cursor:pointer; border:0; }
-    .btn--primary{ background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; }
+    .btn{ padding:8px 10px; border-radius:8px; border:0; cursor:pointer; font-weight:800; font-size:13px; }
+    .btn--primary{ background:var(--accent); color:#021125; }
     .btn--ghost{ background:transparent; border:1px solid rgba(255,255,255,0.06); color:#9EEAFF; }
 
-    .miners-list{ display:flex; flex-direction:column; gap:10px; margin-top:8px; }
-    .miner-card{ display:flex; gap:8px; align-items:center; padding:8px; border-radius:10px; }
+    /* miners list compact */
+    .miners-list{ display:flex; flex-direction:column; gap:8px; }
+    .miner-card{ display:flex; gap:10px; align-items:center; padding:8px; border-radius:8px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02)); border:1px solid rgba(255,255,255,0.03); }
+    .miner-icon{ width:48px; height:48px; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#021125; font-weight:900; background:linear-gradient(135deg,#9BE7FF,#7EE7FF); }
+    .small{ font-size:12px; color:var(--muted); }
 
-    .toast{ position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; background: rgba(3,10,18,0.95); color:#E6F7FF; padding:8px 12px; border-radius:10px; display:none; z-index:9999; }
-    .lightbox{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); z-index:99999; padding:18px; }
-    .lightbox.show{ display:flex; }
-    @media (max-width:980px){ .app{ flex-direction:column; padding:8px; } .col--side{ width:100%; } }
+    /* toast */
+    .toast{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; background: rgba(3,10,18,0.95); padding:8px 12px; border-radius:10px; display:none; z-index:9999; }
+
+    @media (max-width:980px){
+      .app{ flex-direction:column; padding:12px; }
+      .side{ width:100%; max-width:100%; }
+    }
   </style>
 </head>
 <body>
-  <div class="app" role="application" aria-label="Hexon Miner Shop">
-    <div class="col col--main">
+  <div class="app">
+    <div class="col main">
       <header>
         <div class="logo">HX</div>
-        <div>
+        <div style="flex:1;min-width:0;">
           <h1>Hexon Miner Shop</h1>
-          <div class="muted">Web3-style shop — buy miners & upgrade with reward ads</div>
+          <div class="muted">Buy miners — upgrade them by watching rewarded ads</div>
         </div>
-        <nav>
-          <button id="refreshBtn" title="Refresh"><i class="fa-solid fa-arrows-rotate"></i></button>
-          <div style="min-width:86px;text-align:center;background:linear-gradient(90deg,var(--accent-from),var(--accent-to));color:#021125;padding:8px;border-radius:10px;font-weight:900" id="balanceBadge">— GP</div>
-        </nav>
+
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div class="muted small">GP</div>
+          <div id="gpAmount" style="font-weight:900; min-width:70px; text-align:right">—</div>
+        </div>
       </header>
 
-      <section aria-labelledby="shopTitle" style="margin-top:12px">
-        <h2 id="shopTitle">Available Miners & Items</h2>
-        <p class="muted">Buy miners to increase your AU (hash units). Upgrades are rewarded via real AdsGram reward ads.</p>
-        <div id="itemsContainer" class="grid" aria-live="polite">
-          <div class="muted">Loading items…</div>
+      <section style="margin-top:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><strong>Available Miners</strong><div class="small muted">Tap buy to purchase</div></div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button id="refreshBtn" class="btn btn--ghost"><i class="fa-solid fa-arrows-rotate"></i></button>
+            <button id="claimReward" class="btn btn--primary">Claim daily</button>
+          </div>
+        </div>
+        <div id="itemsContainer" class="grid" aria-live="polite" style="margin-top:10px;">
+          <div class="muted">Loading…</div>
         </div>
       </section>
     </div>
 
-    <aside class="col col--side" aria-labelledby="sidebarTitle">
+    <aside class="col side">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div><h3 id="sidebarTitle" style="margin:0">Your Miners</h3><div class="muted">Purchased miners & upgrades</div></div>
-        <div style="text-align:right"><div class="muted small">AU total</div><div id="totalAu" class="au-badge" style="margin-top:6px">—</div></div>
+        <div>
+          <div style="font-weight:900">Your Miners</div>
+          <div class="small muted">Purchased miners & upgrades</div>
+        </div>
+        <div style="text-align:right">
+          <div class="small muted">AU total</div>
+          <div id="totalAu" class="au-badge" style="margin-top:6px">—</div>
+        </div>
       </div>
 
-      <div id="minersList" class="miners-list" aria-live="polite">
-        <div class="muted small">No miners yet — buy one from the shop.</div>
+      <div id="minersList" class="miners-list" aria-live="polite" style="margin-top:8px;">
+        <div class="small muted">No miners yet — buy one from the shop.</div>
       </div>
 
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button id="claimReward" class="btn btn--primary">Claim daily</button>
-        <button id="bindWallet" class="btn btn--ghost">Bind wallet</button>
+      <div style="margin-top:12px;font-size:12px;color:var(--muted);">
+        <div><strong>Ads provider:</strong> AdsGram (blockId: <code id="adsBlockId">22918</code>)</div>
+        <div style="margin-top:6px">Upgrades require watching a reward ad. After 3 ad engagements per miner, a 30-minute cooldown applies.</div>
       </div>
-
-      <div style="margin-top:10px;font-size:12px;color:var(--muted)">Ads provider: <strong id="adsProviderLabel">AdsGram</strong> (blockId: <code id="adsBlockId">22918</code>)</div>
     </aside>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" tabindex="-1" onclick="hideLightbox(event)"><img id="lightboxImg" alt="Preview" style="max-width:100%;max-height:95vh;border-radius:8px"/></div>
 
 <script>
 /* -------------------------
-   Config + state
+   CONFIG
 -------------------------*/
-const ADSGRAM_BLOCK_ID = '22918'; // provided block id
-const API_BASE = 'https://bold-inherited-jamie-griffin.trycloudflare.com'; // update to your backend
-let AdController = null; // AdsGram controller instance
+const API_BASE = 'https://bold-inherited-jamie-griffin.trycloudflare.com'; // <-- set your backend
+const ADSGRAM_BLOCK_ID = (document.getElementById('adsBlockId')?.textContent || '22918').trim();
 
+/* -------------------------
+   STATE
+-------------------------*/
 const clientState = {
   sessionId: localStorage.getItem('hexon_session') || generateUUID(),
   username: localStorage.getItem('hexon_username') || null,
@@ -113,166 +131,225 @@ const clientState = {
   gp: null,
   miners: loadLocalMiners()
 };
-
 localStorage.setItem('hexon_session', clientState.sessionId);
 
-/* -------------------------
-   Helpers
--------------------------*/
-function $(id){ return document.getElementById(id); }
-function generateUUID(){ try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
-function showToast(msg, ms=3500){ const t=$('toast'); t.textContent=msg; t.style.display='block'; clearTimeout(t._hide); t._hide=setTimeout(()=>t.style.display='none', ms); }
-function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+/* AdsGram controller (initialized on load) */
+let AdsController = null;
+
+/* Telegram WebApp reference (if present) */
+const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
 
 /* -------------------------
-   Simple API helper
+   UTILITIES
+-------------------------*/
+function generateUUID(){ try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
+function $(id){ return document.getElementById(id); }
+function showToast(msg, ms = 3000){ const t = $('toast'); if (!t) return; t.textContent = msg; t.style.display = 'block'; clearTimeout(t._hide); t._hide = setTimeout(()=> t.style.display = 'none', ms); }
+function nowTs(){ return Date.now(); }
+
+/* -------------------------
+   STORAGE helpers
+-------------------------*/
+function loadLocalMiners(){
+  try { const raw = localStorage.getItem('hexon_miners_v1'); return raw ? JSON.parse(raw) : []; } catch(e){ return []; }
+}
+function saveLocalMiners(list){ try { localStorage.setItem('hexon_miners_v1', JSON.stringify(list || [])); } catch(e){} }
+
+/* -------------------------
+   API helper
 -------------------------*/
 async function api(path, method='GET', body=null, optsExtra={}) {
   try {
-    const base = API_BASE ? API_BASE.replace(/\/$/,'') : window.location.origin;
+    const base = API_BASE ? API_BASE.replace(/\/$/, '') : window.location.origin;
     const url = path.startsWith('http') ? path : (base + path);
     const headers = Object.assign({}, optsExtra.headers || {});
     if (!optsExtra.skipJsonHeader && method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
     if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
-    if (clientState.username) headers['X-User-Handle'] = clientState.username;
+    const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
+    if (userHandle) headers['X-User-Handle'] = userHandle;
 
     const fetchOpts = { method, headers, ...optsExtra };
-    if (body !== null && typeof body !== 'undefined'){
+    if (body !== null && body !== undefined){
       if (fetchOpts.headers['Content-Type'] && fetchOpts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
-        body.sessionId = body.sessionId || clientState.sessionId;
-        body.username = body.username || clientState.username || null;
+        body = Object.assign({}, body, {
+          sessionId: body.sessionId || clientState.sessionId,
+          username: body.username || clientState.username || null,
+          telegramId: body.telegramId || clientState.telegramId || null
+        });
         fetchOpts.body = JSON.stringify(body);
-      } else fetchOpts.body = body;
+      } else {
+        fetchOpts.body = body;
+      }
     }
 
     const res = await fetch(url, fetchOpts);
     const txt = await res.text();
-    try { return txt ? JSON.parse(txt) : { raw: '' , _httpStatus: res.status }; } catch(e){ return { raw: txt, _httpStatus: res.status }; }
-  } catch(err){ console.warn('api error', err); return null; }
+    let parsed = null;
+    try { parsed = txt ? JSON.parse(txt) : null; } catch(e) { parsed = txt; }
+    if (parsed && typeof parsed === 'object') parsed._httpStatus = res.status;
+    else parsed = { raw: parsed, _httpStatus: res.status };
+    return parsed;
+  } catch(err) {
+    console.warn('api error', err);
+    return null;
+  }
 }
 
 /* -------------------------
-   Telegram integration (if available)
-   - expand to full screen, sync theme, and use haptics and MainButton where useful
+   Telegram init + theming
 -------------------------*/
-let tg = null;
 function initTelegram(){
   try {
-    if (window.Telegram && window.Telegram.WebApp){
-      tg = window.Telegram.WebApp;
-      try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
-      if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
-        clientState.telegramId = tg.initDataUnsafe.user.id;
-        clientState.username = clientState.username || (tg.initDataUnsafe.user.username || `${tg.initDataUnsafe.user.first_name||''}`.trim());
-        if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
-      }
-      try { tg.expand(); } catch(e){}
+    if (!tg) return;
+    try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
+    const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
+    if (u) {
+      clientState.telegramId = u.id;
+      clientState.username = clientState.username || (u.username || `${u.first_name || ''} ${u.last_name || ''}`.trim() || null);
+      if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
     }
-  } catch(e){ console.warn('initTelegram', e); tg = null; }
+    // apply Telegram theme colors if present
+    try {
+      const tp = (tg?.initDataUnsafe?.themeParams) || tg?.themeParams || {};
+      if (tp.bg_color) document.body.style.background = tp.bg_color;
+      if (tp.secondary_bg_color) document.documentElement.style.setProperty('--bg-to', tp.secondary_bg_color);
+      if (tp.text_color) document.documentElement.style.setProperty('--muted', tp.text_color);
+      if (tp.accent_color) {
+        document.documentElement.style.setProperty('--accent', tp.accent_color);
+        document.querySelectorAll('.logo').forEach(el=>el.style.background = tp.accent_color);
+      }
+      if (tp.button_color) {
+        document.querySelectorAll('.btn--primary').forEach(b=>b.style.background = tp.button_color);
+      }
+      const themeMeta = document.getElementById('metaThemeColor');
+      if (themeMeta && tp.bg_color) themeMeta.content = tp.bg_color;
+    } catch(e){ /* ignore theme errors */ }
+
+    // Telegram UI hints: show/hide main button based on context
+    try {
+      tg.BackButton.visible = true;
+      if (tg.MainButton) {
+        tg.MainButton.setText('Open Shop');
+        tg.MainButton.show();
+      }
+      // Expand for immersive experience in mini app
+      if (typeof tg.expand === 'function') tg.expand();
+    } catch(e){}
+  } catch(e){ console.warn('initTelegram', e); }
 }
 
 /* -------------------------
    AdsGram SDK init
-   - per AdsGram docs: include SDK and call Adsgram.init({ blockId })
-   - then use AdController.show() in click handlers. (Docs: include script, call init, then show()). 
-   - We init when the SDK is available.
-   (See AdsGram docs for details.)
+   (per AdsGram docs: include sad.min.js and call window.Adsgram.init({ blockId }) )
 -------------------------*/
-function initAdsGram() {
-  try {
-    if (!window.Adsgram) {
-      // SDK may not yet be parsed - wait briefly
-      setTimeout(initAdsGram, 250);
-      return;
-    }
-    // init returns controller used to show ads
-    AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
-    console.debug('AdsGram initialized', AdController);
-  } catch(err){
-    console.warn('initAdsGram error', err);
-  }
-}
-
-/* -------------------------
-   Local miners persistence
--------------------------*/
-function loadLocalMiners(){
-  try { return JSON.parse(localStorage.getItem('hexon_miners_v1')||'[]'); } catch(e){ return []; }
-}
-function saveLocalMiners(list){ try { localStorage.setItem('hexon_miners_v1', JSON.stringify(list||[])); } catch(e){} }
-
-/* -------------------------
-   UI renderers & shop loader (keeps your original endpoint discovery)
--------------------------*/
-const DISPLAY_ENDPOINT_CANDIDATES = ['/shop/items','/miners/display','/miners','/shop/miners','/api/shop/items','/api/miners'];
-let discoveredEndpoint = null;
-
-async function discoverDisplayEndpoint(){
-  for (const p of DISPLAY_ENDPOINT_CANDIDATES){
-    try {
-      const resp = await api(p, 'GET');
-      if (!resp) continue;
-      if (Array.isArray(resp)) return p;
-      if (resp && typeof resp === 'object'){
-        if (Array.isArray(resp.items) || Array.isArray(resp.data)) return p;
-        for (const k of Object.keys(resp)){ if (Array.isArray(resp[k])) return p; }
+function initAdsGram(){
+  // Wait until AdsGram script has attached window.Adsgram
+  const tryInit = () => {
+    if (window.Adsgram && typeof window.Adsgram.init === 'function') {
+      try {
+        AdsController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
+        console.info('AdsGram initialized with blockId', ADSGRAM_BLOCK_ID);
+      } catch(e){
+        console.warn('AdsGram init error', e);
       }
-    } catch(e){}
-  }
-  return null;
+    } else {
+      // try again shortly
+      setTimeout(tryInit, 300);
+    }
+  };
+  tryInit();
 }
 
-function updateBalanceUI(){ const badge = $('balanceBadge'); badge.textContent = (clientState.gp===null||typeof clientState.gp==='undefined')? '— GP' : `${Number(clientState.gp).toLocaleString()} GP`; }
+/* -------------------------
+   UI renderers
+-------------------------*/
+function updateBalanceUI(){
+  $('gpAmount').textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
+}
 function renderMinersList(){
   const list = $('minersList');
   const miners = clientState.miners || [];
-  if (!miners || miners.length===0){ list.innerHTML = '<div class="muted small">No miners yet — buy one from the shop.</div>'; $('totalAu').textContent='0'; return; }
+  if (!miners || miners.length === 0){
+    list.innerHTML = '<div class="small muted">No miners yet — buy one from the shop.</div>';
+    $('totalAu').textContent = '0';
+    return;
+  }
   list.innerHTML = '';
   let totalAu = 0;
   for (const m of miners){
-    totalAu += Number(m.au||0);
+    totalAu += Number(m.au || 0);
     const el = document.createElement('div');
     el.className = 'miner-card';
     el.innerHTML = `
-      <div style="width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#9BE7FF,#7EE7FF);display:flex;align-items:center;justify-content:center;color:#021125;font-weight:900">${escapeHtml(String((m.name||m.sku||'M').charAt(0)))}</div>
+      <div class="miner-icon">${String(m.name || m.sku || 'M').charAt(0)}</div>
       <div style="flex:1;min-width:0">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="min-width:0">
-            <div style="font-weight:900">${escapeHtml(m.name||m.sku||'Unnamed Miner')}</div>
-            <div class="muted small">ID: <code style="color:var(--muted)">${escapeHtml(String(m.item_id ?? m.id ?? '—'))}</code></div>
-          </div>
-          <div style="text-align:right">
-            <div class="muted small">AU</div>
-            <div style="margin-top:6px;background:linear-gradient(90deg,#FFD86B,#FF9E6B);color:#021125;padding:6px 8px;border-radius:8px;font-weight:800">${Number(m.au||0)}</div>
-          </div>
-        </div>
-        <div style="margin-top:8px;display:flex;gap:8px">
+        <div style="font-weight:900">${escapeHtml(m.name || m.sku || 'Unnamed')}</div>
+        <div class="small">ID: <code style="color:var(--muted)">${escapeHtml(String(m.item_id ?? m.id ?? m.itemId ?? '—'))}</code></div>
+        <div style="margin-top:6px; display:flex; gap:8px;">
           <button class="btn btn--primary btn-upgrade small">Upgrade (watch ad)</button>
           <button class="btn btn--ghost btn-view small">View</button>
         </div>
       </div>
+      <div style="text-align:right">
+        <div class="small">AU</div>
+        <div class="au-badge" style="margin-top:6px">${Number(m.au || 0)}</div>
+      </div>
     `;
     const upgradeBtn = el.querySelector('.btn-upgrade');
     const viewBtn = el.querySelector('.btn-view');
-    upgradeBtn.dataset.minerId = String(m.id ?? m.item_id ?? m.sku ?? m.name);
-    upgradeBtn.addEventListener('click', ()=> handleUpgradeClick(upgradeBtn.dataset.minerId, m, upgradeBtn));
-    viewBtn.addEventListener('click', ()=> { if (m.image_url) showLightbox(m.image_url); else showToast('No preview image.'); });
+
+    const minerId = String(m.id ?? m.item_id ?? m.itemId ?? m._id ?? m.sku ?? m.name);
+
+    upgradeBtn.addEventListener('click', ()=> handleUpgradeClick(minerId, m, upgradeBtn));
+    viewBtn.addEventListener('click', ()=> {
+      if (m.image_url) window.open(m.image_url, '_blank');
+      else showToast('No preview image for this miner.');
+    });
+
     list.appendChild(el);
   }
   $('totalAu').textContent = totalAu;
   saveLocalMiners(miners);
 }
+function escapeHtml(s){ return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* -------------------------
+   Shop discovery & load
+-------------------------*/
+const DISPLAY_ENDPOINT_CANDIDATES = ['/shop/items','/miners/display','/miners','/shop/miners','/api/shop/items','/api/miners'];
+async function discoverDisplayEndpoint(){
+  for (const p of DISPLAY_ENDPOINT_CANDIDATES) {
+    try {
+      const resp = await api(p, 'GET');
+      if (!resp) continue;
+      if (Array.isArray(resp)) return p;
+      if (resp && typeof resp === 'object') {
+        if (Array.isArray(resp.items) || Array.isArray(resp.data)) return p;
+        for (const k of Object.keys(resp)) if (Array.isArray(resp[k])) return p;
+      }
+    } catch(e){}
+  }
+  return null;
+}
+let discoveredEndpoint = null;
 
 async function loadClientState(){
-  const resp = await api('/client/init','POST',{ sessionId: clientState.sessionId }).catch(()=>null);
-  if (resp && resp.ok){
+  const resp = await api('/client/init', 'POST', { sessionId: clientState.sessionId });
+  if (resp && resp.ok) {
     clientState.sessionId = resp.sessionId || clientState.sessionId;
     clientState.username = resp.username || clientState.username;
     clientState.gp = (typeof resp.gp !== 'undefined') ? Number(resp.gp) : clientState.gp;
-    if (resp.miners && Array.isArray(resp.miners) && resp.miners.length) { clientState.miners = resp.miners.slice(); saveLocalMiners(clientState.miners); }
-    else { clientState.miners = clientState.miners || loadLocalMiners(); }
+    if (resp.miners && Array.isArray(resp.miners) && resp.miners.length){
+      clientState.miners = resp.miners.slice();
+      saveLocalMiners(clientState.miners);
+    } else {
+      const local = loadLocalMiners(); if (local && local.length) clientState.miners = local;
+    }
     localStorage.setItem('hexon_session', clientState.sessionId);
     if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+  } else {
+    // preserve local miners if any
+    if (!clientState.miners || clientState.miners.length === 0) clientState.miners = loadLocalMiners();
   }
   updateBalanceUI();
   renderMinersList();
@@ -280,19 +357,35 @@ async function loadClientState(){
 
 async function loadShop(){
   const container = $('itemsContainer');
-  container.innerHTML = '<div class="muted">Loading items…</div>';
+  container.innerHTML = '<div class="muted small">Loading…</div>';
+
   await loadClientState();
-  if (!discoveredEndpoint) discoveredEndpoint = await discoverDisplayEndpoint();
-  if (!discoveredEndpoint){ container.innerHTML = '<div class="muted">Shop unavailable (no display endpoint found)</div>'; return; }
-  const itemsResp = await api(discoveredEndpoint,'GET').catch(()=>null);
-  if (!itemsResp){ container.innerHTML = '<div class="muted">Shop unavailable (failed to fetch items)</div>'; return; }
+
+  if (!discoveredEndpoint) {
+    discoveredEndpoint = await discoverDisplayEndpoint();
+    if (!discoveredEndpoint) {
+      container.innerHTML = '<div class="muted small">Shop unavailable (no display endpoint)</div>';
+      return;
+    }
+  }
+  const itemsResp = await api(discoveredEndpoint, 'GET');
+  if (!itemsResp) {
+    container.innerHTML = '<div class="muted small">Shop unavailable (failed to fetch)</div>';
+    return;
+  }
+
   let items = [];
   if (Array.isArray(itemsResp)) items = itemsResp;
   else if (Array.isArray(itemsResp.items)) items = itemsResp.items;
   else if (Array.isArray(itemsResp.data)) items = itemsResp.data;
-  else { for (const k of Object.keys(itemsResp)) if (Array.isArray(itemsResp[k])) { items = itemsResp[k]; break; } }
+  else {
+    for (const k of Object.keys(itemsResp)) if (Array.isArray(itemsResp[k])) { items = itemsResp[k]; break; }
+  }
 
-  if (!items || items.length===0){ container.innerHTML = '<div class="muted">No items available</div>'; return; }
+  if (!items || items.length === 0) {
+    container.innerHTML = '<div class="muted small">No items available</div>'; return;
+  }
+
   container.innerHTML = '';
   for (const rawItem of items){
     const item = Object.assign({}, rawItem);
@@ -307,11 +400,17 @@ async function loadShop(){
     const card = document.createElement('div');
     card.className = 'item';
     card.innerHTML = `
-      <div class="media" role="button" tabindex="0" aria-label="Preview ${escapeHtml(name)}">
+      <div class="media" role="button" tabindex="0" aria-label="${escapeHtml(name)}">
         ${ imageUrl ? `<img loading="lazy" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" style="width:100%;height:100%;object-fit:cover">` : `<div class="muted small" style="padding:12px">No image</div>` }
       </div>
-      <div><div class="name">${escapeHtml(name)}</div><div class="desc">${escapeHtml(desc)}</div></div>
-      <div class="meta-row"><div class="price">${price.toLocaleString()} GP</div><div class="au-badge">${Number(item.au||0)} AU</div></div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="name">${escapeHtml(name)}</div>
+        <div class="desc">${escapeHtml(desc)}</div>
+      </div>
+      <div class="meta">
+        <div style="font-weight:900">${price.toLocaleString()} GP</div>
+        <div class="au-badge">${Number(item.au || 0)} AU</div>
+      </div>
       <div class="actions">
         <button class="btn btn--primary buyBtn"><i class="fa-solid fa-cart-plus"></i> Buy</button>
         <button class="btn btn--ghost viewBtn">${ imageUrl ? '<i class="fa-solid fa-eye"></i> View' : '<i class="fa-solid fa-image"></i> No preview'}</button>
@@ -321,53 +420,68 @@ async function loadShop(){
 
     const buyBtn = card.querySelector('.buyBtn');
     const viewBtn = card.querySelector('.viewBtn');
-    const mediaEl = card.querySelector('.media');
+
     buyBtn.dataset.itemId = chosenIdStr;
     buyBtn.dataset.price = String(price);
     buyBtn.dataset.name = String(name);
-    buyBtn.dataset.au = String(item.au||0);
+    buyBtn.dataset.au = String(item.au || 0);
     if (imageUrl) buyBtn.dataset.image = imageUrl;
 
-    function refreshBuyState(){
-      if (clientState.gp === null || typeof clientState.gp === 'undefined'){ buyBtn.disabled=false; buyBtn.innerHTML = '<i class="fa-solid fa-cart-plus"></i> Buy'; return; }
-      if (Number(clientState.gp) < Number(price)){ buyBtn.disabled=true; buyBtn.title='Insufficient GP'; buyBtn.innerHTML = `<i class="fa-solid fa-ban"></i> Need ${(Number(price)-Number(clientState.gp)).toLocaleString()} GP`; }
-      else { buyBtn.disabled=false; buyBtn.title=''; buyBtn.innerHTML = '<i class="fa-solid fa-cart-plus"></i> Buy'; }
-    }
-    refreshBuyState();
-
-    const openPreview = ()=> { if (!imageUrl) return; showLightbox(imageUrl); };
-    if (viewBtn && imageUrl) viewBtn.addEventListener('click', openPreview);
-    if (mediaEl && imageUrl){ mediaEl.addEventListener('click', openPreview); mediaEl.addEventListener('keydown',(e)=>{ if (e.key==='Enter' || e.key===' ') openPreview(); }); }
+    viewBtn.addEventListener('click', ()=> { if (imageUrl) window.open(imageUrl, '_blank'); else showToast('No preview'); });
 
     buyBtn.addEventListener('click', async ()=>{
       const idStr = buyBtn.dataset.itemId || '';
-      if (!idStr){ showToast('Invalid item id — cannot buy.'); return; }
+      if (!idStr) { showToast('Invalid item id'); return; }
       const nameLabel = buyBtn.dataset.name || 'item';
-      const priceNum = Number(buyBtn.dataset.price||0);
+      const priceNum = Number(buyBtn.dataset.price || 0);
       if (!confirm(`Buy "${nameLabel}" for ${priceNum.toLocaleString()} GP?`)) return;
-      buyBtn.disabled = true; const origHtml = buyBtn.innerHTML; buyBtn.innerHTML = 'Processing…';
-      const payload = { sessionId: clientState.sessionId, username: clientState.username || null, itemId: idStr, id: idStr };
-      let resp = null;
+
+      buyBtn.disabled = true;
+      const origHtml = buyBtn.innerHTML;
+      buyBtn.innerHTML = 'Processing…';
+
+      const payload = {
+        sessionId: clientState.sessionId,
+        username: clientState.username || null,
+        itemId: idStr,
+        id: idStr
+      };
+      if (/^[0-9]+$/.test(idStr)) payload.item_id = Number(idStr);
+
       const buyPaths = ['/shop/buy','/buy','/miners/buy','/api/shop/buy'];
-      for (const p of buyPaths){
-        try { resp = await api(p,'POST',payload); } catch(e){ resp=null; }
-        if (resp && (typeof resp.ok!=='undefined' || resp._httpStatus)) break;
+      let resp = null;
+      for (const p of buyPaths) {
+        try { resp = await api(p, 'POST', payload); } catch(e) { resp = null; }
+        if (resp && (typeof resp.ok !== 'undefined' || typeof resp.error !== 'undefined' || resp._httpStatus)) break;
       }
-      if (!resp){ showToast('Network/server error while buying.'); buyBtn.disabled=false; buyBtn.innerHTML=origHtml; return; }
-      if (resp.ok){
+
+      if (!resp) {
+        showToast('Network/server error while buying.', 3500);
+        buyBtn.disabled = false; buyBtn.innerHTML = origHtml; return;
+      }
+      if (resp.ok) {
         if (typeof resp.gp !== 'undefined') clientState.gp = Number(resp.gp);
-        // get miner object or construct one
-        let newMiner = (resp.purchased && resp.purchased.miner) ? resp.purchased.miner : {
+        updateBalanceUI();
+
+        let newMiner = null;
+        if (resp.purchased && resp.purchased.miner) newMiner = resp.purchased.miner;
+        else newMiner = {
           id: resp.purchased && resp.purchased.itemId ? resp.purchased.itemId : idStr,
           item_id: resp.purchased && resp.purchased.itemId ? resp.purchased.itemId : idStr,
-          name: nameLabel, au: Number(buyBtn.dataset.au||0), image_url: buyBtn.dataset.image||null, created_at: (new Date()).toISOString()
+          name: nameLabel,
+          au: Number(buyBtn.dataset.au || 0),
+          image_url: buyBtn.dataset.image || null,
+          created_at: (new Date()).toISOString()
         };
-        // add to local cache
+
         const miners = clientState.miners || [];
         const key = String(newMiner.id ?? newMiner.item_id ?? newMiner._id ?? newMiner.sku ?? newMiner.name);
         const exists = miners.find(x => String(x.id ?? x.item_id ?? x._id ?? x.sku ?? x.name) === key);
         if (!exists) miners.push(newMiner);
-        clientState.miners = miners; saveLocalMiners(miners); renderMinersList();
+        clientState.miners = miners;
+        saveLocalMiners(miners);
+        renderMinersList();
+
         showToast('Purchase successful');
         await loadClientState(); await loadShop();
         return;
@@ -375,113 +489,132 @@ async function loadShop(){
         let errMsg = 'Purchase failed';
         if (typeof resp.error !== 'undefined') errMsg = String(resp.error);
         else if (resp && resp.raw) errMsg = String(resp.raw);
-        showToast(errMsg); buyBtn.disabled=false; buyBtn.innerHTML=origHtml; return;
+        showToast(errMsg, 3500);
+        buyBtn.disabled = false;
+        buyBtn.innerHTML = origHtml;
+        return;
       }
     });
-  }
+  } // for each item
+
   updateBalanceUI();
 }
 
 /* -------------------------
-   Upgrade flow using AdsGram (real reward ad)
-   - Uses AdController.show() from AdsGram SDK
-   - On success (result.done === true) we POST to /ad/verify to let our backend verify + grant reward.
-   - If backend verifies, we persist upgrade server-side; if not available we apply optimistic local update but still send verify request.
-   - This removes any client-side "ad simulation".
+   AD / Upgrade flow (uses AdsGram SDK show())
+   - shows the real ad via AdsGram SDK
+   - only grant reward when result.done === true (user watched to the end)
+   - always POST result to /ad/verify so backend can securely verify with AdsGram server-side APIs
 -------------------------*/
-async function handleUpgradeClick(minerId, minerObj, btnEl){
-  if (!AdController){ showToast('Ads are not ready yet.'); initAdsGram(); return; }
+const MAX_ADS_PER_CYCLE = 3;
+const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 
-  // Optional: simple per-miner cooldown logic (keeps your previous approach)
-  const adState = (function(){ try { return JSON.parse(localStorage.getItem('hexon_adstate_v1')||'{}') } catch(e){ return {}; } })()[minerId] || { count:0, cooldownStart:null };
-  const MAX_ADS_PER_CYCLE = 3;
-  const COOLDOWN_MS = 30*60*1000;
-  if (adState.cooldownStart && (Date.now() - adState.cooldownStart) < COOLDOWN_MS){
-    const mins = Math.ceil((COOLDOWN_MS - (Date.now() - adState.cooldownStart))/60000);
-    showToast(`Cooldown active — try in ~${mins} minute(s).`);
+function getAdState(minerId){
+  const raw = localStorage.getItem('hexon_adstate_v1') || '{}';
+  try { const map = JSON.parse(raw); return map[minerId] || { count:0, cooldownStart:null }; } catch(e){ return {count:0,cooldownStart:null}; }
+}
+function setAdState(minerId, state){
+  const raw = localStorage.getItem('hexon_adstate_v1') || '{}';
+  const map = (()=>{ try { return JSON.parse(raw); } catch(e){ return {}; } })();
+  map[minerId] = state;
+  localStorage.setItem('hexon_adstate_v1', JSON.stringify(map));
+}
+
+async function handleUpgradeClick(minerId, minerObj, btnEl){
+  const adState = getAdState(minerId);
+  // reset if cooldown elapsed
+  if (adState.cooldownStart){
+    const elapsed = nowTs() - adState.cooldownStart;
+    if (elapsed >= COOLDOWN_MS){ adState.count = 0; adState.cooldownStart = null; setAdState(minerId, adState); }
+  }
+
+  if (adState.count >= MAX_ADS_PER_CYCLE){
+    const remaining = Math.max(0, COOLDOWN_MS - (nowTs() - (adState.cooldownStart || nowTs())));
+    const mins = Math.ceil(remaining / 60000);
+    showToast(`Cooldown active — try again in ~${mins} minute(s).`);
     return;
   }
-  if (adState.count >= MAX_ADS_PER_CYCLE){ adState.cooldownStart = Date.now(); localStorage.setItem('hexon_adstate_v1', JSON.stringify(Object.assign({}, JSON.parse(localStorage.getItem('hexon_adstate_v1')||'{}'), { [minerId]: adState } ))); showToast('Cooldown started.'); return; }
 
-  if (!confirm('Watch a short rewarded ad to upgrade this miner?')) return;
+  if (!confirm('Watch a short rewarded ad to upgrade this miner? (small AU increase)')) return;
 
-  // Show ad using AdsGram SDK (see AdsGram docs: AdController.show())
+  // Ensure AdsController is ready
+  if (!AdsController) {
+    showToast('Ads not ready — try again in a moment.');
+    return;
+  }
+
   btnEl.disabled = true;
-  const originalText = btnEl.innerHTML;
+  const origText = btnEl.innerHTML;
   btnEl.innerHTML = 'Opening ad…';
 
   try {
-    const result = await AdController.show(); // resolves when ad finished/closed (result.done true if watched to end)
-    // result fields: { done: boolean, description: string, state: 'load'|'render'|'playing'|'destroy', error: boolean }
-    // (Docs describe show() promise & its result semantics.)
-    if (!result || !result.done) {
-      showToast('Ad was not completed. No reward given.');
-      btnEl.disabled = false; btnEl.innerHTML = originalText;
-      return;
-    }
+    // show() resolves if user watched till end OR closed (for interstitial); reject on error/skip
+    const result = await AdsController.show();
+    // result: { done: boolean, description: string, state: 'load'|'render'|'playing'|'destroy', error: boolean }
+    console.info('AdsGram show result', result);
 
-    // Send show result to backend for server-side verification & reward granting
+    // POST the raw result to backend so server can verify with AdsGram
     const verifyPayload = {
       sessionId: clientState.sessionId,
       provider: 'adsgram',
       payload: {
         blockId: ADSGRAM_BLOCK_ID,
-        minerId: minerId,
-        showResult: result,
-        clientTs: (new Date()).toISOString()
+        minerId,
+        clientTs: (new Date()).toISOString(),
+        adResult: result
       }
     };
-    btnEl.innerHTML = 'Verifying…';
-    const vresp = await api('/ad/verify','POST', verifyPayload).catch(()=>null);
+    // Let backend do final verification / security checks
+    const vresp = await api('/ad/verify', 'POST', verifyPayload).catch(e => null);
 
-    // Server should respond with ok and details (for example: grantedPercent or deltaAU)
-    if (vresp && vresp.ok){
-      // If server returned updated miner object, replace it
-      if (vresp.miner){
+    // If AdsGram reported done (watched to the end) and backend verifies, apply reward.
+    const watchedToEnd = !!(result && result.done === true);
+    const backendOk = vresp && vresp.ok;
+    if (watchedToEnd && backendOk) {
+      const grantedPercent = Number(vresp.grantedPercent || 10); // server should send back grantedPercent
+      const currentAu = Number(minerObj.au || 0);
+      const delta = Math.max(1, Math.floor(currentAu * (grantedPercent / 100)));
+      const newAu = currentAu + delta;
+
+      // Try to persist via /miners/upgrade; if missing do optimistic local update
+      const upgradePayload = { sessionId: clientState.sessionId, minerId, grantedPercent, delta };
+      let upgradeResp = null;
+      try { upgradeResp = await api('/miners/upgrade', 'POST', upgradePayload); } catch(e){ upgradeResp = null; }
+
+      if (upgradeResp && upgradeResp.ok && upgradeResp.miner) {
+        // replace local miner with server version
         clientState.miners = (clientState.miners || []).map(m => {
           const key = String(m.id ?? m.item_id ?? m._id ?? m.sku ?? m.name);
-          if (key === String(minerId)) return vresp.miner;
+          if (key === String(minerId)) return upgradeResp.miner;
           return m;
         });
-        saveLocalMiners(clientState.miners);
-        renderMinersList();
-      } else if (typeof vresp.grantedPercent !== 'undefined' || typeof vresp.delta !== 'undefined'){
-        const grantedPercent = Number(vresp.grantedPercent || 0) || 10;
-        const currentAu = Number(minerObj.au || 0);
-        const delta = typeof vresp.delta !== 'undefined' ? Number(vresp.delta) : Math.max(1, Math.floor(currentAu * (grantedPercent/100)));
-        applyLocalMinerAUUpdate(minerId, currentAu + delta);
-        renderMinersList();
+      } else {
+        // optimistic local update
+        applyLocalMinerAUUpdate(minerId, newAu);
       }
-      showToast('Upgrade applied!');
-      // increment ad state and persist cooldown if needed
-      adState.count = (adState.count||0) + 1;
-      if (adState.count >= MAX_ADS_PER_CYCLE) adState.cooldownStart = Date.now();
-      const fullMap = (()=>{ try { return JSON.parse(localStorage.getItem('hexon_adstate_v1')||'{}'); } catch(e){ return {}; } })();
-      fullMap[minerId] = adState; localStorage.setItem('hexon_adstate_v1', JSON.stringify(fullMap));
-    } else {
-      // If server verification failed or missing, do optimistic local update and still show message
-      const fallbackPercent = 10;
-      const currentAu = Number(minerObj.au || 0);
-      const delta = Math.max(1, Math.floor(currentAu * (fallbackPercent/100)));
-      applyLocalMinerAUUpdate(minerId, currentAu + delta);
+      saveLocalMiners(clientState.miners);
       renderMinersList();
-      showToast('Upgrade applied locally (server verification missing).');
-      // still increment local ad count/cooldown as above
-      adState.count = (adState.count||0) + 1;
-      if (adState.count >= MAX_ADS_PER_CYCLE) adState.cooldownStart = Date.now();
-      const fullMap = (()=>{ try { return JSON.parse(localStorage.getItem('hexon_adstate_v1')||'{}'); } catch(e){ return {}; } })();
-      fullMap[minerId] = adState; localStorage.setItem('hexon_adstate_v1', JSON.stringify(fullMap));
+      showToast(`Upgrade applied! AU +${delta}`);
+      // increment ad count
+      adState.count = (adState.count || 0) + 1;
+      if (adState.count >= MAX_ADS_PER_CYCLE) { adState.cooldownStart = nowTs(); showToast('Reached 3 ad engagements — 30 min cooldown started.'); }
+      setAdState(minerId, adState);
+    } else {
+      // either user skipped or backend didn't verify
+      if (!watchedToEnd) showToast('Ad not watched to the end — no reward.');
+      else showToast('Ad shown but server verification failed — no reward.');
+      console.warn('Ad result or backend verification failed', { result, vresp });
     }
-  } catch(err){
-    console.warn('AdController.show() error', err);
+  } catch(err) {
+    console.warn('Ad show error', err);
     showToast('Ad failed to play.');
   } finally {
     btnEl.disabled = false;
-    btnEl.innerHTML = originalText;
+    btnEl.innerHTML = origText;
   }
 }
 
-/* update local miner AU */
+/* update AU locally utility */
 function applyLocalMinerAUUpdate(minerId, newAu){
   const miners = clientState.miners || [];
   for (let i=0;i<miners.length;i++){
@@ -496,23 +629,25 @@ function applyLocalMinerAUUpdate(minerId, newAu){
   saveLocalMiners(miners);
 }
 
-/* lightbox */
-function showLightbox(url){ const lb=$('lightbox'), img=$('lightboxImg'); img.src=url; lb.classList.add('show'); lb.focus(); }
-function hideLightbox(ev){ if (ev && ev.target && ev.target.id === 'lightboxImg') return; const lb=$('lightbox'); lb.classList.remove('show'); $('lightboxImg').src=''; }
-document.addEventListener('keydown', (e)=>{ if (e.key==='Escape') hideLightbox(); });
-
-/* wiring */
-$('refreshBtn').addEventListener('click', ()=> { loadClientState().then(()=>loadShop()); });
+/* -------------------------
+   wiring & boot
+-------------------------*/
+$('refreshBtn').addEventListener('click', ()=> { loadClientState().then(()=> loadShop()); });
 $('claimReward').addEventListener('click', async ()=> {
-  const resp = await api('/rewards/claim','POST',{}).catch(()=>null);
-  if (resp && resp.ok){ clientState.gp = Number(resp.gp||clientState.gp); updateBalanceUI(); showToast('Reward claimed!'); }
-  else showToast('Claim failed.');
+  const resp = await api('/rewards/claim', 'POST', {});
+  if (resp && resp.ok) {
+    clientState.gp = Number(resp.gp || clientState.gp);
+    updateBalanceUI();
+    showToast('Reward claimed!');
+  } else showToast('Claim failed.');
 });
-$('bindWallet').addEventListener('click', ()=> showToast('Wallet bind flow — implement wallet popup to POST /wallet/bind'));
 
 document.addEventListener('DOMContentLoaded', ()=>{
   initTelegram();
-  initAdsGram(); // initialize AdsGram SDK (will wait if SDK not parsed yet)
+  initAdsGram();
+  // load local miners first for snappy UI
+  const local = loadLocalMiners();
+  if (local && local.length) clientState.miners = local;
   renderMinersList();
   loadClientState().then(()=> loadShop());
 });
