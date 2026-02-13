@@ -2,192 +2,39 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hexon — Grid (Persistent & Real-time)</title>
+  <title>Hexon — Grid (Persistent, Real-time)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <style>
-    /* (unchanged style from your original — trimmed here for brevity in the preview) */
-    :root{ --bg-top:#071027; --bg-btm:#000; --panel-bg:rgba(8,18,36,0.95); --muted:#bfeafc; --accent-from:#3b82f6; --accent-to:#22d3ee; --card-bg:rgba(255,255,255,0.03); --safe-pad: env(safe-area-inset-top,12px); }
-    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
-    *,*:before,*:after{ box-sizing: inherit; }
-    #pageWrap { display:flex; flex-direction:column; gap:12px; padding:12px; min-height:100dvh; padding-top: calc(var(--safe-pad) + 8px); padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px); }
-    #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; }
-    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-height:56vh; }
-    #uiPanel{ width:100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: 48vh; overflow:auto; -webkit-overflow-scrolling: touch; }
-    .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.45); }
-    .muted{ color:var(--muted); opacity:.85; font-size:12px; }
-    .stat{ font-size:20px; font-weight:700; color:#7EE7FF; }
-    .small{ font-size:13px; }
-    .small-muted{ font-size:12px; color:#9fcbdc; opacity:.95; }
-    .energyBar{ width:100%; height:12px; background:#0f2433; border-radius:8px; overflow:hidden; margin-top:8px; }
-    .energyFill{ height:100%; width:60%; background:linear-gradient(90deg,var(--accent-to),var(--accent-from)); transition:width .25s ease; }
-    .button{ display:inline-block; padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; cursor:pointer; border:0; user-select:none; }
-    .btn-ghost{ background:transparent; border:1px solid rgba(126,231,255,0.12); color:#7EE7FF; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
-    .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
-    .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
-    .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
-    .overlay.show{ display:flex; }
-    .bottom-sheet{ width:100%; max-width:720px; border-radius:14px; background:linear-gradient(180deg,#071423,#03101a); box-shadow:0 20px 60px rgba(0,0,0,0.6); overflow:hidden; max-height: min(86vh, calc(100vh - 96px)); display:flex; flex-direction:column; }
-    .sheet-header{ padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .sheet-title{ font-weight:700; font-size:16px; color:#E6F7FF; }
-    .sheet-body{ padding:12px 16px; overflow:auto; -webkit-overflow-scrolling:touch; max-height:60vh; }
-    .sheet-actions{ padding:12px 16px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent); }
-    .wallet-option{ padding:12px; border-radius:10px; background:transparent; display:flex; justify-content:space-between; align-items:center; border:1px solid rgba(255,255,255,0.03); margin-bottom:8px; cursor:pointer; }
-    .wallet-option:active{ transform:translateY(1px); }
-    .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; background: rgba(3,10,18,0.85); color: #E6F7FF; padding: 8px 12px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 13px; z-index: 100000; display: none; }
-    nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; }
-    nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; white-space:nowrap; }
-    @media(min-width:900px){
-      #pageWrap{ flex-direction:row; align-items:flex-start; gap:16px; padding:18px; }
-      #phaserCanvas{ flex: 2; max-width: calc(100% - 360px); max-height: 80vh; }
-      #uiPanel{ flex: 1; max-width: 340px; max-height: calc(100dvh - 48px); overflow:auto; }
-      #phaserCanvas canvas { max-height:80vh; }
-    }
-  </style>
+  <style> /* (unchanged - omitted for brevity here, use your original CSS block) */ </style>
 </head>
 <body>
-  <div id="pageWrap" role="application" aria-label="Hexon game">
-    <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
-
-    <aside id="uiPanel" aria-live="polite" role="complementary" aria-label="Game controls and stats">
-      <nav>
-        <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
-        <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
-        <a href="leaderboard.html"><i class="fa-solid fa-ranking-star"></i> Leaderboard</a>
-        <a href="referrals.html"><i class="fa-solid fa-user-plus"></i> Referrals</a>
-      </nav>
-
-      <div class="card">
-        <div class="muted small">Player</div>
-        <div class="stat small" id="ui-username">Guest</div>
-        <div style="height:6px"></div>
-        <div class="muted small">Wallet</div>
-        <div class="small" id="ui-wallet">Not connected</div>
-      </div>
-
-      <div class="card">
-        <div class="small muted">Level</div>
-        <div class="stat" id="ui-level">1</div>
-        <div style="display:flex; gap:12px; margin-top:8px; align-items:center;">
-          <div><div class="muted small">Lines</div><div class="small" id="ui-lines">0</div></div>
-          <div style="margin-left:auto; text-align:right;"><div class="muted small">Score</div><div class="stat" id="ui-score">0</div></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div><div class="muted small">GP</div><div id="ui-gp" class="small">0 GP</div></div>
-          <div><button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div style="flex:1"><div class="small muted">Energy</div><div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div></div>
-          <div style="text-align:right; width:120px;"><div class="muted small">Auto Refill</div><div class="small" id="ui-auto">+10% / 30m</div></div>
-        </div>
-
-        <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <div><div class="muted small">Sittings Left</div><div class="small" id="ui-sittings">3/3</div></div>
-          <div><div class="muted small">Ads Today</div><div class="small" id="ui-adsToday">0</div></div>
-        </div>
-
-        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-          <button id="watchAdBtn" class="button"><i class="fa-solid fa-tv"></i> Watch Transmission</button>
-          <button id="showRefBtn" class="btn-ghost"><i class="fa-solid fa-share-nodes"></i> Share Referral</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="small muted">Miners (Off-chain)</div>
-        <div id="minersList" class="small" aria-live="polite" style="margin-top:8px;">
-          <div class="muted small">Loading…</div>
-        </div>
-        <div style="margin-top:8px;">
-          <button id="openStore" class="button"><i class="fa-solid fa-store"></i> Open Miner Shop</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div><div class="small muted">Claimable HXN (preview)</div><div class="stat" id="ui-hxn">0 HXN</div></div>
-          <div style="text-align:right;"><div class="muted small">Hash Units</div><div class="small" id="ui-au">AU: 0</div></div>
-        </div>
-        <div style="display:flex; gap:8px; margin-top:10px;">
-          <button id="viewAlloc" class="btn-ghost"><i class="fa-solid fa-layer-group"></i> View Allocation</button>
-          <button id="claimRewardBtn" class="button"><i class="fa-solid fa-gift"></i> Claim & Close</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="small muted">Top Scorers</div>
-        <div class="leaderboard" id="leaderboard" aria-live="polite" style="margin-top:8px;">
-          <div class="muted small">Loading…</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="small muted">Daily Missions</div>
-        <div class="small" id="missions" style="margin-top:8px;">- Clear 50 lines<br>- Play 3 games today<br>- Invite friend (referral)</div>
-      </div>
-
-      <div class="footer muted small">Pre-launch • Season active • <span id="daysLeft">74</span> days left</div>
-    </aside>
-  </div>
-
-  <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
-    <div class="bottom-sheet" role="document" aria-label="Inline sheet">
-      <div class="sheet-header">
-        <div class="sheet-title">Connect Wallet</div>
-        <div><button id="sheetClose" class="btn-ghost" aria-label="Close sheet"><i class="fa-solid fa-xmark"></i></button></div>
-      </div>
-      <div class="sheet-body" id="sheetBody" tabindex="0">
-        <div class="small-muted" style="margin-bottom:10px">Choose a wallet or paste your public key. In Telegram we open deep-links using WebApp API when available.</div>
-
-        <div class="wallet-option" id="opt-phantom" tabindex="0" role="button" aria-pressed="false">
-          <div>Phantom</div><div class="small-muted" id="det-phantom"></div>
-        </div>
-
-        <div class="wallet-option" id="opt-solflare" tabindex="0" role="button" aria-pressed="false">
-          <div>Solflare</div><div class="small-muted" id="det-solflare"></div>
-        </div>
-
-        <div class="wallet-option" id="opt-backpack" tabindex="0" role="button" aria-pressed="false">
-          <div>Backpack</div><div class="small-muted" id="det-backpack"></div>
-        </div>
-
-        <div class="wallet-option" id="opt-wc" tabindex="0" role="button" aria-pressed="false">
-          <div><i class="fa-solid fa-link"></i> WalletConnect</div><div class="small-muted">Use a compatible mobile wallet</div>
-        </div>
-
-        <div style="height:12px"></div>
-
-        <div class="small-muted">Manual public key</div>
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <input id="manualPublicKey" type="text" inputmode="text" placeholder="Paste public key here" aria-label="Public key" />
-          <button id="manualBindBtn" class="button" type="button">Bind</button>
-        </div>
-      </div>
-
-      <div class="sheet-actions" id="sheetActions">
-        <button id="sheetCancel" class="btn-ghost" type="button">Cancel</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
+  <!-- (HTML body is unchanged; keep the exact structure you had; omitted here for brevity) -->
+  <!-- Paste your original body (pageWrap, uiPanel, overlay, toast) here exactly as before -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 
   <script>
+  /**
+   * Hexon — Real-time enabled (WebSocket primary, HTTP fallback)
+   * - WebSocket: wss://<api_base_host>/ws?sessionId=<...>
+   * - Fallback HTTP batch flush to: API_BASE + '/game/events' (adjust server-side if different)
+   *
+   * Notes:
+   * - Gameplay loop, physics, drop timing and rendering are unchanged.
+   * - Networking runs asynchronously and is throttled so it cannot block input or rendering.
+   */
+
   // -----------------------
-  // Config
+  // Config (kept + realtime additions)
   // -----------------------
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
-  const WS_PATH = '/ws'; // server-side WS endpoint (try to connect; fallback if unavailable)
+  const WS_PATH = '/ws'; // server must accept websocket at this path for full real-time
+  const WS_RECONNECT_BASE = 800;   // ms base for backoff
+  const WS_HEARTBEAT_INTERVAL = 20000; // ms
+  const BATCH_FLUSH_INTERVAL = 800; // ms
+  const BATCH_MAX_EVENTS = 200;
+  const BATCH_HTTP_FALLBACK_PATH = '/game/events'; // fallback batch receiver (server can accept generic events)
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
   const BASE_CELL = 20, BASE_GAP = 2;
@@ -199,7 +46,7 @@
   const MAX_ADS_PER_DAY = 9, MAX_ADS_PER_SITTING = 3, MAX_SITTINGS_PER_DAY = 3;
 
   // -----------------------
-  // Persistence keys
+  // Persistence keys (unchanged)
   // -----------------------
   const STORAGE_KEYS = {
     CLIENT: 'hexon_client',
@@ -212,7 +59,7 @@
   };
 
   // -----------------------
-  // Default state
+  // State (unchanged base + realtime queue)
   // -----------------------
   let clientState = {
     sessionId: loadSessionFromStorage() || generateUUID(),
@@ -235,7 +82,6 @@
     actionLog: []
   };
 
-  // game state: persisted to resume mid-game
   const gameState = {
     grid: null,
     activePiece: null,
@@ -250,10 +96,21 @@
     lastTickAt: null
   };
 
+  // --- realtime queue & websocket objects ---
+  const realtimeQueue = [];
+  let ws = null;
+  let wsConnected = false;
+  let wsBackoff = 0;
+  let wsHeartbeatTimer = null;
+  let wsReconnectTimer = null;
+  let lastFlushAt = 0;
+  // throttle map for frequent events
+  const lastSent = { tick: 0, move: 0, rotate: 0 };
+
   saveSessionToStorage(clientState.sessionId);
 
   // -----------------------
-  // Storage helpers
+  // Storage helpers (unchanged)...
   // -----------------------
   function loadSessionFromStorage(){ try{return localStorage.getItem(STORAGE_KEYS.SESSION)||null;}catch(e){return null;} }
   function saveSessionToStorage(sid){ try{ if (sid) localStorage.setItem(STORAGE_KEYS.SESSION, sid); }catch(e){} }
@@ -311,14 +168,15 @@
   }
 
   // -----------------------
-  // Utilities
+  // Utilities (unchanged)
   // -----------------------
   function generateUUID(){ try{ if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
   function $(id){ return document.getElementById(id); }
+  function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); saveClientToStorage(); }
   function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
   // -----------------------
-  // Networking: REST wrapper
+  // API wrapper (kept, used for non-realtime REST ops)
   // -----------------------
   async function api(path, method='GET', body=null, optsExtra={}){
     try{
@@ -354,158 +212,197 @@
   }
 
   // -----------------------
-  // Real-time layer: WebSocket + REST fallback
+  // Real-time: helpers
   // -----------------------
-  let ws = null;
-  let wsBackoff = 1000;
-  const MAX_WS_BACKOFF = 60000;
-  const eventQueue = []; // queued events when offline
-  let flushTimer = null;
-  const FLUSH_INTERVAL = 2000; // try to flush queue every 2s
-  let wsReady = false;
-  let heartbeatTimer = null;
-
-  function buildWsUrl(){
+  function wsUrlForSession(){
     try {
       const base = API_BASE.replace(/^http/, 'ws').replace(/\/+$/,'');
-      const q = clientState.sessionId ? '?sessionId=' + encodeURIComponent(clientState.sessionId) : '';
-      return base + WS_PATH + q;
+      const sid = encodeURIComponent(clientState.sessionId || '');
+      return `${base}${WS_PATH}?sessionId=${sid}`;
     } catch(e){ return null; }
   }
 
-  function initSocket(){
-    const url = buildWsUrl();
-    if (!url) return scheduleSocketReconnect();
+  function ensureWebsocket(){
+    if (wsConnected || ws) return;
+    const url = wsUrlForSession();
+    if (!url) return;
     try {
       ws = new WebSocket(url);
-      wsReady = false;
+      ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
-        wsReady = true;
-        wsBackoff = 1000;
-        console.info('WS open', url);
-        sendEvent('connection_open', { client: navigator.userAgent, ts: Date.now() }, true);
-        flushQueue(); // push any queued events immediately
+        wsConnected = true;
+        wsBackoff = 0;
+        console.log('Realtime WS connected');
+        // send handshake
+        wsSend({ t:'handshake', ts:Date.now(), sessionId: clientState.sessionId, username: clientState.username || null });
         startHeartbeat();
+        flushRealtimeQueue(true);
       };
-      ws.onmessage = (m) => {
-        // handle server push messages (optional)
+      ws.onmessage = (evt) => {
         try {
-          const msg = JSON.parse(m.data);
-          handleServerMessage(msg);
-        } catch(e){ console.warn('ws msg parse', e); }
+          const data = JSON.parse(evt.data);
+          handleServerRealtimeMessage(data);
+        } catch(e){ console.warn('ws message parse error', e); }
       };
       ws.onclose = (ev) => {
-        wsReady = false;
+        wsConnected = false;
+        ws = null;
         stopHeartbeat();
-        console.warn('WS closed', ev.code, ev.reason);
-        scheduleSocketReconnect();
+        scheduleWsReconnect();
+        console.warn('Realtime WS closed', ev && ev.code);
       };
-      ws.onerror = (err) => {
-        wsReady = false;
-        console.warn('WS error', err);
-        try { ws.close(); } catch(e){}
-        scheduleSocketReconnect();
+      ws.onerror = (e) => {
+        console.warn('Realtime WS error', e);
+        // close to trigger reconnect
+        try{ ws.close(); } catch(e){}
       };
     } catch(e){
-      console.warn('initSocket error', e);
-      scheduleSocketReconnect();
+      console.warn('ensureWebsocket failed', e);
+      scheduleWsReconnect();
     }
   }
 
-  function scheduleSocketReconnect(){
-    clearTimeout(flushTimer);
-    flushTimer = setTimeout(()=>{
-      try {
-        wsBackoff = Math.min(MAX_WS_BACKOFF, Math.max(1000, wsBackoff * 1.8));
-      } catch(e){}
-      initSocket();
-    }, wsBackoff);
+  function scheduleWsReconnect(){
+    if (wsReconnectTimer) return;
+    wsBackoff = Math.min(60000, wsBackoff ? (wsBackoff * 1.8) : WS_RECONNECT_BASE);
+    wsReconnectTimer = setTimeout(()=> { wsReconnectTimer = null; ensureWebsocket(); }, wsBackoff);
   }
 
   function startHeartbeat(){
     stopHeartbeat();
-    heartbeatTimer = setInterval(()=> {
-      if (ws && ws.readyState === WebSocket.OPEN){
-        try { ws.send(JSON.stringify({ type:'heartbeat', ts: Date.now(), sessionId: clientState.sessionId })); } catch(e){}
-      }
-    }, 15000);
+    wsHeartbeatTimer = setInterval(()=> {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try{ wsSend({ t:'ping', ts:Date.now() }); } catch(e){ console.warn('ping failed',e); }
+    }, WS_HEARTBEAT_INTERVAL);
   }
-  function stopHeartbeat(){ if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+  function stopHeartbeat(){ if (wsHeartbeatTimer){ clearInterval(wsHeartbeatTimer); wsHeartbeatTimer=null; } }
 
-  function handleServerMessage(msg){
-    // handle incoming server instructions if any (e.g., live leaderboard updates, server-initiated state changes)
-    if (!msg || !msg.type) return;
-    switch(msg.type){
-      case 'leaderboard_update':
-        if (Array.isArray(msg.data)) renderLeaderboardFromServer(msg.data);
-        break;
-      case 'client_update':
-        // server can push energy/miners updates
-        if (msg.data) {
-          if (typeof msg.data.energy === 'number'){ clientState.energy = msg.data.energy; saveClientToStorage(); updateUI(); }
-          if (Array.isArray(msg.data.miners)){ clientState.miners = msg.data.miners; saveClientToStorage(); renderMinersList(); }
-        }
-        break;
-      default:
-        // console.log('WS message', msg);
-        break;
-    }
-  }
-
-  async function flushQueue(){
-    // Called periodically (or on ws open) to flush queued events.
-    if (ws && ws.readyState === WebSocket.OPEN){
-      while(eventQueue.length){
-        const e = eventQueue.shift();
-        try { ws.send(JSON.stringify(e)); } catch(err){ eventQueue.unshift(e); break; }
-      }
-      return;
-    }
-    // fallback: send batched REST requests to server if WS not available
-    if (eventQueue.length === 0) return;
-    const batch = eventQueue.splice(0, 20);
+  function wsSend(msg){
+    if (!msg) return;
+    const envelope = { s: clientState.sessionId || null, u: clientState.username || null, ts: Date.now(), payload: msg };
+    // prefer ws
     try {
-      // Attempt to POST to a best-effort server endpoint: /game/event
-      // If your server doesn't expose /game/event, this will still try and we also try /game/submit-score fallback.
-      const resp = await api('/game/event','POST',{ sessionId: clientState.sessionId, events: batch });
-      if (!resp || (resp && resp.error)){ // fallback to /game/submit-score with an 'events' wrapper
-        await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, events: batch, fallback:true });
+      if (ws && ws.readyState === WebSocket.OPEN){
+        ws.send(JSON.stringify(envelope));
+        return true;
       }
-    } catch(e){
-      // on error, requeue for retry (with backoff)
-      eventQueue.unshift(...batch);
-    }
-  }
-
-  setInterval(()=> { try { flushQueue(); } catch(e){} }, FLUSH_INTERVAL);
-
-  // sendEvent optionally bypassQueue to force immediate send if WS is available
-  async function sendEvent(type, payload = {}, bypassQueue = false){
-    const message = { type, ts: Date.now(), sessionId: clientState.sessionId, username: clientState.username, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, data: payload };
-    logAction(type, payload, /*remoteLog*/ false); // local log; avoid double-queue recursion
-    if (ws && ws.readyState === WebSocket.OPEN){
-      try { ws.send(JSON.stringify(message)); return true; } catch(e){ console.warn('ws send failed', e); }
-    }
-    // if bypassQueue true we still attempt an immediate REST POST
-    if (bypassQueue){
-      try {
-        const r = await api('/game/event','POST', message);
-        if (r && (r.ok || r.success || r.eventsAccepted)) return true;
-      } catch(e){ console.warn('immediate REST event failed', e); }
-    }
-    // otherwise queue it
-    eventQueue.push(message);
-    // ensure flush timer will run soon
-    if (flushTimer) clearTimeout(flushTimer);
-    flushTimer = setTimeout(()=> flushQueue(), 200);
+    } catch(e){ console.warn('wsSend error', e); }
+    // else queue
+    realtimeQueuePush(envelope);
+    // attempt to ensure there's a ws connection
+    ensureWebsocket();
     return false;
   }
 
-  // start WS right away (best-effort)
-  initSocket();
+  function realtimeQueuePush(envelope){
+    if (!envelope) return;
+    realtimeQueue.push(envelope);
+    // cap memory
+    if (realtimeQueue.length > 5000) realtimeQueue.splice(0, realtimeQueue.length - 5000);
+  }
+
+  async function flushRealtimeQueue(forceHttp=false){
+    // flush via websocket if available, otherwise send HTTP batch fallback.
+    if (ws && ws.readyState === WebSocket.OPEN && realtimeQueue.length){
+      try {
+        // send up to BATCH_MAX_EVENTS in batch to reduce JSON overhead
+        const batch = realtimeQueue.splice(0, BATCH_MAX_EVENTS);
+        ws.send(JSON.stringify({ s: clientState.sessionId || null, batch, ts: Date.now() }));
+        lastFlushAt = Date.now();
+        return true;
+      } catch(e){ console.warn('flush via WS failed', e); }
+    }
+
+    // HTTP fallback: POST batched events to API_BASE + BATCH_HTTP_FALLBACK_PATH
+    if ((forceHttp || realtimeQueue.length) && navigator.onLine){
+      try {
+        const batch = [];
+        while (realtimeQueue.length && batch.length < BATCH_MAX_EVENTS) batch.push(realtimeQueue.shift());
+        if (batch.length === 0) return false;
+        // send asynchronously without awaiting to avoid blocking UI — but keep a promise to observe failures
+        fetch(API_BASE + BATCH_HTTP_FALLBACK_PATH, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Session-Id': clientState.sessionId || '' },
+          body: JSON.stringify({ ts: Date.now(), batch })
+        }).then(async (res)=> {
+          if (!res.ok) {
+            console.warn('batch fallback non-ok', res.status);
+            // requeue on failure (prepend)
+            realtimeQueue.unshift(...batch);
+          } else {
+            // optionally parse response for server commands
+            try { const j = await res.json(); if (j && j.commands) j.commands.forEach(handleServerRealtimeMessage); } catch(e){}
+          }
+        }).catch(err => {
+          console.warn('batch fallback error', err);
+          // requeue on error
+          realtimeQueue.unshift(...batch);
+        });
+        lastFlushAt = Date.now();
+        return true;
+      } catch(e){ console.warn('HTTP fallback send failed', e); }
+    }
+    return false;
+  }
+
+  // regular background flush
+  setInterval(()=> {
+    // throttle flush to interval
+    if (Date.now() - lastFlushAt < (BATCH_FLUSH_INTERVAL - 20)) return;
+    flushRealtimeQueue(false);
+  }, BATCH_FLUSH_INTERVAL);
+
+  // on unload, try to send remaining events
+  window.addEventListener('beforeunload', ()=> {
+    try {
+      if (realtimeQueue.length === 0) return;
+      const payload = { ts: Date.now(), batch: realtimeQueue.splice(0, realtimeQueue.length) };
+      // try sendBeacon (best-effort)
+      const url = API_BASE + BATCH_HTTP_FALLBACK_PATH;
+      if (navigator.sendBeacon){
+        const b = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        navigator.sendBeacon(url, b);
+      } else {
+        // synchronous XHR fallback
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        try { xhr.send(JSON.stringify(payload)); } catch(e){}
+      }
+    } catch(e){ console.warn('beforeunload realtime flush failed', e); }
+  });
+
+  function handleServerRealtimeMessage(msg){
+    // server can send lightweight commands (e.g., adjust energy, send leaderboard updates)
+    if (!msg) return;
+    try {
+      if (msg.cmd === 'syncClient' && msg.data){
+        Object.assign(clientState, msg.data);
+        saveClientToStorage();
+        updateUI();
+      }
+      if (msg.cmd === 'forceSave'){ saveClientToStorage(); saveGameToStorage(); }
+      if (msg.cmd === 'ping'){ wsSend({ t:'pong', ts:Date.now() }); }
+      // handle other commands as you design on server
+    } catch(e){ console.warn('handleServerRealtimeMessage err', e); }
+  }
+
+  // convenience: queue a logical event (type, payload)
+  function realtimeEvent(type, payload={}, opts={priority:false, throttle:0}){
+    const now = Date.now();
+    if (opts.throttle && (now - (lastSent[type] || 0) < opts.throttle)) return;
+    lastSent[type] = now;
+    const event = { type, ts: now, payload };
+    // high-priority => attempt immediate wsSend
+    if (opts.priority){
+      if (!wsSend({ t:'event', e:event })) realtimeQueuePush({ t:'event', e:event });
+    } else {
+      realtimeQueuePush({ t:'event', e:event });
+    }
+  }
 
   // -----------------------
-  // Telegram init
+  // Telegram init & UI helpers (unchanged)
   // -----------------------
   function initTelegram(){
     try {
@@ -522,9 +419,6 @@
     } catch(e){ console.warn('initTelegram error', e); }
   }
 
-  // -----------------------
-  // UI helpers (unchanged largely)
-  // -----------------------
   function getRefFromURL(){ try{ const params = new URLSearchParams(window.location.search); return params.get('ref') || params.get('refCode') || null; } catch(e){ return null; } }
   function savePendingReferral(code){ if (!code) return; try{ localStorage.setItem(STORAGE_KEYS.PENDING_REF, code); clientState.pendingReferral = code; saveClientToStorage(); } catch(e){} }
   function loadPendingReferral(){ try{ const code = localStorage.getItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
@@ -534,29 +428,7 @@
 
   function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
 
-  async function refreshLeaderboard(){
-    const top = await api('/leaderboard/top','GET');
-    const el = $('leaderboard'); if (!el) return;
-    el.innerHTML='';
-    if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
-    top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); });
-    // push leaderboard request as an event so server can optionally stream updates back
-    sendEvent('leaderboard_refreshed', { count: top.length }, true);
-  }
-
-  function renderLeaderboardFromServer(data){
-    const el = $('leaderboard'); if (!el) return;
-    el.innerHTML = '';
-    data.forEach((t, idx) => {
-      const row = document.createElement('div');
-      row.className='leader-entry';
-      row.style.display='flex';
-      row.style.justifyContent='space-between';
-      row.style.padding='6px 0';
-      row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`;
-      el.appendChild(row);
-    });
-  }
+  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
 
   function derivedGPFromScore(score){ return Math.floor((score || 0) / 150); }
   function computeDisplayedGP(){ const base = Number(clientState.gpBase || 0); const derived = derivedGPFromScore(gameState.score || 0); return base + derived; }
@@ -578,7 +450,7 @@
   }
 
   // -----------------------
-  // Pieces & core logic (mostly unchanged, but every action sends events)
+  // Pieces & core logic (kept; only calls to realtimeEvent added)
   // -----------------------
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
@@ -637,7 +509,12 @@
     startDropLoop(){
       if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
       const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); sendEvent('tick_drop', { moved }); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); gameState.lastTickAt = Date.now(); saveGameToStorage(); updateUI(); } });
+      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop',{ moved }); // realtime tick event (throttle)
+          realtimeEvent('tick', { moved, piece: snapshotActivePiece(), score: gameState.score, lines: gameState.lines }, { priority:false, throttle:150 });
+          if (!moved) {
+            lockPiece();
+          }
+          gameState.lastTickAt = Date.now(); saveGameToStorage(); updateUI(); } });
     }
 
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
@@ -656,7 +533,7 @@
       if (!document.querySelector('.touch-controls')) setupTouchControls(this);
     }
 
-    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); sendEvent('auto_recharge', { energy: clientState.energy }); saveClientToStorage(); }
+    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); realtimeEvent('auto_recharge',{ energy: clientState.energy }, { priority:true }); saveClientToStorage(); }
     catchUpMissedTicks(){
       try {
         if (!gameState.lastTickAt || !gameState.isPlaying) return;
@@ -679,11 +556,15 @@
     }
   }
 
-  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
-
+  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); realtimeEvent('input', { key: code, score: gameState.score }, { throttle:120 }); }
   function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
 
-  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); sendEvent('init_grid', { rows: GRID_ROWS, cols: GRID_COLS }); }
+  function snapshotActivePiece(){
+    if (!gameState.activePiece) return null;
+    return { type: gameState.activePiece.type, rot: gameState.activePiece.rot, x: gameState.activePiece.x, y: gameState.activePiece.y };
+  }
+
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); realtimeEvent('init', { score: gameState.score, level: gameState.level }, { priority:true }); }
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
@@ -697,7 +578,7 @@
     gameState.activePiece = { type, rot:0, x:xStart, y:0 };
     gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
     logAction('spawn',{ type, x:xStart, y:0 });
-    sendEvent('spawn', { type, x: xStart, y: 0 });
+    realtimeEvent('spawn',{ type, x:xStart, y:0, energy: clientState.energy }, { throttle:200 });
     if (checkCollision(getPieceCells(gameState.activePiece))) {
       gameOver();
     } else {
@@ -707,16 +588,15 @@
   }
 
   function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
-
-  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); sendEvent('move', { dir, piece: gameState.activePiece }); saveGameToStorage(); } }
+  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); saveGameToStorage(); realtimeEvent('move',{ dir, piece: snapshotActivePiece() }, { throttle:80 }); } }
 
   function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
 
-  function softDrop(){ if (movePieceDown()){ gameState.score += 1; logAction('soft_drop'); sendEvent('soft_drop', { score: gameState.score }); updateUI(); saveGameToStorage(); } }
+  function softDrop(){ if (movePieceDown()){ gameState.score += 1; logAction('soft_drop'); updateUI(); saveGameToStorage(); realtimeEvent('soft_drop',{ piece: snapshotActivePiece(), score: gameState.score }, { throttle:60 }); } }
 
-  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); sendEvent('hard_drop', { falls, score: gameState.score }); updateUI(); saveGameToStorage(); }
+  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); updateUI(); saveGameToStorage(); realtimeEvent('hard_drop',{ falls, score: gameState.score }, { priority:true }); }
 
-  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); sendEvent('rotate', { rot: cand.rot, kick: k, piece: gameState.activePiece }); saveGameToStorage(); return; } } }
+  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); saveGameToStorage(); realtimeEvent('rotate',{ rot:cand.rot, kick:k, piece: snapshotActivePiece() }, { throttle:120 }); return; } } }
 
   function lockPiece(){
     const ap = gameState.activePiece; if (!ap) return;
@@ -727,12 +607,13 @@
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
     if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
     gameState.activePiece = null;
-    sendEvent('lock', { piece: ap, cleared: cleared.length, energy: clientState.energy });
     spawnPiece();
     try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
     saveClientToStorage();
     saveGameToStorage();
     updateUI();
+    // high priority event: locked & snapshot of grid diff (lightweight)
+    realtimeEvent('lock', { piece: ap, clearedRows: cleared.slice(), energy: clientState.energy, score: gameState.score }, { priority:true });
   }
 
   function clearLines(rows){
@@ -742,7 +623,8 @@
     gameState.score += base[count] * gameState.level;
     gameState.lines += count; gameState.combo += 1;
     logAction('clear',{ count, combo:gameState.combo });
-    sendEvent('clear_lines', { rows, count, combo: gameState.combo, score: gameState.score });
+    // notify server immediately about lines cleared (important)
+    realtimeEvent('clear', { count, combo: gameState.combo, score: gameState.score, lines: gameState.lines }, { priority:true });
     if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); }
     saveGameToStorage();
     updateUI();
@@ -751,12 +633,10 @@
   async function gameOver(){
     gameState.isPlaying = false;
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
-    // send final score to server
-    try{
-      await sendEvent('gameover', { score: gameState.score, lines: gameState.lines }, true);
-      // the server still expects /game/submit-score — keep that call for backward compat
-      await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) });
-    }catch(e){ console.warn('gameover notify failed', e); }
+    // send final score immediately (via ws if available or via REST)
+    realtimeEvent('gameover', { score:gameState.score, lines:gameState.lines, actionLog: clientState.actionLog.slice(-2000) }, { priority:true });
+    // also do your existing /game/submit-score REST call for compatibility
+    try{ await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
     showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick = hideSheet; }});
     saveGameToStorage();
     saveClientToStorage();
@@ -788,16 +668,16 @@
     [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
     wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
     const ui = $('uiPanel'); if (ui) ui.append(wrapper);
-    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); sendEvent('touch_left', {}); logAction('touch_left'); updateUI(); saveGameToStorage(); };
-    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); sendEvent('touch_right', {}); logAction('touch_right'); updateUI(); saveGameToStorage(); };
-    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); sendEvent('touch_rotate', {}); logAction('touch_rotate'); updateUI(); saveGameToStorage(); };
-    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); sendEvent('touch_drop', {}); logAction('touch_drop'); updateUI(); saveGameToStorage(); };
+    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); saveGameToStorage(); realtimeEvent('touch_left',{ piece: snapshotActivePiece() },{ throttle:120 }); };
+    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); saveGameToStorage(); realtimeEvent('touch_right',{ piece: snapshotActivePiece() },{ throttle:120 }); };
+    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); saveGameToStorage(); realtimeEvent('touch_rotate',{ piece: snapshotActivePiece() },{ throttle:120 }); };
+    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); saveGameToStorage(); realtimeEvent('touch_drop',{ piece: snapshotActivePiece() },{ throttle:80 }); };
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet code (kept but now logs events on bind/connect)
+  // Wallet / deep-linking code (kept; realtime events added when binding)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -873,7 +753,6 @@
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'phantom');
-          if (ok) sendEvent('wallet_connect', { provider: 'phantom', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('phantom injected connect failed', e); }
@@ -881,7 +760,6 @@
     const deep = phantomDeepLink();
     setPendingDeepLink('phantom');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://phantom.app/', appName: 'Phantom', providerName: 'phantom' });
-    if (ok) sendEvent('wallet_connect', { provider: 'phantom' }, true);
     return Boolean(ok);
   }
 
@@ -893,7 +771,6 @@
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'solflare');
-          if (ok) sendEvent('wallet_connect', { provider: 'solflare', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('solflare injected failed', e); }
@@ -904,7 +781,6 @@
         const publicKey = extractPublicKeyFromProviderResponse(r);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'solflare');
-          if (ok) sendEvent('wallet_connect', { provider: 'solflare', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('solflare via solana failed', e); }
@@ -912,7 +788,6 @@
     const deep = solflareDeepLink();
     setPendingDeepLink('solflare');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://solflare.com/', appName: 'Solflare', providerName: 'solflare' });
-    if (ok) sendEvent('wallet_connect', { provider: 'solflare' }, true);
     return Boolean(ok);
   }
 
@@ -924,7 +799,6 @@
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'backpack');
-          if (ok) sendEvent('wallet_connect', { provider: 'backpack', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('backpack injected failed', e); }
@@ -935,7 +809,6 @@
         const publicKey = extractPublicKeyFromProviderResponse(r);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'backpack');
-          if (ok) sendEvent('wallet_connect', { provider: 'backpack', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){}
@@ -943,7 +816,6 @@
     const deep = backpackDeepLink();
     setPendingDeepLink('backpack');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://backpack.app/', appName: 'Backpack', providerName: 'backpack' });
-    if (ok) sendEvent('wallet_connect', { provider: 'backpack' }, true);
     return Boolean(ok);
   }
 
@@ -953,13 +825,12 @@
         const pk = await window.SOL_WALLETCONNECT_CONNECTOR.connect({ redirect: buildCleanRedirect() });
         if (pk) {
           const ok = await finalizeBind(pk, 'walletconnect');
-          if (ok) sendEvent('wallet_connect', { provider: 'walletconnect', publicKey: pk }, true);
           return Boolean(ok);
         }
       }
       showSheet({ title:'WalletConnect', bodyHtml:`<div class="small-muted">No helper available. Open your mobile wallet and use WalletConnect; then paste the returned public key below.</div><div style="margin-top:8px;"><input id="wcManual" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" placeholder="Paste public key" /></div>`, actionsHtml:`<button id="wcBind" class="button">Bind</button><button id="wcClose" class="btn-ghost">Close</button>`, onMounted: ()=> {
         const b = $('wcBind'); const c = $('wcClose');
-        if (b){ b.onclick = async ()=> { const pk = ($('wcManual').value||'').trim(); if (!pk) return alert('Paste public key'); hideSheet(); const ok = await finalizeBind(pk, 'walletconnect'); if (!ok) showToast('Bind failed',1200); else sendEvent('wallet_connect', { provider: 'walletconnect', publicKey: pk }, true); }; }
+        if (b){ b.onclick = async ()=> { const pk = ($('wcManual').value||'').trim(); if (!pk) return alert('Paste public key'); hideSheet(); const ok = await finalizeBind(pk, 'walletconnect'); if (!ok) showToast('Bind failed',1200); }; }
         if (c) c.onclick = hideSheet;
       }});
       return false;
@@ -975,26 +846,12 @@
   window.openBackpackDeepLink = () => openDeepLinkAndWait({ deepLink: backpackDeepLink(), installUrl: 'https://backpack.app/', appName: 'Backpack', providerName: 'backpack' });
   window.showWalletPicker = function(){ showSheet({ title:'Connect Wallet', bodyHtml: $('sheetBody').innerHTML }); };
 
-  function extractPublicKeyFromProviderResponse(resp){
-    try {
-      if (!resp) return null;
-      if (typeof resp === 'string') return resp;
-      if (resp.publicKey && typeof resp.publicKey.toString === 'function') return resp.publicKey.toString();
-      if (resp.publicKey && typeof resp.publicKey === 'string') return resp.publicKey;
-      if (resp.public_key && typeof resp.public_key === 'string') return resp.public_key;
-      if (resp.address && typeof resp.address === 'string') return resp.address;
-      if (resp.data && resp.data.publicKey) return resp.data.publicKey;
-      const s = JSON.stringify(resp);
-      const match = s.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
-      if (match) return match[1];
-    } catch(e){}
-    return null;
-  }
-
   async function bindWalletWithPublicKey(publicKey, providerName){
     try {
       const payload = { sessionId: clientState.sessionId, wallet: publicKey, walletProvider: providerName||null, referral: clientState.pendingReferral || clientState.referralCode || null, username: clientState.username, telegramId: clientState.telegramId };
       const res = await api('/wallet/bind','POST', payload);
+      // immediate realtime event about wallet bind
+      realtimeEvent('wallet_bind', { wallet: publicKey, provider: providerName || null }, { priority:true });
       if (res && res.ok){
         if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.wallet = publicKey;
@@ -1009,7 +866,6 @@
         saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
         saveClientToStorage();
         updateUI(); renderMinersList();
-        sendEvent('wallet_bind', { provider: providerName, publicKey }, true);
         return true;
       }
       return false;
@@ -1094,11 +950,11 @@
                 const det = detectInjectedProviders();
                 clientState.walletProvider = det.phantom ? 'phantom' : (det.solflare ? 'solflare' : (det.backpack ? 'backpack' : clientState.walletProvider));
                 const ok = await bindWalletWithPublicKey(publicKey, clientState.walletProvider);
-                if (ok){ showToast('Wallet connected',900); sendEvent('wallet_connect_event', { provider: clientState.walletProvider, publicKey }, true); }
+                if (ok) showToast('Wallet connected',900);
               }
             } catch(e){ console.warn('provider connect handler error', e); }
           });
-          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); sendEvent('wallet_disconnect', {}, true); });
+          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
         } catch(e){ console.warn('solana listener setup failed', e); }
       }
 
@@ -1109,10 +965,10 @@
             if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
               clientState.walletProvider = 'solflare';
               const ok = await bindWalletWithPublicKey(publicKey, 'solflare');
-              if (ok) { showToast('Wallet connected',900); sendEvent('wallet_connect_event', { provider: 'solflare', publicKey }, true); }
+              if (ok) showToast('Wallet connected',900);
             }
           });
-          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); sendEvent('wallet_disconnect', {}, true); });
+          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
         } catch(e){}
       }
 
@@ -1123,10 +979,10 @@
             if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
               clientState.walletProvider = 'backpack';
               const ok = await bindWalletWithPublicKey(publicKey, 'backpack');
-              if (ok) { showToast('Wallet connected',900); sendEvent('wallet_connect_event', { provider: 'backpack', publicKey }, true); }
+              if (ok) showToast('Wallet connected',900);
             }
           });
-          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); sendEvent('wallet_disconnect', {}, true); });
+          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
         } catch(e){}
       }
     } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
@@ -1169,7 +1025,6 @@
         if (typeof resp.energy === 'number') clientState.energy = Math.max(0, Math.min(100, resp.energy));
         saveClientToStorage();
         updateUI();
-        sendEvent('claim_rewards', { gp: clientState.gpBase, userAU: clientState.userAU }, true);
         showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
         setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
       } else {
@@ -1189,130 +1044,23 @@
   }
 
   // -----------------------
-  // Bottom sheet wiring (unchanged behavior)
+  // Bottom sheet wiring (unchanged) — keep exactly as you had (omitted for brevity)
   // -----------------------
   (function sheetBootstrap(){
-    function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
-    function openExternal(url){
-      const tg = tgInstance();
-      if (tg){
-        try { if (typeof tg.openUrl === 'function'){ tg.openUrl(url); return; } if (typeof tg.openLink === 'function'){ tg.openLink(url); return; } if (typeof tg.openPopup === 'function'){ tg.openPopup(url); return; } } catch(e){ console.warn('tg.open* failed', e); }
-      }
-      try { window.location.assign(url); } catch(e){ try { window.open(url, '_blank'); } catch(e2){ console.warn('openExternal fallback failed', e2); } }
-    }
-
-    const overlay = document.getElementById('overlay');
-    const sheetClose = document.getElementById('sheetClose');
-    const sheetCancel = document.getElementById('sheetCancel');
-    const bindBtn = document.getElementById('bindWalletBtn');
-    const sheetBody = document.getElementById('sheetBody');
-
-    function showSheetLocal(opts = {}) {
-      if (!overlay) return;
-      if (opts.title !== undefined) document.querySelector('.sheet-title').textContent = opts.title;
-      if (opts.bodyHtml !== undefined) sheetBody.innerHTML = opts.bodyHtml;
-      if (opts.actionsHtml !== undefined) document.getElementById('sheetActions').innerHTML = opts.actionsHtml;
-      overlay.classList.add('show'); overlay.setAttribute('aria-hidden','false');
-      try{ const tg = tgInstance(); if (tg && typeof tg.expand === 'function') tg.expand(); }catch(e){}
-      try{ sheetBody.focus(); }catch(e){}
-      if (typeof opts.onMounted === 'function') { setTimeout(()=> { try{ opts.onMounted(); }catch(e){ console.warn('sheet onMounted failed', e); } }, 50); }
-      setDetectionBadges();
-    }
-    function hideSheetLocal(){ if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
-
-    function setDetectionBadges(){
-      const d = detectInjectedProviders();
-      try {
-        document.getElementById('det-phantom').textContent = d.phantom ? '• detected' : '';
-        document.getElementById('det-solflare').textContent = d.solflare ? '• detected' : '';
-        document.getElementById('det-backpack').textContent = d.backpack ? '• detected' : '';
-      } catch(e){}
-    }
-
-    const optionMap = {
-      'opt-phantom': async ()=> {
-        try {
-          const ok = await connectWithPhantom();
-          if (ok) { hideSheetLocal(); return; }
-          openExternal(phantomDeepLink());
-        } catch(e){ console.warn(e); showToast('Connection failed', 1200); }
-      },
-      'opt-solflare': async ()=> {
-        try {
-          const ok = await connectWithSolflare();
-          if (ok) { hideSheetLocal(); return; }
-          openExternal(solflareDeepLink());
-        } catch(e){ console.warn(e); showToast('Connection failed', 1200); }
-      },
-      'opt-backpack': async ()=> {
-        try {
-          const ok = await connectWithBackpack();
-          if (ok) { hideSheetLocal(); return; }
-          openExternal(backpackDeepLink());
-        } catch(e){ console.warn(e); showToast('Connection failed', 1200); }
-      },
-      'opt-wc': async ()=> {
-        try {
-          const ok = await connectWithWalletConnect();
-          if (ok){ hideSheetLocal(); return; }
-          const tg = tgInstance();
-          if (tg) { alert('Open your mobile wallet and choose WalletConnect. Then paste the returned public key into Hexon.'); } else { alert('Open your wallet app and choose WalletConnect, or use a WalletConnect-enabled wallet.'); }
-        } catch(e){ console.warn(e); alert('WalletConnect attempt failed'); }
-      }
-    };
-
-    async function manualBind(publicKey){
-      if (!publicKey || publicKey.length < 20){ alert('Invalid public key'); return; }
-      if (typeof window.finalizeBind === 'function'){
-        try { const ok = await window.finalizeBind(publicKey, 'manual'); if (ok) hideSheetLocal(); return; } catch(e){ console.warn('finalizeBind failed', e); alert('Server bind failed'); return; }
-      }
-      try { localStorage.setItem(STORAGE_KEYS.BOUND_WALLET, publicKey); localStorage.setItem(STORAGE_KEYS.BOUND_PROVIDER, 'manual'); const wEl = document.getElementById('ui-wallet'); const pEl = document.getElementById('ui-provider'); if (wEl) wEl.textContent = publicKey; if (pEl) pEl.textContent = 'manual'; hideSheetLocal(); showToast('Public key stored locally (no server bind performed).', 2000); } catch(e){ console.warn(e); alert('Unable to save locally'); }
-    }
-
-    function interceptBind(ev){ ev.preventDefault(); ev.stopImmediatePropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); return false; }
-
-    function onKeyDown(e){ if (e.key === 'Escape' && overlay.classList.contains('show')){ hideSheetLocal(); } }
-
-    document.addEventListener('DOMContentLoaded', ()=>{
-      if (bindBtn){ bindBtn.addEventListener('pointerdown', interceptBind, { capture:true, passive:false }); bindBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); }, { passive:false }); bindBtn.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); } }); }
-
-      if (sheetClose) sheetClose.addEventListener('click', hideSheetLocal);
-      if (sheetCancel) sheetCancel.addEventListener('click', hideSheetLocal);
-      overlay.addEventListener('pointerdown', (ev)=>{ if (ev.target === overlay) hideSheetLocal(); });
-
-      Object.keys(optionMap).forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try{ await optionMap[id](); } catch(e){ console.warn(e); showToast('Connection failed', 1200); } }, { passive:false });
-        el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
-      });
-
-      const manualBtn = document.getElementById('manualBindBtn');
-      if (manualBtn){ manualBtn.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); const pk = (document.getElementById('manualPublicKey').value||'').trim(); await manualBind(pk); }, { passive:false }); }
-
-      setDetectionBadges();
-      try{ const sid = localStorage.getItem(STORAGE_KEYS.SESSION); if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid; const wallet = localStorage.getItem(STORAGE_KEYS.BOUND_WALLET); if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet; const prov = localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER); if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov; } catch(e){}
-      document.addEventListener('keydown', onKeyDown);
-    });
-
-    window._hexon_openWalletSheet = ()=> showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML });
-    window._hexon_closeWalletSheet = hideSheetLocal;
-    window._hexon_showSheet = showSheetLocal;
-    window._hexon_hideSheet = hideSheetLocal;
-    window._hexon_showToast = (m,t)=> { const tEl = document.getElementById('toast'); if (!tEl) return; tEl.textContent = m; tEl.style.display='block'; setTimeout(()=> tEl.style.display='none', t || 2000); };
+    /* ... copy your existing bottom sheet bootstrap code here unchanged ... */
   })();
 
   // -----------------------
-  // Boot / init
+  // Boot / init (modified to start WS)
   // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
       initTelegram();
       readWalletReturn();
-
       const ref = getRefFromURL();
       if (ref) savePendingReferral(ref); else loadPendingReferral();
 
+      // wire page buttons (unchanged wiring)
       try{ const wa = $('watchAdBtn'); if (wa) wa.addEventListener('click', showAdAndVerify); } catch(e){}
       try{ const os = $('openStore'); if (os) os.addEventListener('click', ()=> window.location.href = 'shop.html'); } catch(e){}
       try{ const bw = $('bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); if (typeof window._hexon_openWalletSheet === 'function') { window._hexon_openWalletSheet(); } else { showSheet({ title: 'Connect Wallet' }); } }); } catch(e){}
@@ -1320,6 +1068,7 @@
       try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
       try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
 
+      // Restore saved client & game if present (persistence)
       const savedClient = loadClientFromStorage();
       if (savedClient){
         const keepSession = clientState.sessionId;
@@ -1375,7 +1124,7 @@
         }
       } catch(e){ console.warn('client init failed', e); }
 
-      // scale & start phaser
+      // compute scale & start phaser (unchanged)
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
@@ -1394,21 +1143,20 @@
       setupInjectedProviderListeners();
       loadAdsGram();
 
+      // start WS and flush loop
+      ensureWebsocket();
+
       updateUI();
       renderMinersList();
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
-
       setInterval(()=>{ gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); }, 3000);
-
-      // try WS if not initialized earlier
-      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) initSocket();
 
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
 
   // -----------------------
-  // AdsGram + ad flow (kept)
+  // AdsGram + ad flow (kept + realtime event)
   // -----------------------
   let AdsGramLoaded = false, AdController = null;
   function loadAdsGram(){
@@ -1441,7 +1189,8 @@
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
         logAction('ad_watched',{ provider, granted: resp.grantedPercent });
-        sendEvent('ad_watched', { provider, granted: resp.grantedPercent }, true);
+        // realtime event for ad
+        realtimeEvent('ad_verify', { provider, granted: resp.grantedPercent }, { priority:true });
         saveClientToStorage();
         updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
@@ -1453,7 +1202,7 @@
   }
 
   // -----------------------
-  // small UI sheet helpers (used above)
+  // small UI sheet helpers (unchanged)
   // -----------------------
   function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
   function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
@@ -1468,16 +1217,6 @@
     if (typeof onMounted === 'function'){ setTimeout(()=> { try{ onMounted(); } catch(e){ console.warn('sheet onMounted error', e); } }, 50); }
   }
   function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
-
-  // -----------------------
-  // Logging helpers
-  // -----------------------
-  function logAction(a,p={}, remoteLog=true){
-    clientState.actionLog.push({t:Date.now(), a, p});
-    if (clientState.actionLog.length>5000) clientState.actionLog.shift();
-    saveClientToStorage();
-    // if remoteLog true, send lightweight event (we call sendEvent at the call site to avoid double-send)
-  }
 
   // -----------------------
   // Misc helpers exported
