@@ -399,7 +399,7 @@
   }
 
   // -----------------------
-  // Ad / sitting helpers
+  // Ad / sitting helpers (REVISED)
   // -----------------------
   function resetDailyAdsIfNeeded(){
     try {
@@ -440,7 +440,7 @@
           if ((Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
             clientState.adsThisSitting = 0;
             clientState.adsThisSittingStartedAt = null;
-            // we keep sittingsUsedToday as-is (it counted when the sitting started)
+            // we do NOT change sittingsUsedToday here (sittingsUsedToday is incremented only when a sitting completes)
             saveClientToStorage();
           }
         }
@@ -481,11 +481,18 @@
   }
 
   // mark start of sitting (when first ad of sitting is requested/granted)
+  // NOTE: we only set startedAt here — we increment sittingsUsedToday when the sitting completes (reaches MAX_ADS_PER_SITTING)
   function startSittingIfNeeded(){
-    if (!clientState.adsThisSitting || clientState.adsThisSitting === 0){
+    if (!clientState.adsThisSittingStartedAt || clientState.adsThisSittingStartedAt === null){
       clientState.adsThisSittingStartedAt = Date.now();
-      clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1;
     }
+  }
+
+  // When a sitting finishes (reached MAX_ADS_PER_SITTING) we call this to consume a daily sitting.
+  function finishSittingAndConsume(){
+    clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1;
+    // keep adsThisSitting and adsThisSittingStartedAt so cooldown can be computed against startedAt.
+    saveClientToStorage();
   }
 
   // -----------------------
@@ -715,8 +722,8 @@
     rebuildCellSprites(){
       try {
         if (this.cellSprites && Array.isArray(this.cellSprites)){
-          for (let r=0;r < this.cellSprites.length; r++){
-            for (let c=0;c < (this.cellSprites[r] || []).length; c++){
+          for (let r=0; r<this.cellSprites.length; r++){
+            for (let c=0; c<(this.cellSprites[r] || []).length; c++){
               const obj = this.cellSprites[r][c];
               if (obj && typeof obj.destroy === 'function') obj.destroy();
             }
@@ -1715,7 +1722,6 @@
             gameState.tickRemaining = savedGame.tickRemaining || null;
 
             // Decide if we should attempt resume:
-            // If the saved game indicates it was playing, or was playing before hidden, or had a hiddenAt -> try resuming
             const wasPlayingFlag = Boolean(savedGame.wasPlayingBeforeHidden);
             const savedMarkedPlaying = Boolean(savedGame.isPlaying);
             const hadHidden = Boolean(savedGame.hiddenAt);
@@ -1894,7 +1900,7 @@
   });
 
   // -----------------------
-  // AdsGram loader + showAdAndVerify (updated)
+  // AdsGram loader + showAdAndVerify (REVISED)
   // -----------------------
   let AdsGramLoaded = false, AdController = null;
   function loadAdsGram(){ try { if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } } if (AdsGramLoaded) return; const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true; s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } }; s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); }; document.head.appendChild(s); } catch(e){ console.warn('loadAdsGram', e); } }
@@ -1910,6 +1916,20 @@
         return;
       }
 
+      // If current sitting already reached max and cooldown not expired -> block
+      if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
+        if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) < SITTING_COOLDOWN_MS){
+          const rem = Math.max(0, SITTING_COOLDOWN_MS - (Date.now() - clientState.adsThisSittingStartedAt));
+          showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Sitting limit reached. Next sitting available in <b>${formatMs(rem)}</b>.</div>` });
+          return;
+        } else {
+          // cooldown expired — clear sitting so new sitting may start
+          clientState.adsThisSitting = 0;
+          clientState.adsThisSittingStartedAt = null;
+          saveClientToStorage();
+        }
+      }
+
       const timeToNextSitting = timeUntilNextSittingAvailable();
       if (timeToNextSitting > 0){
         const msg = (clientState.sittingsUsedToday || 0) >= MAX_SITTINGS_PER_DAY
@@ -1922,7 +1942,7 @@
       // OK to show an ad — show explanatory sheet and start ad flow
       showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
 
-      // start sitting if this is the first ad in the sitting (counts as one sitting immediately)
+      // start sitting timestamp (do not consume the daily sitting allowance yet — consume on sitting completion)
       startSittingIfNeeded();
       saveClientToStorage();
       updateUI();
@@ -1946,12 +1966,18 @@
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
 
-        // if we exceeded max ads this sitting, ensure cooldown is enforced (adsThisSittingStartedAt exists already)
-        if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
-          // sitting remains started; cooldown will be computed from adsThisSittingStartedAt
+        // ensure we do not exceed max ads per sitting
+        if (clientState.adsThisSitting > MAX_ADS_PER_SITTING){
+          clientState.adsThisSitting = MAX_ADS_PER_SITTING;
         }
 
-        logAction('ad_watched',{ provider, granted: resp.grantedPercent });
+        // If this sitting reached the per-sitting max, consume one sitting from daily allowance now.
+        if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
+          // increment daily sittings used (this reduces Sittings Left)
+          finishSittingAndConsume();
+        }
+
+        logAction('ad_watched',{ provider, granted: resp.grantedPercent, adsThisSitting: clientState.adsThisSitting, sittingsUsedToday: clientState.sittingsUsedToday });
         saveClientToStorage();
         updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
