@@ -49,7 +49,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      box-sizing: border-box;
+      box-sizing:border-box;
       /* The height will be set from JS to match the canvas height precisely */
       min-height: 260px;
       max-height: 80vh;
@@ -118,11 +118,19 @@
       </nav>
 
       <div class="card">
-        <div class="muted small">Player</div>
-        <div class="stat small" id="ui-username">Guest</div>
-        <div style="height:6px"></div>
-        <div class="muted small">Wallet</div>
-        <div class="small" id="ui-wallet">Not connected</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div>
+            <div class="muted small">Player</div>
+            <div class="stat small" id="ui-username">Guest</div>
+            <div style="height:6px"></div>
+            <div class="muted small">Wallet</div>
+            <div class="small" id="ui-wallet">Not connected</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
+            <button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button>
+            <button id="resetGameBtn" class="btn-ghost" type="button" aria-label="Reset game">Reset Game</button>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -137,7 +145,6 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div><div class="muted small">GP</div><div id="ui-gp" class="small">0 GP</div></div>
-          <div><button id="bindWalletBtn" class="button" type="button" aria-label="Bind wallet">Bind Wallet</button></div>
         </div>
       </div>
 
@@ -456,7 +463,7 @@
   }
 
   // -----------------------
-  // Pieces & core logic (unchanged behaviour)
+  // Pieces & core logic
   // -----------------------
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
@@ -581,7 +588,9 @@
           const x = this.gridOrigin.x + c*(CELL+GAP) + CELL/2;
           const y = this.gridOrigin.y + r*(CELL+GAP) + CELL/2;
           const rect = this.add.rectangle(x,y,CELL,CELL,0x102033).setStrokeStyle(1,0x092033,0.6);
-          rect.updateFill = function(color){ try{ this.fillColor = color; }catch(e){} try{ if (typeof this.setFillStyle === 'function') this.setFillStyle(color); }catch(e){} };
+          rect.updateFill = function(color){
+            try { if (typeof this.setFillStyle === 'function') this.setFillStyle(color); else this.fillColor = color; } catch(e) { try{ this.fillColor = color; }catch(_){} }
+          };
           rect.setInteractive({ useHandCursor: true });
           ((rr,cc,node)=> node.on('pointerdown', ()=> { vibratePreferTelegram(); logAction('cell_click',{x:cc,y:rr}); const orig = node.fillColor || 0x102033; node.updateFill(0xFFFFFF); this.time.delayedCall(80, ()=> node.updateFill(orig)); }))(r,c,rect);
           this.cellSprites[r][c] = rect;
@@ -676,9 +685,26 @@
   // -----------------------
   function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
 
-  function getPieceCells(piece){ if(!piece) return []; const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
+  // normalize rotation index and handle missing data safely
+  function getPieceCells(piece){
+    if(!piece || !piece.type) return [];
+    const states = PIECES[piece.type];
+    if (!states || !Array.isArray(states) || states.length === 0) return [];
+    const rotRaw = Number.isFinite(piece.rot) ? piece.rot : 0;
+    const rotIndex = ((Math.floor(rotRaw) % states.length) + states.length) % states.length;
+    const state = states[rotIndex];
+    if (!Array.isArray(state)) return [];
+    return state.map(p => ({ x: (p[0] + (piece.x||0)), y: (p[1] + (piece.y||0)) }));
+  }
 
   function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); sendState('init'); }
+
+  function getSpawnYOffset(type){
+    // I piece needs extra headroom for vertical rotations
+    if (type === 'I') return -2;
+    // O piece sits inside top row nicely
+    return -1;
+  }
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
@@ -689,10 +715,12 @@
     }
     const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
     const xStart = Math.floor((GRID_COLS - 4)/2);
-    gameState.activePiece = { type, rot:0, x:xStart, y:0 };
+    const yStart = getSpawnYOffset(type);
+    gameState.activePiece = { type, rot:0, x:xStart, y:yStart };
     gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-    logAction('spawn',{ type, x:xStart, y:0 });
-    sendState('spawn', { spawnedType: type, xStart });
+    logAction('spawn',{ type, x:xStart, y:yStart });
+    sendState('spawn', { spawnedType: type, xStart, yStart });
+    // If collision at spawn (blocked by stacked blocks) => game over
     if (checkCollision(getPieceCells(gameState.activePiece))) {
       gameOver();
     } else {
@@ -711,7 +739,30 @@
 
   function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); sendState('hard_drop',{ falls }); updateUI(); saveGameToStorage(); }
 
-  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); sendState('rotate',{ rot:cand.rot, kick:k }); saveGameToStorage(); return; } } }
+  function rotatePiece(){
+    if (!gameState.activePiece) return;
+    const type = gameState.activePiece.type;
+    const states = PIECES[type];
+    if (!states || states.length <= 1) return; // O piece or malformed -> no rotation
+    const currentRot = Number.isFinite(gameState.activePiece.rot) ? Math.floor(gameState.activePiece.rot) : 0;
+    const newRot = (currentRot + 1) % states.length;
+    // standard kick offsets (try center, left, right, up)
+    const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:0,dy:-1},{dx:-2,dy:0},{dx:2,dy:0}];
+    for (const k of kicks){
+      const cand = { ...gameState.activePiece, rot: newRot, x: gameState.activePiece.x + k.dx, y: gameState.activePiece.y + k.dy };
+      if (!checkCollision(getPieceCells(cand))){
+        // store normalized rot
+        gameState.activePiece.rot = ((newRot % states.length) + states.length) % states.length;
+        gameState.activePiece.x = cand.x;
+        gameState.activePiece.y = cand.y;
+        logAction('rotate',{ rot:gameState.activePiece.rot, kick:k });
+        sendState('rotate',{ rot:gameState.activePiece.rot, kick:k });
+        saveGameToStorage();
+        return;
+      }
+    }
+    // no valid rotation found -> do nothing
+  }
 
   function lockPiece(){
     const ap = gameState.activePiece; if (!ap) return;
@@ -1314,6 +1365,9 @@
       try{ const sr = $('showRefBtn'); if (sr) sr.addEventListener('click', showReferralModal); } catch(e){}
       try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
       try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
+
+      // Reset button wiring
+      try{ const rb = $('resetGameBtn'); if (rb) rb.addEventListener('click', ()=> { resetForPlay(); showToast('Game reset',900); }); } catch(e){}
 
       // Restore saved client & game
       const savedClient = loadClientFromStorage();
