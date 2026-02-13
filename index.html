@@ -131,7 +131,7 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div style="flex:1"><div class="small muted">Energy</div><div class="energyBar"><div id="ui-energyFill" class="energyFill"></div></div></div>
-          <div style="text-align:right; width:120px;"><div class="muted small">Auto Refill</div><div class="small" id="ui-auto">+10% / 30m</div></div>
+          <div style="text-align:right; width:140px;"><div class="muted small">Auto Refill</div><div class="small" id="ui-auto">+10% / 30m</div></div>
         </div>
 
         <div style="display:flex; justify-content:space-between; margin-top:8px;">
@@ -181,8 +181,6 @@
       <div class="footer muted small">Pre-launch • Season active • <span id="daysLeft">74</span> days left</div>
     </aside>
   </div>
-
-  <!-- removed on-screen piece navigation buttons (we use gestures) -->
 
   <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="bottom-sheet" role="document" aria-label="Inline sheet">
@@ -242,7 +240,14 @@
   const ADSGRAM_BLOCK_ID = 'int-22823';
   const AUTO_RECHARGE_MINUTES = 30;
   const AUTO_RECHARGE_PERCENT = 10;
-  const MAX_ADS_PER_DAY = 9, MAX_ADS_PER_SITTING = 3, MAX_SITTINGS_PER_DAY = 3;
+
+  // ad config
+  const MAX_ADS_PER_DAY = 9;
+  const MAX_ADS_PER_SITTING = 3;
+  const MAX_SITTINGS_PER_DAY = 3;
+  const SITTING_COOLDOWN_MINUTES = 120; // 2 hours
+  const SITTING_COOLDOWN_MS = SITTING_COOLDOWN_MINUTES * 60e3;
+
   const TAP_MAX_TIME = 250;
   const TAP_MAX_MOV = 14;
   const SWIPE_MIN_DIST = 30;
@@ -280,8 +285,12 @@
     referralCode: null,
     pendingReferral: null,
     referralsActive: 0,
+    // ad-related persisted fields:
     adsThisSitting: 0,
+    adsThisSittingStartedAt: null, // ms timestamp when current sitting began
+    sittingsUsedToday: 0,
     adsToday: 0,
+    adsTodayDate: null, // ISO date string of the adsToday day
     actionLog: []
   };
 
@@ -372,6 +381,116 @@
   function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); saveClientToStorage(); }
   function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
+  // time helpers
+  function isoDateStr(d = new Date()){ return d.toISOString().slice(0,10); }
+  function msUntilNextLocalMidnight(){
+    const n = new Date();
+    const next = new Date(n.getFullYear(), n.getMonth(), n.getDate()+1);
+    return next.getTime() - Date.now();
+  }
+  function formatMs(ms){
+    if (!Number.isFinite(ms) || ms <= 0) return 'now';
+    const s = Math.ceil(ms/1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s/60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m/60);
+    return `${h}h ${m%60}m`;
+  }
+
+  // -----------------------
+  // Ad / sitting helpers
+  // -----------------------
+  function resetDailyAdsIfNeeded(){
+    try {
+      const today = isoDateStr();
+      if (!clientState.adsTodayDate || clientState.adsTodayDate !== today){
+        clientState.adsTodayDate = today;
+        clientState.adsToday = 0;
+        clientState.sittingsUsedToday = 0;
+        // clear any in-progress sitting if its cooldown expired
+        if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
+          clientState.adsThisSitting = 0;
+          clientState.adsThisSittingStartedAt = null;
+        }
+        saveClientToStorage();
+        updateUI();
+      }
+    } catch(e){ console.warn('resetDailyAdsIfNeeded', e); }
+  }
+
+  // call on load and periodically (handles midnight rollover while page open)
+  function normalizeAdStateOnLoad(){
+    try {
+      const today = isoDateStr();
+      if (!clientState.adsTodayDate){
+        clientState.adsTodayDate = today;
+      }
+      // reset if date mismatch
+      if (clientState.adsTodayDate !== today){
+        clientState.adsTodayDate = today;
+        clientState.adsToday = 0;
+        clientState.sittingsUsedToday = 0;
+        clientState.adsThisSitting = 0;
+        clientState.adsThisSittingStartedAt = null;
+        saveClientToStorage();
+      } else {
+        // if sitting started but cooldown expired, clear sitting so a new sitting can be started
+        if (clientState.adsThisSittingStartedAt){
+          if ((Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
+            clientState.adsThisSitting = 0;
+            clientState.adsThisSittingStartedAt = null;
+            // we keep sittingsUsedToday as-is (it counted when the sitting started)
+            saveClientToStorage();
+          }
+        }
+      }
+      updateUI();
+    } catch(e){ console.warn('normalizeAdStateOnLoad failed', e); }
+  }
+
+  function sittingsRemainingToday(){
+    return Math.max(0, (MAX_SITTINGS_PER_DAY - (clientState.sittingsUsedToday || 0)));
+  }
+
+  // returns ms until next sitting availability (0 if allowed now)
+  function timeUntilNextSittingAvailable(){
+    // daily exhausted?
+    if ((clientState.sittingsUsedToday || 0) >= MAX_SITTINGS_PER_DAY){
+      return msUntilNextLocalMidnight();
+    }
+    // if currently in a sitting and not yet reached ad limit -> allowed now
+    if ((clientState.adsThisSitting || 0) < MAX_ADS_PER_SITTING){
+      return 0;
+    }
+    // sitting reached ad limit -> check cooldown from start
+    if (clientState.adsThisSittingStartedAt){
+      const elapsed = Date.now() - clientState.adsThisSittingStartedAt;
+      const rem = Math.max(0, SITTING_COOLDOWN_MS - elapsed);
+      return rem;
+    }
+    return 0;
+  }
+
+  function canWatchAd(){
+    resetDailyAdsIfNeeded();
+    // daily ad cap
+    if ((clientState.adsToday || 0) >= MAX_ADS_PER_DAY) return false;
+    // time until next sitting
+    return timeUntilNextSittingAvailable() === 0;
+  }
+
+  // mark start of sitting (when first ad of sitting is requested/granted)
+  function startSittingIfNeeded(){
+    if (!clientState.adsThisSitting || clientState.adsThisSitting === 0){
+      clientState.adsThisSittingStartedAt = Date.now();
+      clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1;
+    }
+  }
+
+  // -----------------------
+  // Utilities: API and UI (unchanged mostly)
+  // -----------------------
   async function api(path, method='GET', body=null, optsExtra={}){
     try{
       let url = API_BASE + path;
@@ -453,7 +572,7 @@
     if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
     if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
     if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
-    if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
+    if ($('ui-sittings')) $('ui-sittings').innerText = `${sittingsRemainingToday()}/${MAX_SITTINGS_PER_DAY}`;
   }
 
   // -----------------------
@@ -1566,6 +1685,11 @@
         clientState.sessionId = keepSession || clientState.sessionId;
       }
 
+      // Ensure ad state normalized for date / cooldowns
+      normalizeAdStateOnLoad();
+      // Periodic check for midnight rollover (while page open)
+      setInterval(resetDailyAdsIfNeeded, 60e3);
+
       // Load saved game and determine whether to attempt resume
       const savedGame = loadGameFromStorage();
       let shouldAttemptResume = false;
@@ -1770,29 +1894,63 @@
   });
 
   // -----------------------
-  // AdsGram loader + showAdAndVerify (unchanged)
+  // AdsGram loader + showAdAndVerify (updated)
   // -----------------------
   let AdsGramLoaded = false, AdController = null;
   function loadAdsGram(){ try { if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } } if (AdsGramLoaded) return; const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true; s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } }; s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); }; document.head.appendChild(s); } catch(e){ console.warn('loadAdsGram', e); } }
 
   async function showAdAndVerify(){
-    if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Daily ad limit reached.</div>' }); return; }
-    if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Sitting ad limit reached.</div>' }); return; }
-    showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
     try {
+      resetDailyAdsIfNeeded();
+
+      // daily ad cap
+      if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){
+        const rem = msUntilNextLocalMidnight();
+        showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Daily ad limit reached. Next reset in <b>${formatMs(rem)}</b>.</div>` });
+        return;
+      }
+
+      const timeToNextSitting = timeUntilNextSittingAvailable();
+      if (timeToNextSitting > 0){
+        const msg = (clientState.sittingsUsedToday || 0) >= MAX_SITTINGS_PER_DAY
+                  ? `All sittings used today. Next reset in <b>${formatMs(timeToNextSitting)}</b>.`
+                  : `Sitting cooldown active. Next sitting available in <b>${formatMs(timeToNextSitting)}</b>.`;
+        showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">${msg}</div>` });
+        return;
+      }
+
+      // OK to show an ad — show explanatory sheet and start ad flow
+      showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
+
+      // start sitting if this is the first ad in the sitting (counts as one sitting immediately)
+      startSittingIfNeeded();
+      saveClientToStorage();
+      updateUI();
+
       let provider='Fallback', payload={ adSessionId: generateUUID() };
       if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
         provider='AdsGram';
         try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
       } else {
+        // fallback simulated ad delay if SDK not available
         await new Promise(res=>setTimeout(res,1800));
       }
+
       const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
       hideSheet();
       if (resp && resp.grantedPercent){
+        // apply reward
         clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
+
+        // increment counters
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
+
+        // if we exceeded max ads this sitting, ensure cooldown is enforced (adsThisSittingStartedAt exists already)
+        if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
+          // sitting remains started; cooldown will be computed from adsThisSittingStartedAt
+        }
+
         logAction('ad_watched',{ provider, granted: resp.grantedPercent });
         saveClientToStorage();
         updateUI();
