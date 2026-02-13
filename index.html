@@ -2,14 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hexon — Grid</title>
+  <title>Hexon — Grid (Persistent)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    /* MOBILE-FIRST: stacked layout (canvas first, controls below). Minimal visual changes but responsive. */
     :root{
       --bg-top:#071027; --bg-btm:#000; --panel-bg:rgba(8,18,36,0.95);
       --muted:#bfeafc; --accent-from:#3b82f6; --accent-to:#22d3ee;
@@ -19,13 +18,10 @@
     html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
     *,*:before,*:after{ box-sizing: inherit; }
 
-    /* Page layout */
     #pageWrap { display:flex; flex-direction:column; gap:12px; padding:12px; min-height:100dvh; padding-top: calc(var(--safe-pad) + 8px); padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px); }
     #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; }
-    /* keep canvas responsive within container and constrain height */
     #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-height:56vh; }
 
-    /* Controls panel below canvas */
     #uiPanel{ width:100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: 48vh; overflow:auto; -webkit-overflow-scrolling: touch; }
     .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.45); }
     .muted{ color:var(--muted); opacity:.85; font-size:12px; }
@@ -40,7 +36,6 @@
     .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
     .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
 
-    /* bottom-sheet overlay */
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
     .overlay.show{ display:flex; }
     .bottom-sheet{ width:100%; max-width:720px; border-radius:14px; background:linear-gradient(180deg,#071423,#03101a); box-shadow:0 20px 60px rgba(0,0,0,0.6); overflow:hidden; max-height: min(86vh, calc(100vh - 96px)); display:flex; flex-direction:column; }
@@ -55,7 +50,6 @@
     nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; }
     nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; white-space:nowrap; }
 
-    /* desktop tweaks: place UI to side if enough width */
     @media(min-width:900px){
       #pageWrap{ flex-direction:row; align-items:flex-start; gap:16px; padding:18px; }
       #phaserCanvas{ flex: 2; max-width: calc(100% - 360px); max-height: 80vh; }
@@ -66,10 +60,8 @@
 </head>
 <body>
   <div id="pageWrap" role="application" aria-label="Hexon game">
-    <!-- Canvas container (Phaser will attach a canvas here) -->
     <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
 
-    <!-- UI Panel moved below on small screens (still side on wide screens) -->
     <aside id="uiPanel" aria-live="polite" role="complementary" aria-label="Game controls and stats">
       <nav>
         <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
@@ -156,7 +148,6 @@
     </aside>
   </div>
 
-  <!-- bottom-sheet overlay (self-contained) -->
   <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="bottom-sheet" role="document" aria-label="Inline sheet">
       <div class="sheet-header">
@@ -199,17 +190,15 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <!-- phaser lib -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 
   <script>
-  /* =========================
-     Preserved config & helpers (mostly unchanged, trimmed comments)
-     ========================= */
+  // -----------------------
+  // Config
+  // -----------------------
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
-  // REDUCED base cell so the grid renders smaller
   const BASE_CELL = 20, BASE_GAP = 2;
   const INITIAL_DROP_MS = 800;
   const ADSGRAM_SRC = 'https://sad.adsgram.ai/js/sad.min.js';
@@ -218,19 +207,30 @@
   const AUTO_RECHARGE_PERCENT = 10;
   const MAX_ADS_PER_DAY = 9, MAX_ADS_PER_SITTING = 3, MAX_SITTINGS_PER_DAY = 3;
 
-  // Persistence keys/versioning
-  const GAME_STORAGE_KEY = 'hexon_game_v1';
-  const CLIENT_STORAGE_KEY = 'hexon_client_v1';
-  const SAVE_SCHEMA_VERSION = 1;
+  // -----------------------
+  // Persistence keys
+  // -----------------------
+  const STORAGE_KEYS = {
+    CLIENT: 'hexon_client',
+    GAME: 'hexon_game',
+    SESSION: 'hexon_session',
+    BOUND_WALLET: 'hexon_bound_wallet',
+    BOUND_PROVIDER: 'hexon_bound_provider',
+    PENDING_REF: 'hexon_pending_ref',
+    PENDING_DEEPLINK: 'hexon_pending_deeplink'
+  };
 
+  // -----------------------
+  // Default state
+  // -----------------------
   let clientState = {
     sessionId: loadSessionFromStorage() || generateUUID(),
     userId: null,
     username: null,
     telegramId: null,
     wallet: loadBoundWalletFromStorage(),
-    walletProvider: localStorage.getItem('hexon_bound_provider') || null,
-    gp: 0,
+    walletProvider: localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER) || null,
+    gpBase: 0,              // server-provided GP (base), score-derived GP is added on display
     energy: 100,
     miners: [],
     shopItems: [],
@@ -243,17 +243,90 @@
     adsToday: 0,
     actionLog: []
   };
+
+  // game state: persisted to resume mid-game
+  const gameState = {
+    grid: null,
+    activePiece: null,
+    nextPiece: null,
+    score: 0,
+    level: 1,
+    lines: 0,
+    dropInterval: INITIAL_DROP_MS,
+    isPlaying: false,
+    combo: 0,
+    lastSavedAt: null,      // timestamp saved last
+    lastTickAt: null        // timestamp of last automatic drop tick (for catch-up)
+  };
+
   saveSessionToStorage(clientState.sessionId);
 
-  function loadSessionFromStorage(){ try{return localStorage.getItem('hexon_session')||null;}catch(e){return null;} }
-  function saveSessionToStorage(sid){ try{ if (sid) localStorage.setItem('hexon_session', sid); }catch(e){} }
-  function loadBoundWalletFromStorage(){ try{return localStorage.getItem('hexon_bound_wallet')||null;}catch(e){return null;} }
-  function saveBoundWalletToStorage(pk, provider){ try{ if (pk) localStorage.setItem('hexon_bound_wallet', pk); if (provider) localStorage.setItem('hexon_bound_provider', provider); }catch(e){} }
-  function clearBoundWalletFromStorage(){ try{ localStorage.removeItem('hexon_bound_wallet'); localStorage.removeItem('hexon_bound_provider'); }catch(e){} }
+  // -----------------------
+  // Storage helpers
+  // -----------------------
+  function loadSessionFromStorage(){ try{return localStorage.getItem(STORAGE_KEYS.SESSION)||null;}catch(e){return null;} }
+  function saveSessionToStorage(sid){ try{ if (sid) localStorage.setItem(STORAGE_KEYS.SESSION, sid); }catch(e){} }
+  function loadBoundWalletFromStorage(){ try{return localStorage.getItem(STORAGE_KEYS.BOUND_WALLET)||null;}catch(e){return null;} }
+  function saveBoundWalletToStorage(pk, provider){ try{ if (pk) localStorage.setItem(STORAGE_KEYS.BOUND_WALLET, pk); if (provider) localStorage.setItem(STORAGE_KEYS.BOUND_PROVIDER, provider); }catch(e){} }
+  function clearBoundWalletFromStorage(){ try{ localStorage.removeItem(STORAGE_KEYS.BOUND_WALLET); localStorage.removeItem(STORAGE_KEYS.BOUND_PROVIDER); }catch(e){} }
 
+  function saveClientToStorage(){
+    try {
+      const toSave = Object.assign({}, clientState);
+      // avoid saving large action log; persist recent
+      toSave.actionLog = (clientState.actionLog || []).slice(-2000);
+      localStorage.setItem(STORAGE_KEYS.CLIENT, JSON.stringify(toSave));
+    } catch(e){ console.warn('saveClientToStorage error', e); }
+  }
+
+  function saveGameToStorage(){
+    try {
+      const toSave = {
+        grid: gameState.grid,
+        activePiece: gameState.activePiece,
+        nextPiece: gameState.nextPiece,
+        score: gameState.score,
+        level: gameState.level,
+        lines: gameState.lines,
+        dropInterval: gameState.dropInterval,
+        isPlaying: gameState.isPlaying,
+        combo: gameState.combo,
+        lastSavedAt: Date.now(),
+        lastTickAt: gameState.lastTickAt || Date.now()
+      };
+      localStorage.setItem(STORAGE_KEYS.GAME, JSON.stringify(toSave));
+    } catch(e){ console.warn('saveGameToStorage error', e); }
+  }
+
+  function loadClientFromStorage(){
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.CLIENT);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed;
+    } catch(e){ return null; }
+  }
+
+  function loadGameFromStorage(){
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.GAME);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed;
+    } catch(e){ return null; }
+  }
+
+  function clearSavedGame(){
+    try { localStorage.removeItem(STORAGE_KEYS.GAME); } catch(e) {}
+  }
+
+  // -----------------------
+  // Utilities
+  // -----------------------
   function generateUUID(){ try{ if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
   function $(id){ return document.getElementById(id); }
-  function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); }
+  function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); saveClientToStorage(); }
+  function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
   async function api(path, method='GET', body=null, optsExtra={}){
     try{
@@ -288,6 +361,9 @@
     } catch(e){ console.warn('API error', e); return null; }
   }
 
+  // -----------------------
+  // Telegram init
+  // -----------------------
   function initTelegram(){
     try {
       if (window.Telegram && window.Telegram.WebApp){
@@ -303,72 +379,50 @@
     } catch(e){ console.warn('initTelegram error', e); }
   }
 
-  function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
-  function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
-    const { overlay, sheetBody, sheetTitle, sheetActions } = getSheetElements();
-    if (!overlay || !sheetBody || !sheetTitle || !sheetActions){ console.warn('Sheet elements missing'); const { showToast } = getSheetElements(); showToast('UI unavailable', 1200); return; }
-    sheetTitle.textContent = title;
-    sheetBody.innerHTML = bodyHtml;
-    sheetActions.innerHTML = actionsHtml;
-    overlay.classList.add('show');
-    overlay.setAttribute('aria-hidden','false');
-    try{ sheetBody.focus(); }catch(e){}
-    if (typeof onMounted === 'function'){ setTimeout(()=> { try{ onMounted(); } catch(e){ console.warn('sheet onMounted error', e); } }, 50); }
-  }
-  function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
-  function showToast(msg, ms=2000){ const s = getSheetElements(); s.showToast(msg, ms); }
-
+  // -----------------------
+  // UI helpers
+  // -----------------------
   function getRefFromURL(){ try{ const params = new URLSearchParams(window.location.search); return params.get('ref') || params.get('refCode') || null; } catch(e){ return null; } }
-  function savePendingReferral(code){ if (!code) return; try{ localStorage.setItem('hexon_pending_ref', code); clientState.pendingReferral = code; } catch(e){} }
-  function loadPendingReferral(){ try{ const code = localStorage.getItem('hexon_pending_ref'); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
-  function clearPendingReferral(){ try{ localStorage.removeItem('hexon_pending_ref'); clientState.pendingReferral = null; } catch(e){} }
+  function savePendingReferral(code){ if (!code) return; try{ localStorage.setItem(STORAGE_KEYS.PENDING_REF, code); clientState.pendingReferral = code; saveClientToStorage(); } catch(e){} }
+  function loadPendingReferral(){ try{ const code = localStorage.getItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
+  function clearPendingReferral(){ try{ localStorage.removeItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = null; saveClientToStorage(); } catch(e){} }
 
-  let AdsGramLoaded = false, AdController = null;
-  function loadAdsGram(){
-    try {
-      if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } }
-      if (AdsGramLoaded) return;
-      const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true;
-      s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } };
-      s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); };
-      document.head.appendChild(s);
-    } catch(e){ console.warn('loadAdsGram', e); }
+  function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display='block'; setTimeout(()=> el.style.display='none', ms); }
+
+  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
+
+  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
+
+  function derivedGPFromScore(score){ // 150 score == 1 GP
+    const d = Math.floor((score || 0) / 150);
+    return d;
   }
 
-  async function showAdAndVerify(){
-    if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Daily ad limit reached.</div>' }); return; }
-    if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Sitting ad limit reached.</div>' }); return; }
-    showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
-    try {
-      let provider='Fallback', payload={ adSessionId: generateUUID() };
-      if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
-        provider='AdsGram';
-        try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
-      } else {
-        await new Promise(res=>setTimeout(res,1800));
-      }
-      const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
-      hideSheet();
-      if (resp && resp.grantedPercent){
-        clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
-        clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
-        clientState.adsToday = (clientState.adsToday||0) + 1;
-        logAction('ad_watched',{ provider, granted: resp.grantedPercent });
-        updateUI();
-        showToast(`Energy credited +${resp.grantedPercent}%`,1200);
-        // persist client state change
-        saveClientToStorage();
-      } else {
-        const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
-        showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">${escapeHtml(msg)}</div>` });
-      }
-    } catch(e){ hideSheet(); console.warn('showAdAndVerify error', e); showToast('Ad error — try later',1200); }
+  function computeDisplayedGP(){
+    const base = Number(clientState.gpBase || 0);
+    const derived = derivedGPFromScore(gameState.score || 0);
+    return base + derived;
   }
 
-  /* ------------------------
-     Game: preserved phaser logic (unchanged)
-     with added persistence hooks
-  ------------------------*/
+  function updateUI(){
+    if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
+    if ($('ui-gp')) $('ui-gp').innerText = computeDisplayedGP() + ' GP';
+    if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
+    if ($('ui-level')) $('ui-level').innerText = gameState.level;
+    if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
+    if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
+    if ($('ui-hxn')) { const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0; $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN'; }
+    if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
+    if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
+    if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
+    if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
+    if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
+    if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
+  }
+
+  // -----------------------
+  // Pieces & core logic
+  // -----------------------
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
     J: [[[0,0],[0,1],[1,1],[2,1]], [[1,0],[2,0],[1,1],[1,2]], [[0,1],[1,1],[2,1],[2,2]], [[1,0],[1,1],[0,2],[1,2]]],
@@ -380,93 +434,9 @@
   };
   const PIECE_TYPES = Object.keys(PIECES);
 
-  const gameState = { grid:null, activePiece:null, nextPiece:null, score:0, level:1, lines:0, dropInterval:INITIAL_DROP_MS, isPlaying:false, combo:0 };
-
   let phaserGame;
   let CELL = BASE_CELL, GAP = BASE_GAP;
-  let _saveTimer = null;
-  let _autosaveIntervalTimer = null;
-  let _restoredFromStorage = false;
 
-  /* ------------------------
-     Persistence functions: save/load game & client
-     ------------------------*/
-  function snapshotForSave(){
-    return {
-      schema: SAVE_SCHEMA_VERSION,
-      ts: Date.now(),
-      gameState: {
-        score: gameState.score,
-        level: gameState.level,
-        lines: gameState.lines,
-        dropInterval: gameState.dropInterval,
-        isPlaying: gameState.isPlaying,
-        combo: gameState.combo,
-        activePiece: gameState.activePiece ? { ...gameState.activePiece } : null,
-        nextPiece: gameState.nextPiece || null,
-        // grid as array-of-arrays (letters or 0)
-        grid: gameState.grid
-      },
-      clientState: {
-        gp: clientState.gp,
-        energy: clientState.energy,
-        wallet: clientState.wallet,
-        walletProvider: clientState.walletProvider
-      }
-    };
-  }
-
-  function saveGameToStorage(){
-    try{
-      const payload = snapshotForSave();
-      localStorage.setItem(GAME_STORAGE_KEY, JSON.stringify(payload));
-    }catch(e){ console.warn('saveGameToStorage failed', e); }
-  }
-
-  function saveClientToStorage(){
-    try{
-      const c = { schema: SAVE_SCHEMA_VERSION, ts: Date.now(), gp: clientState.gp, energy: clientState.energy, wallet: clientState.wallet, walletProvider: clientState.walletProvider };
-      localStorage.setItem(CLIENT_STORAGE_KEY, JSON.stringify(c));
-    }catch(e){ console.warn('saveClientToStorage failed', e); }
-  }
-
-  function loadGameFromStorage(){
-    try{
-      const raw = localStorage.getItem(GAME_STORAGE_KEY);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw);
-      if (!parsed || !parsed.gameState) return false;
-      const s = parsed.gameState;
-      // basic validation
-      if (!Array.isArray(s.grid) || s.grid.length !== GRID_ROWS) return false;
-      gameState.grid = s.grid.map(row => (Array.isArray(row) ? row.slice(0, GRID_COLS) : Array(GRID_COLS).fill(0)));
-      gameState.score = Number(s.score) || 0;
-      gameState.level = Number(s.level) || 1;
-      gameState.lines = Number(s.lines) || 0;
-      gameState.dropInterval = Number(s.dropInterval) || INITIAL_DROP_MS;
-      gameState.isPlaying = Boolean(s.isPlaying);
-      gameState.combo = Number(s.combo) || 0;
-      gameState.activePiece = s.activePiece || null;
-      gameState.nextPiece = s.nextPiece || (PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]);
-      // restore some client bits if present
-      if (parsed.clientState){
-        clientState.gp = parsed.clientState.gp ?? clientState.gp;
-        clientState.energy = parsed.clientState.energy ?? clientState.energy;
-        clientState.wallet = parsed.clientState.wallet ?? clientState.wallet;
-        clientState.walletProvider = parsed.clientState.walletProvider ?? clientState.walletProvider;
-      }
-      _restoredFromStorage = true;
-      return true;
-    }catch(e){ console.warn('loadGameFromStorage failed', e); return false; }
-  }
-
-  function clearSavedGame(){
-    try{ localStorage.removeItem(GAME_STORAGE_KEY); }catch(e){}
-  }
-
-  /* ------------------------
-     Game scene & lifecycle
-  ------------------------*/
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
   class GameScene extends Phaser.Scene {
     constructor(){ super({ key:'GameScene' }); }
@@ -482,11 +452,11 @@
       for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
       for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
 
-      // initialize grid: prefer restore from storage; otherwise fresh
-      if (!_restoredFromStorage || !gameState.grid){ initGrid(); }
-      // ensure next piece exists
-      if (!gameState.nextPiece) gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-      // create cell sprites
+      // If a saved grid exists, keep it; otherwise initialize.
+      if (!gameState.grid) initGrid();
+      // ensure activePiece exists; if not, spawn (spawnPiece respects energy)
+      if (!gameState.activePiece) spawnPiece();
+
       this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
       for (let r=0;r<GRID_ROWS;r++){
         for (let c=0;c<GRID_COLS;c++){
@@ -500,36 +470,22 @@
         }
       }
 
-      // if restored from storage and there's an active piece, keep it (else spawn)
-      if (!_restoredFromStorage || !gameState.activePiece){
-        spawnPiece();
-      } else {
-        // validate collision after restore
-        if (checkCollision(getPieceCells(gameState.activePiece))){ 
-          // if restored into collision (maybe the saved state was mid-lock), attempt to move piece up; if impossible -> game over
-          let canFix=false;
-          for (let dy=-2;dy<=2;dy++){
-            const cand = {...gameState.activePiece, y: gameState.activePiece.y + dy};
-            if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; canFix=true; break; }
-          }
-          if (!canFix){ // treat as game over (preserve grid & score)
-            gameState.isPlaying = false;
-            setTimeout(()=> { gameOver(); }, 200);
-          }
-        }
-      }
-
-      gameState.isPlaying = (typeof gameState.isPlaying === 'boolean') ? gameState.isPlaying : true;
+      gameState.isPlaying = gameState.isPlaying !== undefined ? gameState.isPlaying : true;
       updateUI();
+      // Catch up any missed ticks before scheduling the loop
+      this.catchUpMissedTicks();
       this.startDropLoop();
       this.setupInput();
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
+      // autosave interval from scene (safe)
+      this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
     }
 
     startDropLoop(){
       if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
       const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); } });
+      // schedule recurring drop (we've already caught up to now)
+      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); gameState.lastTickAt = Date.now(); saveGameToStorage(); updateUI(); } });
     }
 
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
@@ -548,30 +504,71 @@
       if (!document.querySelector('.touch-controls')) setupTouchControls(this);
     }
 
-    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); saveClientToStorage(); }
+    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); }
+
+    catchUpMissedTicks(){
+      try {
+        if (!gameState.lastTickAt || !gameState.isPlaying) return;
+        const now = Date.now();
+        const elapsed = Math.max(0, now - gameState.lastTickAt);
+        const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+        const ticks = Math.floor(elapsed / di);
+        if (!ticks) return;
+        for (let i=0;i<ticks;i++){
+          if (!gameState.isPlaying) break;
+          const moved = movePieceDown();
+          if (!moved){
+            lockPiece();
+            // if lockPiece spawns a new piece and that collides, gameOver will be triggered
+            if (!gameState.isPlaying) break;
+          }
+        }
+        gameState.lastTickAt = now;
+        saveGameToStorage();
+      } catch(e){ console.warn('catchUpMissedTicks error', e); }
+    }
   }
 
-  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameDebounced(); saveClientToStorage(); }
+  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
   function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
-  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; }
-  function spawnPiece(){ 
-    if ((clientState.energy||0) <= 0){ gameState.isPlaying=false; showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' }); saveGameToStorage(); return; } 
-    if (!gameState.activePiece){
-      const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-      const xStart = Math.floor((GRID_COLS - 4)/2);
-      gameState.activePiece = { type, rot:0, x:xStart, y:0 };
-      gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
-      logAction('spawn',{ type, x:xStart, y:0 });
+
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); }
+
+  function spawnPiece(){
+    if ((clientState.energy||0) <= 0){
+      gameState.isPlaying=false;
+      showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' });
+      saveGameToStorage();
+      return;
     }
-    if (checkCollision(getPieceCells(gameState.activePiece))) gameOver();
-    saveGameToStorage();
+    const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
+    const xStart = Math.floor((GRID_COLS - 4)/2);
+    gameState.activePiece = { type, rot:0, x:xStart, y:0 };
+    gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
+    logAction('spawn',{ type, x:xStart, y:0 });
+    // collision at spawn -> gameOver
+    if (checkCollision(getPieceCells(gameState.activePiece))) {
+      gameOver();
+    } else {
+      gameState.lastTickAt = Date.now();
+      saveGameToStorage();
+    }
   }
+
   function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
-  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); saveGameDebounced(); } }
+  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); saveGameToStorage(); } }
+
   function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
-  function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); saveGameDebounced(); saveClientToStorage(); } }
-  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; clientState.gp += falls * 2; logAction('hard_drop',{ falls }); updateUI(); saveGameDebounced(); saveClientToStorage(); }
-  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); saveGameDebounced(); return; } } }
+
+  function softDrop(){ if (movePieceDown()){ // reward only reflected through score; GP is derived from score below
+    gameState.score += 1;
+    logAction('soft_drop'); updateUI(); saveGameToStorage();
+  } }
+
+  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); updateUI(); saveGameToStorage(); }
+
+  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); saveGameToStorage(); return; } } }
+
   function lockPiece(){
     const ap = gameState.activePiece; if (!ap) return;
     const cells = getPieceCells(ap);
@@ -580,51 +577,57 @@
     const cleared = [];
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
     if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
+    // remove active piece, then spawn next
     gameState.activePiece = null;
+    // spawn piece => uses spawnPiece()
     spawnPiece();
     try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
-    updateUI();
-    saveGameToStorage();
     saveClientToStorage();
+    saveGameToStorage();
+    updateUI();
   }
+
   function clearLines(rows){
     rows.sort((a,b)=>a-b);
     for (const r of rows){ gameState.grid.splice(r,1); gameState.grid.unshift(Array(GRID_COLS).fill(0)); }
     const count = rows.length; const base = [0,100,300,500,800];
-    gameState.score += base[count] * gameState.level; gameState.lines += count; gameState.combo += 1; clientState.gp += (count * 10) + (gameState.combo * 5);
+    gameState.score += base[count] * gameState.level;
+    gameState.lines += count; gameState.combo += 1;
+    // do not directly increment clientState.gp here — GP comes from server base + score conversion
     logAction('clear',{ count, combo:gameState.combo });
     if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); }
-    updateUI();
     saveGameToStorage();
-    saveClientToStorage();
+    updateUI();
   }
+
   async function gameOver(){
     gameState.isPlaying = false;
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
     try{ await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
-    // keep final result persisted so refresh shows same "game over" until user clears
-    saveGameToStorage();
+    // show overlay and allow play again (playAgain should clear saved game)
     showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
+    // persist final state (so user can inspect after reload) but mark not playing
+    saveGameToStorage();
+    saveClientToStorage();
     updateUI();
-    saveClientToStorage();
   }
-  function resetForPlay(){ 
-    clearSavedGame(); // clear persisted save so we start fresh
-    initGrid(); 
-    gameState.dropInterval = INITIAL_DROP_MS; 
-    clientState.actionLog = []; 
-    clientState.energy = Math.max(0, clientState.energy); 
-    gameState.activePiece = null;
-    _restoredFromStorage = false;
-    spawnPiece(); 
-    gameState.isPlaying = true; 
-    try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){} 
-    updateUI(); 
-    saveGameToStorage(); 
+
+  function resetForPlay(){
+    initGrid();
+    gameState.dropInterval = INITIAL_DROP_MS;
+    clientState.actionLog = [];
+    clientState.energy = Math.max(0, clientState.energy);
+    spawnPiece();
+    gameState.isPlaying = true;
+    // clear stored game (fresh start)
+    clearSavedGame();
     saveClientToStorage();
+    updateUI();
+    try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
   }
 
   function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
+
   function setupTouchControls(scene){
     if (document.querySelector('.touch-controls')) return;
     const wrapper = document.createElement('div'); wrapper.classList.add('touch-controls');
@@ -635,33 +638,17 @@
     [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
     wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
     const ui = $('uiPanel'); if (ui) ui.append(wrapper);
-    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
-    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
-    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
-    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
+    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); saveGameToStorage(); };
+    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); saveGameToStorage(); };
+    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); saveGameToStorage(); };
+    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); saveGameToStorage(); };
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
-  /* simple debounce to avoid thrashing localStorage */
-  function saveGameDebounced(delay=300){
-    try{ if (_saveTimer) clearTimeout(_saveTimer); _saveTimer = setTimeout(()=> { saveGameToStorage(); _saveTimer = null; }, delay); }catch(e){}
-  }
-
-  /* also run an autosave loop for extra safety */
-  function startAutosaveLoop(){
-    try{
-      if (_autosaveIntervalTimer) clearInterval(_autosaveIntervalTimer);
-      _autosaveIntervalTimer = setInterval(()=> { saveGameToStorage(); saveClientToStorage(); }, 2500);
-    }catch(e){}
-  }
-
-  /* ------------------------
-     Wallet connectors — improved:
-     - Prefer injected provider connect
-     etc (kept from your original)
-     ------------------------*/
-
+  // -----------------------
+  // Wallet code (kept but unchanged except small persistence touches)
+  // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
     return {
@@ -673,10 +660,10 @@
   }
 
   function setPendingDeepLink(providerName){
-    try { localStorage.setItem('hexon_pending_deeplink', JSON.stringify({ provider: providerName, ts: Date.now() })); } catch(e){}
+    try { localStorage.setItem(STORAGE_KEYS.PENDING_DEEPLINK, JSON.stringify({ provider: providerName, ts: Date.now() })); } catch(e){}
   }
-  function clearPendingDeepLink(){ try{ localStorage.removeItem('hexon_pending_deeplink'); }catch(e){} }
-  function getPendingDeepLink(){ try{ const s = localStorage.getItem('hexon_pending_deeplink'); return s ? JSON.parse(s) : null; }catch(e){return null;} }
+  function clearPendingDeepLink(){ try{ localStorage.removeItem(STORAGE_KEYS.PENDING_DEEPLINK); }catch(e){} }
+  function getPendingDeepLink(){ try{ const s = localStorage.getItem(STORAGE_KEYS.PENDING_DEEPLINK); return s ? JSON.parse(s) : null; }catch(e){return null;} }
 
   function openDeepLinkAndWait({ deepLink, installUrl, appName, providerName }){
     return new Promise((resolve) => {
@@ -724,13 +711,11 @@
     });
   }
 
-  function buildCleanRedirect(){ try{ return window.location.origin.replace(/\/+$/,'') + window.location.pathname; }catch(e){return window.location.origin + '/';} }
-  function phantomDeepLink(){ try { const origin = window.location.origin.replace(/\/+$/,''); return `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(buildCleanRedirect())}`; }catch(e){ return `https://phantom.app/`; } }
-  function solflareDeepLink(){ try { const redirect = encodeURIComponent(buildCleanRedirect()); return `https://solflare.com/access?redirect=${redirect}`; } catch(e){ return `https://solflare.com/`; } }
+  function phantomDeepLink(){ try { const origin = window.location.origin.replace(/\/+$/,''); return `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(origin + window.location.pathname)}`; }catch(e){ return `https://phantom.app/`; } }
+  function solflareDeepLink(){ try { const redirect = encodeURIComponent(window.location.origin.replace(/\/+$/,'') + window.location.pathname); return `https://solflare.com/access?redirect=${redirect}`; } catch(e){ return `https://solflare.com/`; } }
   function backpackDeepLink(){ return 'https://backpack.app/'; }
 
   async function connectWithPhantom(){
-    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     const detected = detectInjectedProviders();
     if (window.solana && window.solana.isPhantom){
       try {
@@ -822,7 +807,6 @@
     } catch(e){ console.warn('connectWithWalletConnect failed', e); return false; }
   }
 
-  /* open helpers exported for compatibility */
   window.connectWithPhantom = connectWithPhantom;
   window.connectWithSolflare = connectWithSolflare;
   window.connectWithBackpack = connectWithBackpack;
@@ -856,7 +840,7 @@
         if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.wallet = publicKey;
         clientState.userId = res.userId ?? clientState.userId;
-        clientState.gp = res.gp ?? clientState.gp;
+        clientState.gpBase = res.gp ?? clientState.gpBase;
         clientState.miners = res.miners ?? clientState.miners;
         clientState.userAU = res.userAU ?? clientState.userAU;
         clientState.totalAU = res.totalAU ?? clientState.totalAU;
@@ -864,8 +848,8 @@
         clientState.referralsActive = res.referralsActive ?? clientState.referralsActive;
         if (res.referralAccepted) clearPendingReferral();
         saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
-        updateUI(); renderMinersList();
         saveClientToStorage();
+        updateUI(); renderMinersList();
         return true;
       }
       return false;
@@ -954,7 +938,7 @@
               }
             } catch(e){ console.warn('provider connect handler error', e); }
           });
-          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
         } catch(e){ console.warn('solana listener setup failed', e); }
       }
 
@@ -968,7 +952,7 @@
               if (ok) showToast('Wallet connected',900);
             }
           });
-          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
         } catch(e){}
       }
 
@@ -982,20 +966,16 @@
               if (ok) showToast('Wallet connected',900);
             }
           });
-          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); });
+          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
         } catch(e){}
       }
     } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
   }
 
-  /* ------------------------
-     Referral UI, claim, etc — unchanged
-  ------------------------ */
-
   async function getMyReferral(){
     try {
       const resp = await api('/player/referral','GET');
-      if (resp && resp.refCode){ clientState.referralCode = resp.refCode; clientState.referralsActive = resp.count ?? clientState.referralsActive; }
+      if (resp && resp.refCode){ clientState.referralCode = resp.refCode; clientState.referralsActive = resp.count ?? clientState.referralsActive; saveClientToStorage(); }
       return clientState.referralCode;
     } catch(e){ console.warn('getMyReferral', e); return clientState.referralCode; }
   }
@@ -1024,13 +1004,13 @@
     try {
       const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId });
       if (resp && resp.ok){
-        clientState.gp = resp.gp ?? clientState.gp;
+        clientState.gpBase = resp.gp ?? clientState.gpBase;
         clientState.userAU = resp.userAU ?? clientState.userAU;
         if (typeof resp.energy === 'number') clientState.energy = Math.max(0, Math.min(100, resp.energy));
+        saveClientToStorage();
         updateUI();
         showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
         setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
-        saveClientToStorage();
       } else {
         const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
         showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
@@ -1039,9 +1019,6 @@
     } catch(e){ console.warn('claimRewards error', e); showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Network error — try again later.</div>' }); setTimeout(hideSheet,1200); }
   }
 
-  /* ------------------------
-     Public key validation
-  ------------------------ */
   function isValidSolanaPublicKey(pk){
     if (!pk || typeof pk !== 'string') return false;
     const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
@@ -1050,9 +1027,9 @@
     return true;
   }
 
-  /* ------------------------
-     Bottom-sheet bootstrap: wire buttons & improved option handlers (call new connect functions)
-     ------------------------ */
+  // -----------------------
+  // Bottom sheet wiring (unchanged behavior)
+  // -----------------------
   (function sheetBootstrap(){
     function tgInstance(){ try{ return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; }catch(e){return null;} }
     function openExternal(url){
@@ -1128,7 +1105,7 @@
       if (typeof window.finalizeBind === 'function'){
         try { const ok = await window.finalizeBind(publicKey, 'manual'); if (ok) hideSheetLocal(); return; } catch(e){ console.warn('finalizeBind failed', e); alert('Server bind failed'); return; }
       }
-      try { localStorage.setItem('hexon_bound_wallet', publicKey); localStorage.setItem('hexon_bound_provider', 'manual'); const wEl = document.getElementById('ui-wallet'); const pEl = document.getElementById('ui-provider'); if (wEl) wEl.textContent = publicKey; if (pEl) pEl.textContent = 'manual'; hideSheetLocal(); showToast('Public key stored locally (no server bind performed).', 2000); } catch(e){ console.warn(e); alert('Unable to save locally'); }
+      try { localStorage.setItem(STORAGE_KEYS.BOUND_WALLET, publicKey); localStorage.setItem(STORAGE_KEYS.BOUND_PROVIDER, 'manual'); const wEl = document.getElementById('ui-wallet'); const pEl = document.getElementById('ui-provider'); if (wEl) wEl.textContent = publicKey; if (pEl) pEl.textContent = 'manual'; hideSheetLocal(); showToast('Public key stored locally (no server bind performed).', 2000); } catch(e){ console.warn(e); alert('Unable to save locally'); }
     }
 
     function interceptBind(ev){ ev.preventDefault(); ev.stopImmediatePropagation(); showSheetLocal({ title:'Connect Wallet', bodyHtml: sheetBody.innerHTML }); return false; }
@@ -1153,7 +1130,7 @@
       if (manualBtn){ manualBtn.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); const pk = (document.getElementById('manualPublicKey').value||'').trim(); await manualBind(pk); }, { passive:false }); }
 
       setDetectionBadges();
-      try{ const sid = localStorage.getItem('hexon_session'); if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid; const wallet = localStorage.getItem('hexon_bound_wallet'); if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet; const prov = localStorage.getItem('hexon_bound_provider'); if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov; } catch(e){}
+      try{ const sid = localStorage.getItem(STORAGE_KEYS.SESSION); if (sid && document.getElementById('ui-session')) document.getElementById('ui-session').textContent = sid; const wallet = localStorage.getItem(STORAGE_KEYS.BOUND_WALLET); if (wallet && document.getElementById('ui-wallet')) document.getElementById('ui-wallet').textContent = wallet; const prov = localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER); if (prov && document.getElementById('ui-provider')) document.getElementById('ui-provider').textContent = prov; } catch(e){}
       document.addEventListener('keydown', onKeyDown);
     });
 
@@ -1164,13 +1141,13 @@
     window._hexon_showToast = (m,t)=> { const tEl = document.getElementById('toast'); if (!tEl) return; tEl.textContent = m; tEl.style.display='block'; setTimeout(()=> tEl.style.display='none', t || 2000); };
   })();
 
-  /* ------------------------
-     Boot / init logic
-  ------------------------*/
+  // -----------------------
+  // Boot / init
+  // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
       initTelegram();
-      // If the page was returned to by a wallet deep-link, attempt to read and bind immediately.
+      // if returned from wallet deep link, try to read
       readWalletReturn();
 
       const ref = getRefFromURL();
@@ -1184,13 +1161,53 @@
       try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
       try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
 
-      // initial client init
+      // Restore saved client & game if present (persistence)
+      const savedClient = loadClientFromStorage();
+      if (savedClient){
+        // merge saved client (keep current sessionId if different)
+        const keepSession = clientState.sessionId;
+        Object.assign(clientState, savedClient);
+        clientState.sessionId = keepSession || clientState.sessionId;
+      }
+
+      const savedGame = loadGameFromStorage();
+      if (savedGame){
+        // minimal validation and merge
+        try {
+          if (Array.isArray(savedGame.grid) && savedGame.grid.length === GRID_ROWS){
+            gameState.grid = savedGame.grid;
+            gameState.activePiece = savedGame.activePiece;
+            gameState.nextPiece = savedGame.nextPiece;
+            gameState.score = savedGame.score || 0;
+            gameState.level = savedGame.level || 1;
+            gameState.lines = savedGame.lines || 0;
+            gameState.dropInterval = savedGame.dropInterval || INITIAL_DROP_MS;
+            gameState.isPlaying = savedGame.isPlaying !== undefined ? savedGame.isPlaying : true;
+            gameState.combo = savedGame.combo || 0;
+            gameState.lastSavedAt = savedGame.lastSavedAt || Date.now();
+            gameState.lastTickAt = savedGame.lastTickAt || Date.now();
+          } else {
+            // disregard corrupt saved game
+            initGrid();
+            clearSavedGame();
+          }
+        } catch(e){
+          initGrid();
+          clearSavedGame();
+        }
+      } else {
+        // fresh start, initialize
+        if (!gameState.grid) initGrid();
+        if (!gameState.activePiece) spawnPiece();
+      }
+
+      // initial client init with server (best-effort)
       try {
         const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null, username: clientState.username, telegramId: clientState.telegramId });
         if (init){
           if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); }
           clientState.userId = init.userId ?? clientState.userId;
-          clientState.gp = init.gp ?? clientState.gp;
+          clientState.gpBase = init.gp ?? clientState.gpBase;
           clientState.miners = init.miners ?? clientState.miners;
           clientState.userAU = init.userAU ?? clientState.userAU;
           clientState.totalAU = init.totalAU ?? clientState.totalAU;
@@ -1200,11 +1217,9 @@
           if (init.referralAccepted) clearPendingReferral();
           if (init.wallet) { clientState.wallet = init.wallet; clientState.walletProvider = init.walletProvider || clientState.walletProvider; saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider); }
           if (typeof init.energy === 'number') clientState.energy = Math.max(0, Math.min(100, init.energy));
+          saveClientToStorage();
         }
       } catch(e){ console.warn('client init failed', e); }
-
-      // try to load persisted game first
-      loadGameFromStorage();
 
       // compute scale & start phaser
       const parentEl = $('phaserCanvas') || document.body;
@@ -1230,45 +1245,78 @@
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
-      // start autosave loop
-      startAutosaveLoop();
-
-      // persist on unload too (final catch)
-      window.addEventListener('beforeunload', () => {
-        saveGameToStorage();
-        saveClientToStorage();
-      });
+      // lightweight autosave every 3s (global)
+      setInterval(()=>{ gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); }, 3000);
 
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
 
-  /* ------------------------
-     Utilities & UI rendering (unchanged)
-  ------------------------*/
-  function isIOS(){ return /iP(ad|hone|od)/i.test(navigator.userAgent); }
-  function isAndroid(){ return /Android/i.test(navigator.userAgent); }
-  function isInAppBrowser(){ const ua = navigator.userAgent || ''; return /FBAN|FBAV|Instagram|Line|KAKAOTALK|Twitter|LinkedIn|Snapchat/i.test(ua); }
-  function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-
-  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
-
-  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
-
-  function updateUI(){
-    if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
-    if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp||0) + ' GP';
-    if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
-    if ($('ui-level')) $('ui-level').innerText = gameState.level;
-    if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
-    if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
-    if ($('ui-hxn')) { const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0; $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN'; }
-    if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
-    if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
-    if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
-    if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
-    if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
-    if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
+  // -----------------------
+  // AdsGram + ad flow (kept)
+  // -----------------------
+  let AdsGramLoaded = false, AdController = null;
+  function loadAdsGram(){
+    try {
+      if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } }
+      if (AdsGramLoaded) return;
+      const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true;
+      s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } };
+      s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); };
+      document.head.appendChild(s);
+    } catch(e){ console.warn('loadAdsGram', e); }
   }
+
+  async function showAdAndVerify(){
+    if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Daily ad limit reached.</div>' }); return; }
+    if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){ showSheet({ title:'Ad', bodyHtml:'<div class="small-muted">Sitting ad limit reached.</div>' }); return; }
+    showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
+    try {
+      let provider='Fallback', payload={ adSessionId: generateUUID() };
+      if (AdsGramLoaded && AdController && typeof AdController.show === 'function'){
+        provider='AdsGram';
+        try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
+      } else {
+        await new Promise(res=>setTimeout(res,1800));
+      }
+      const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
+      hideSheet();
+      if (resp && resp.grantedPercent){
+        clientState.energy = Math.min(100, clientState.energy + resp.grantedPercent);
+        clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
+        clientState.adsToday = (clientState.adsToday||0) + 1;
+        logAction('ad_watched',{ provider, granted: resp.grantedPercent });
+        saveClientToStorage();
+        updateUI();
+        showToast(`Energy credited +${resp.grantedPercent}%`,1200);
+      } else {
+        const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
+        showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">${escapeHtml(msg)}</div>` });
+      }
+    } catch(e){ hideSheet(); console.warn('showAdAndVerify error', e); showToast('Ad error — try later',1200); }
+  }
+
+  // -----------------------
+  // small UI sheet helpers (used above)
+  // -----------------------
+  function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
+  function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
+    const { overlay, sheetBody, sheetTitle, sheetActions } = getSheetElements();
+    if (!overlay || !sheetBody || !sheetTitle || !sheetActions){ console.warn('Sheet elements missing'); const { showToast } = getSheetElements(); showToast('UI unavailable', 1200); return; }
+    sheetTitle.textContent = title;
+    sheetBody.innerHTML = bodyHtml;
+    sheetActions.innerHTML = actionsHtml;
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden','false');
+    try{ sheetBody.focus(); }catch(e){}
+    if (typeof onMounted === 'function'){ setTimeout(()=> { try{ onMounted(); } catch(e){ console.warn('sheet onMounted error', e); } }, 50); }
+  }
+  function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
+
+  // -----------------------
+  // Misc helpers exported
+  // -----------------------
+  window._hexon_showToast = (m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); };
+
   </script>
 </body>
 </html>
