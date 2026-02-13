@@ -15,29 +15,31 @@
       --accent-from:#3b82f6;
       --accent-to:#22d3ee;
       --highlight: rgba(34,211,238,0.08);
-      --danger: #ff6b6b;
+      --danger:#ff6b6b;
     }
     html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; padding:18px; }
-    .container{ max-width:920px; margin:0 auto; }
     nav{ margin-bottom:12px; display:flex; gap:8px; align-items:center; }
     nav a{ color:inherit; text-decoration:none; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; display:inline-flex; gap:8px; align-items:center;}
+    .container{ max-width:980px; margin:0 auto; }
     .card{ background:var(--card-bg); padding:18px; border-radius:12px; margin-bottom:14px; }
     h2{ margin:0 0 6px 0; }
     .muted{ color:var(--muted); font-size:13px; }
-    .controls{ display:flex; gap:8px; align-items:center; margin-top:12px; }
+    .controls{ display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
     .button{ padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; border:0; cursor:pointer; }
-    .button.ghost{ background:transparent; color:#7EE7FF; border:1px solid rgba(255,255,255,0.03); }
+    .outline{ background:transparent;border:1px solid rgba(255,255,255,0.06); color:#7EE7FF; }
     .list{ margin-top:12px; border-radius:8px; overflow:hidden; }
     .row{ display:grid; grid-template-columns: 56px 1fr 120px; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px dashed rgba(255,255,255,0.03); }
     .row.header{ font-weight:800; background:rgba(0,0,0,0.03); }
     .row.highlight{ background:var(--highlight); }
     .rank{ font-weight:800; }
+    .name{ }
     .score{ text-align:right; font-weight:800; }
     .small{ font-size:13px; color:var(--muted); }
     .toast{ position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; background: rgba(3,10,18,0.9); color:#E6F7FF; padding:8px 12px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4); display:none; z-index:9999; }
     .balance{ margin-left:auto; display:flex; gap:8px; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); }
-    .debug{ margin-top:8px; color:#9fc; font-size:12px; }
-    .error{ color:var(--danger); font-weight:700;}
+    .debug{ margin-top:12px; font-family: monospace; font-size:12px; color: #cfeffd; background: rgba(0,0,0,0.12); padding:10px; border-radius:8px; max-height:220px; overflow:auto; }
+    .debug .bad { color: var(--danger); }
+    .endpoint-badge{ padding:6px 8px; border-radius:8px; background: rgba(0,0,0,0.06); font-weight:700; }
     @media (max-width:720px){ .row{ grid-template-columns: 40px 1fr 96px; } .score{ font-size:14px; } }
   </style>
 </head>
@@ -55,20 +57,22 @@
     </nav>
 
     <div class="card" role="main" aria-labelledby="lbTitle">
-      <h2 id="lbTitle">Top Scorers</h2>
-      <p class="muted">Live leaderboard — auto-refreshes. Your entry will be highlighted if we can match your username (or Telegram).</p>
+      <h2 id="lbTitle">Top Scorers <span id="endpointTag" class="endpoint-badge" aria-hidden="true">checking…</span></h2>
+      <p class="muted">Live leaderboard — auto-refreshes. The page will try multiple common endpoint shapes and show debug info below.</p>
 
       <div class="controls" aria-hidden="false">
         <div class="small muted">Auto-refresh every 15s</div>
         <button id="refreshBtn" class="button" title="Refresh now"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
-        <button id="backBtn" class="button ghost" title="Back to game"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button id="manualTop" class="button outline" title="Call /leaderboard/top">GET /leaderboard/top</button>
+        <button id="manualDisplay" class="button outline" title="Call /leaderboard/display">GET /leaderboard/display</button>
+        <button id="backBtn" class="button outline" style="background:transparent;border:1px solid rgba(255,255,255,0.03);color:#7EE7FF"><i class="fa-solid fa-arrow-left"></i> Back</button>
       </div>
 
       <div id="list" class="list" aria-live="polite">
         <div class="muted" style="padding:12px">Loading leaderboard…</div>
       </div>
 
-      <div id="debug" class="debug" aria-hidden="true"></div>
+      <div class="debug" id="debug" aria-live="polite" role="status" style="display:none"></div>
     </div>
   </div>
 
@@ -76,182 +80,164 @@
 
 <script>
 /* -------------------------
-   CONFIG (unchanged API URL per request)
+   Keep API_URL EXACTLY as provided by you
 -------------------------*/
-const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev';
+const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // <- DO NOT CHANGE
+
 const DISPLAY_CANDIDATES = [
-  '/leaderboard/top',
+  '/leaderboard/display',      // { items: [...] }
+  '/api/leaderboard/top',      // { data: [...] }
+  '/leaderboard/top',          // [ ... ]  OR legacy array
+  '/leaderboards',             // [ ... ]
   '/leaderboards/top',
-  '/api/leaderboard/top',
-  '/leaderboard',
-  '/leaderboards',
   '/api/leaderboard',
-  '/leaderboard/display'
+  '/leaderboard'               // catch-all
 ];
 
-/* -------------------------
-   STATE
--------------------------*/
 const clientState = {
   sessionId: localStorage.getItem('hexon_session') || null,
   username: localStorage.getItem('hexon_username') || null,
   telegramId: null,
-  gp: null,
-  discoveredEndpoint: null
+  gp: null
 };
 
-if (!clientState.sessionId) {
+if (!clientState.sessionId){
   clientState.sessionId = 'sess-' + Math.floor(Math.random()*1e12).toString(36);
   localStorage.setItem('hexon_session', clientState.sessionId);
 }
 
-/* -------------------------
-   DOM helpers
--------------------------*/
-const $ = id => document.getElementById(id);
-const showToast = (msg, ms=1400) => { const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=> t.style.display='none', ms); };
-const escapeHtml = s => String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function $(id){ return document.getElementById(id); }
+function showToast(msg, ms=1800){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=> t.style.display='none', ms); }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* -------------------------
-   API helper
+   Simple API helper (returns {ok,status,body,raw})
 -------------------------*/
-async function api(path, method='GET', body=null, optsExtra={}) {
+async function apiRaw(path, method='GET', body=null, optsExtra={}){
+  let url = path.startsWith('http') ? path : (API_BASE ? API_BASE.replace(/\/$/,'') + path : window.location.origin + path);
+  const headers = Object.assign({}, optsExtra.headers || {});
+  if (method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+  if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+  const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
+  if (userHandle) headers['X-User-Handle'] = userHandle;
+
+  if (method.toUpperCase() === 'GET' && clientState.sessionId){
+    const sep = url.includes('?') ? '&' : '?';
+    url = url + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
+  }
+
+  const opts = { method, headers, ...optsExtra };
+  if (body !== null && body !== undefined){
+    if (opts.headers['Content-Type'] && opts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
+      body = Object.assign({}, body, { sessionId: body.sessionId || clientState.sessionId, username: body.username || clientState.username || null, telegramId: body.telegramId || clientState.telegramId || null });
+      opts.body = JSON.stringify(body);
+    } else {
+      opts.body = body;
+    }
+  }
+
   try {
-    const base = API_BASE;
-    const url = path.startsWith('http') ? path : (base.replace(/\/$/,'') + path);
-    const headers = Object.assign({}, optsExtra.headers || {});
-    if (method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
-    if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
-
-    const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
-    if (userHandle) headers['X-User-Handle'] = userHandle;
-
-    let urlWithSession = url;
-    if (method.toUpperCase() === 'GET' && clientState.sessionId) {
-      urlWithSession += (url.includes('?') ? '&' : '?') + 'sessionId=' + encodeURIComponent(clientState.sessionId);
-    }
-
-    const opts = { method, headers, ...optsExtra };
-    if (body != null) {
-      if (headers['Content-Type'] && headers['Content-Type'].includes('application/json') && typeof body === 'object') {
-        const bodyWithSession = Object.assign({}, body, { sessionId: body.sessionId || clientState.sessionId, username: body.username || clientState.username || null, telegramId: body.telegramId || clientState.telegramId || null });
-        opts.body = JSON.stringify(bodyWithSession);
-      } else {
-        opts.body = body;
-      }
-    }
-
-    const res = await fetch(urlWithSession, opts);
+    const res = await fetch(url, opts);
     const txt = await res.text();
-    try { return txt ? JSON.parse(txt) : null; } catch(e) { return txt; }
+    let parsed = null;
+    try{ parsed = txt ? JSON.parse(txt) : null; } catch(e){ parsed = null; }
+    return { ok: res.ok, status: res.status, body: parsed, raw: txt, url };
   } catch (err) {
-    console.warn('api error', err);
-    return null;
+    return { ok: false, status: 0, body: null, raw: String(err), url };
   }
 }
 
 /* -------------------------
-   Telegram init
+   Discover the best leaderboard endpoint, with robust debug logging
 -------------------------*/
-function initTelegram() {
-  try {
-    if (window.Telegram && window.Telegram.WebApp) {
-      const tg = window.Telegram.WebApp;
-      try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
-      const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
-      if (u) {
-        clientState.telegramId = u.id;
-        clientState.username = clientState.username || (u.username || `${u.first_name||''} ${u.last_name||''}`.trim() || null);
-        if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+async function discoverLeaderboardEndpoint(){
+  const debugEl = $('debug');
+  debugEl.style.display = 'block';
+  debugEl.innerHTML = ''; // reset
+
+  const tried = [];
+  for (const p of DISPLAY_CANDIDATES){
+    const r = await apiRaw(p, 'GET');
+    tried.push({ path: p, ...r });
+    // Quick checks for acceptable shapes:
+    if (Array.isArray(r.body)) {
+      // raw array -> good
+      appendDebug(`✔ ${p} -> array (${r.body.length} items)`, r);
+      return { path: p, shape: 'array', resp: r, tried };
+    }
+    if (r.body && typeof r.body === 'object') {
+      if (Array.isArray(r.body.items)) {
+        appendDebug(`✔ ${p} -> { items: [...] } (${r.body.items.length} items)`, r);
+        return { path: p, shape: 'items', resp: r, tried };
+      }
+      if (Array.isArray(r.body.data)) {
+        appendDebug(`✔ ${p} -> { data: [...] } (${r.body.data.length} items)`, r);
+        return { path: p, shape: 'data', resp: r, tried };
+      }
+      // Common alternate keys
+      if (Array.isArray(r.body.rows)) {
+        appendDebug(`✔ ${p} -> { rows: [...] } (${r.body.rows.length} items)`, r);
+        return { path: p, shape: 'rows', resp: r, tried };
+      }
+      if (Array.isArray(r.body.leaderboard)) {
+        appendDebug(`✔ ${p} -> { leaderboard: [...] } (${r.body.leaderboard.length} items)`, r);
+        return { path: p, shape: 'leaderboard', resp: r, tried };
       }
     }
-  } catch(e) { console.warn('initTelegram', e); }
-}
-
-/* -------------------------
-   Load client state (gp, username)
--------------------------*/
-async function loadClientState() {
-  const resp = await api('/client/init','POST',{ sessionId: clientState.sessionId });
-  if (resp && resp.ok) {
-    clientState.sessionId = resp.sessionId || clientState.sessionId;
-    clientState.username = resp.username || clientState.username;
-    clientState.gp = typeof resp.gp !== 'undefined' ? Number(resp.gp) : clientState.gp;
-    if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+    // not a usable shape
+    appendDebug(`✖ ${p} -> ${r.status} — ${short(r.raw)}`, r, true);
   }
-  updateBalanceUI();
+
+  // No usable shape found
+  appendDebug('No candidate returned a usable leaderboard shape. Full trace:', null);
+  for (const t of tried){
+    appendDebug(`• ${t.path} => status=${t.status} body=${short(t.raw)}`);
+  }
+  return { path: null, tried };
 }
 
-function updateBalanceUI() {
-  const el = $('gpAmount');
-  el.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
+function appendDebug(msg, resp=null, bad=false){
+  const d = $('debug');
+  const el = document.createElement('div');
+  el.innerHTML = `<span style="opacity:0.9">${escapeHtml(msg)}</span>`;
+  if (resp) {
+    const meta = document.createElement('div');
+    meta.style.marginLeft = '8px';
+    meta.style.opacity = '0.8';
+    meta.style.fontSize = '12px';
+    meta.textContent = `-> ${resp.url} (status ${resp.status})`;
+    el.appendChild(meta);
+  }
+  if (bad) el.className = 'bad';
+  d.appendChild(el);
+  d.scrollTop = d.scrollHeight;
 }
 
 /* -------------------------
-   Discover leaderboard endpoint
+   Parse a response into an array of rows consistently
+   Accepts shapes: array, {items:[]}, {data:[]}, {rows:[]}, {leaderboard:[]}
+   Also supports objects where top-level key contains array.
 -------------------------*/
-async function discoverLeaderboardEndpoint() {
-  for (const p of DISPLAY_CANDIDATES) {
-    try {
-      const res = await api(p,'GET');
-      if (!res) continue;
-      if (Array.isArray(res)) return p;
-      if (res && typeof res === 'object') {
-        if (Array.isArray(res.items) || Array.isArray(res.data)) return p;
-        for (const k of Object.keys(res)) if (Array.isArray(res[k])) return p;
-      }
-    } catch(e) { /* ignore and try next */ }
+function extractArrayFromResp(respBody){
+  if (!respBody) return null;
+  if (Array.isArray(respBody)) return respBody;
+  if (respBody.items && Array.isArray(respBody.items)) return respBody.items;
+  if (respBody.data && Array.isArray(respBody.data)) return respBody.data;
+  if (respBody.rows && Array.isArray(respBody.rows)) return respBody.rows;
+  if (respBody.leaderboard && Array.isArray(respBody.leaderboard)) return respBody.leaderboard;
+  // fallback: find first array value
+  for (const k of Object.keys(respBody)){
+    if (Array.isArray(respBody[k])) return respBody[k];
   }
   return null;
 }
 
 /* -------------------------
-   Render leaderboard
+   Render leaderboard rows to DOM
 -------------------------*/
-let discovered = null;
-
-function renderEmpty(msg) {
-  $('list').innerHTML = `<div class="muted" style="padding:12px">${escapeHtml(msg)}</div>`;
-}
-
-async function renderLeaderboard() {
-  initTelegram();
-  renderEmpty('Loading leaderboard…');
-
-  await loadClientState();
-
-  if (!discovered) {
-    discovered = await discoverLeaderboardEndpoint();
-    $('debug').textContent = discovered ? `discovered: ${discovered}` : 'no leaderboard endpoint discovered';
-  }
-
-  if (!discovered) {
-    renderEmpty('Leaderboard endpoint not found');
-    return;
-  }
-
-  const resp = await api(discovered,'GET');
-  if (!resp) {
-    renderEmpty('Failed to fetch leaderboard');
-    return;
-  }
-
-  let arr = [];
-  if (Array.isArray(resp)) arr = resp;
-  else if (Array.isArray(resp.items)) arr = resp.items;
-  else if (Array.isArray(resp.data)) arr = resp.data;
-  else {
-    for (const k of Object.keys(resp)) {
-      if (Array.isArray(resp[k])) { arr = resp[k]; break; }
-    }
-  }
-
-  if (!arr || arr.length === 0) {
-    renderEmpty('No leaderboard data');
-    return;
-  }
-
+function renderRows(arr){
   const list = $('list');
+  // header
   const header = document.createElement('div');
   header.className = 'row header';
   header.innerHTML = `<div class="rank">#</div><div class="name">Player</div><div class="score">Score</div>`;
@@ -262,39 +248,145 @@ async function renderLeaderboard() {
   let foundSelf = false;
 
   arr.forEach((it, idx) => {
-    const name = it.name || it.username || it.player || '—';
-    const score = (typeof it.score !== 'undefined') ? it.score : (typeof it.points !== 'undefined' ? it.points : '—');
+    const name = it.name || it.username || it.player || it.user || '—';
+    const score = (typeof it.score !== 'undefined') ? it.score : (typeof it.points !== 'undefined' ? it.points : (typeof it.value !== 'undefined' ? it.value : '—'));
     const row = document.createElement('div');
     const highlight = userLower && String(name).toLowerCase() === userLower;
-    row.className = 'row' + (highlight ? ' highlight' : '');
+    row.className = highlight ? 'row highlight' : 'row';
     if (highlight) foundSelf = true;
+
     row.innerHTML = `<div class="rank">${idx+1}</div><div class="name">${escapeHtml(name)}</div><div class="score">${(score!==null && score!=='—')?Number(score).toLocaleString():'—'}</div>`;
     list.appendChild(row);
   });
 
-  // Show "current user" block if server provided and not already highlighted
-  if (!foundSelf && resp && (resp.current || resp.me)) {
-    const me = resp.current || resp.me;
-    if (me && (me.username || me.name)) {
-      const meRow = document.createElement('div');
-      meRow.className = 'row highlight';
-      meRow.innerHTML = `<div class="rank">${me.rank || '—'}</div><div class="name">${escapeHtml(me.username || me.name)}</div><div class="score">${(typeof me.score!=='undefined')?Number(me.score).toLocaleString():'—'}</div>`;
-      list.appendChild(meRow);
+  // if user not found, optionally append current user if server returned it
+  // (some APIs return a 'current' or 'meta' field)
+  // no-op here — renderRows only focuses on visible list
+}
+
+/* -------------------------
+   Main loader
+-------------------------*/
+let discovered = null;
+async function renderLeaderboard(){
+  $('endpointTag').textContent = 'checking…';
+  $('debug').style.display = 'none';
+  $('debug').innerHTML = '';
+  $('list').innerHTML = '<div class="muted" style="padding:12px">Loading leaderboard…</div>';
+
+  // ensure client state with server
+  await loadClientState();
+
+  // discovery (only once per session unless forced)
+  if (!discovered) {
+    const res = await discoverLeaderboardEndpoint();
+    if (!res || !res.path) {
+      $('endpointTag').textContent = 'not found';
+      showToast('No leaderboard endpoint found (see debug)', 2400);
+      return;
     }
+    discovered = res;
   }
 
+  $('endpointTag').textContent = discovered.path;
+
+  // fetch actual data from discovered.path
+  const r = await apiRaw(discovered.path, 'GET');
+  if (!r || r.status >= 400 || !r.body) {
+    // try fallback: re-discover (something may have changed)
+    discovered = null;
+    appendDebug(`Fetch failed for ${discovered ? discovered.path : 'discovered'} — status=${r ? r.status : 'NA'}`, r, true);
+    $('endpointTag').textContent = 'failed';
+    showToast('Failed to fetch leaderboard (see debug)', 1800);
+    return;
+  }
+
+  const arr = extractArrayFromResp(r.body);
+  if (!arr || arr.length === 0) {
+    appendDebug('Response had no array-shaped data, raw body: ' + short(r.raw), r, true);
+    $('list').innerHTML = '<div class="muted" style="padding:12px">No leaderboard data</div>';
+    return;
+  }
+
+  renderRows(arr);
   updateBalanceUI();
 }
 
 /* -------------------------
-   Wiring & boot
+   Client init / gp sync
 -------------------------*/
-document.addEventListener('DOMContentLoaded', () => {
-  $('refreshBtn').addEventListener('click', () => renderLeaderboard());
-  $('backBtn').addEventListener('click', () => window.location.href = 'index.html');
-  initTelegram();
+async function loadClientState(){
+  try {
+    const resp = await apiRaw('/client/init','POST',{ sessionId: clientState.sessionId });
+    if (resp && resp.body && resp.body.ok){
+      clientState.sessionId = resp.body.sessionId || clientState.sessionId;
+      clientState.username = resp.body.username || clientState.username;
+      clientState.gp = typeof resp.body.gp !== 'undefined' ? Number(resp.body.gp) : clientState.gp;
+      if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+    }
+  } catch(e){
+    // ignore
+  }
+  updateBalanceUI();
+}
+
+function updateBalanceUI(){
+  const el = $('gpAmount');
+  el.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
+}
+
+/* -------------------------
+   Util
+-------------------------*/
+function short(s, n=200){
+  if (!s) return '';
+  return (s.length && s.length > n) ? s.slice(0,n) + '…' : s;
+}
+
+/* -------------------------
+   Wiring & manual test buttons
+-------------------------*/
+document.addEventListener('DOMContentLoaded', ()=>{
+  // detect Telegram if present
+  try {
+    if (window.Telegram && window.Telegram.WebApp){
+      const tg = window.Telegram.WebApp;
+      try{ if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
+      const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
+      if (u){
+        clientState.telegramId = u.id;
+        clientState.username = clientState.username || (u.username || `${u.first_name||''} ${u.last_name||''}`.trim() || null);
+        if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
+      }
+    }
+  } catch(e){ /* ignore */ }
+
   renderLeaderboard();
-  setInterval(renderLeaderboard, 15000);
+  $('refreshBtn').addEventListener('click', ()=> { discovered = null; renderLeaderboard(); });
+  $('backBtn').addEventListener('click', ()=> window.location.href = 'index.html');
+  $('manualTop').addEventListener('click', async ()=> {
+    $('debug').style.display = 'block'; $('debug').innerHTML = '';
+    const r = await apiRaw('/leaderboard/top','GET');
+    appendDebug(`/leaderboard/top -> status=${r.status} body=${short(r.raw,1000)}`, r, !r.ok);
+    if (r.ok) {
+      const arr = extractArrayFromResp(r.body);
+      if (arr) renderRows(arr);
+      $('endpointTag').textContent = '/leaderboard/top (manual)';
+    }
+  });
+  $('manualDisplay').addEventListener('click', async ()=> {
+    $('debug').style.display = 'block'; $('debug').innerHTML = '';
+    const r = await apiRaw('/leaderboard/display','GET');
+    appendDebug(`/leaderboard/display -> status=${r.status} body=${short(r.raw,1000)}`, r, !r.ok);
+    if (r.ok) {
+      const arr = extractArrayFromResp(r.body);
+      if (arr) renderRows(arr);
+      $('endpointTag').textContent = '/leaderboard/display (manual)';
+    }
+  });
+
+  // auto-refresh every 15s
+  setInterval(()=> { /* only refresh UI if we have discovered endpoint */ if (discovered) renderLeaderboard(); }, 15000);
 });
 </script>
 </body>
