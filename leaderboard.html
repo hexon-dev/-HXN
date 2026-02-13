@@ -15,26 +15,29 @@
       --accent-from:#3b82f6;
       --accent-to:#22d3ee;
       --highlight: rgba(34,211,238,0.08);
+      --danger: #ff6b6b;
     }
     html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:var(--bg); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; padding:18px; }
+    .container{ max-width:920px; margin:0 auto; }
     nav{ margin-bottom:12px; display:flex; gap:8px; align-items:center; }
     nav a{ color:inherit; text-decoration:none; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; display:inline-flex; gap:8px; align-items:center;}
-    .container{ max-width:920px; margin:0 auto; }
     .card{ background:var(--card-bg); padding:18px; border-radius:12px; margin-bottom:14px; }
     h2{ margin:0 0 6px 0; }
     .muted{ color:var(--muted); font-size:13px; }
     .controls{ display:flex; gap:8px; align-items:center; margin-top:12px; }
     .button{ padding:8px 12px; border-radius:8px; background:linear-gradient(90deg,var(--accent-from),var(--accent-to)); color:#021125; font-weight:700; border:0; cursor:pointer; }
+    .button.ghost{ background:transparent; color:#7EE7FF; border:1px solid rgba(255,255,255,0.03); }
     .list{ margin-top:12px; border-radius:8px; overflow:hidden; }
     .row{ display:grid; grid-template-columns: 56px 1fr 120px; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px dashed rgba(255,255,255,0.03); }
     .row.header{ font-weight:800; background:rgba(0,0,0,0.03); }
     .row.highlight{ background:var(--highlight); }
     .rank{ font-weight:800; }
-    .name{ }
     .score{ text-align:right; font-weight:800; }
     .small{ font-size:13px; color:var(--muted); }
     .toast{ position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; background: rgba(3,10,18,0.9); color:#E6F7FF; padding:8px 12px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4); display:none; z-index:9999; }
     .balance{ margin-left:auto; display:flex; gap:8px; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); }
+    .debug{ margin-top:8px; color:#9fc; font-size:12px; }
+    .error{ color:var(--danger); font-weight:700;}
     @media (max-width:720px){ .row{ grid-template-columns: 40px 1fr 96px; } .score{ font-size:14px; } }
   </style>
 </head>
@@ -53,17 +56,19 @@
 
     <div class="card" role="main" aria-labelledby="lbTitle">
       <h2 id="lbTitle">Top Scorers</h2>
-      <p class="muted">Live leaderboard — auto-refreshes. Your entry will be highlighted if we can match your username.</p>
+      <p class="muted">Live leaderboard — auto-refreshes. Your entry will be highlighted if we can match your username (or Telegram).</p>
 
       <div class="controls" aria-hidden="false">
         <div class="small muted">Auto-refresh every 15s</div>
         <button id="refreshBtn" class="button" title="Refresh now"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
-        <button id="backBtn" class="button" style="background:transparent;border:1px solid rgba(255,255,255,0.03);color:#7EE7FF"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button id="backBtn" class="button ghost" title="Back to game"><i class="fa-solid fa-arrow-left"></i> Back</button>
       </div>
 
       <div id="list" class="list" aria-live="polite">
         <div class="muted" style="padding:12px">Loading leaderboard…</div>
       </div>
+
+      <div id="debug" class="debug" aria-hidden="true"></div>
     </div>
   </div>
 
@@ -71,98 +76,104 @@
 
 <script>
 /* -------------------------
-   Config + state
+   CONFIG (unchanged API URL per request)
 -------------------------*/
-/**
- * API_BASE:
- * - Empty string -> same origin (recommended when serving HTML from Flask).
- * - Set to full origin (https://...) for remote API.
- */
-const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev'; // default same-origin
+const API_BASE = 'https://unfelt-conner-similarly.ngrok-free.dev';
 const DISPLAY_CANDIDATES = [
   '/leaderboard/top',
   '/leaderboards/top',
   '/api/leaderboard/top',
   '/leaderboard',
   '/leaderboards',
-  '/api/leaderboard'
+  '/api/leaderboard',
+  '/leaderboard/display'
 ];
 
+/* -------------------------
+   STATE
+-------------------------*/
 const clientState = {
   sessionId: localStorage.getItem('hexon_session') || null,
   username: localStorage.getItem('hexon_username') || null,
   telegramId: null,
-  gp: null
+  gp: null,
+  discoveredEndpoint: null
 };
 
-if (!clientState.sessionId){
+if (!clientState.sessionId) {
   clientState.sessionId = 'sess-' + Math.floor(Math.random()*1e12).toString(36);
   localStorage.setItem('hexon_session', clientState.sessionId);
 }
 
-function $(id){ return document.getElementById(id); }
-function showToast(msg, ms=1800){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=> t.style.display='none', ms); }
-function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+/* -------------------------
+   DOM helpers
+-------------------------*/
+const $ = id => document.getElementById(id);
+const showToast = (msg, ms=1400) => { const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=> t.style.display='none', ms); };
+const escapeHtml = s => String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /* -------------------------
    API helper
 -------------------------*/
-async function api(path, method='GET', body=null, optsExtra={}){
-  try{
-    let url = path.startsWith('http') ? path : (API_BASE ? API_BASE.replace(/\/$/,'') + path : window.location.origin + path);
+async function api(path, method='GET', body=null, optsExtra={}) {
+  try {
+    const base = API_BASE;
+    const url = path.startsWith('http') ? path : (base.replace(/\/$/,'') + path);
     const headers = Object.assign({}, optsExtra.headers || {});
     if (method.toUpperCase() !== 'GET') headers['Content-Type'] = headers['Content-Type'] || 'application/json';
     if (clientState.sessionId) headers['X-Session-Id'] = clientState.sessionId;
+
     const userHandle = clientState.username ? clientState.username : (clientState.telegramId ? ('tg_' + clientState.telegramId) : null);
     if (userHandle) headers['X-User-Handle'] = userHandle;
 
-    // for GET attach sessionId param
-    if (method.toUpperCase() === 'GET' && clientState.sessionId){
-      const sep = url.includes('?') ? '&' : '?';
-      url = url + sep + 'sessionId=' + encodeURIComponent(clientState.sessionId);
+    let urlWithSession = url;
+    if (method.toUpperCase() === 'GET' && clientState.sessionId) {
+      urlWithSession += (url.includes('?') ? '&' : '?') + 'sessionId=' + encodeURIComponent(clientState.sessionId);
     }
 
     const opts = { method, headers, ...optsExtra };
-    if (body !== null && body !== undefined){
-      if (opts.headers['Content-Type'] && opts.headers['Content-Type'].includes('application/json') && typeof body === 'object'){
-        body = Object.assign({}, body, { sessionId: body.sessionId || clientState.sessionId, username: body.username || clientState.username || null, telegramId: body.telegramId || clientState.telegramId || null });
-        opts.body = JSON.stringify(body);
+    if (body != null) {
+      if (headers['Content-Type'] && headers['Content-Type'].includes('application/json') && typeof body === 'object') {
+        const bodyWithSession = Object.assign({}, body, { sessionId: body.sessionId || clientState.sessionId, username: body.username || clientState.username || null, telegramId: body.telegramId || clientState.telegramId || null });
+        opts.body = JSON.stringify(bodyWithSession);
       } else {
         opts.body = body;
       }
     }
 
-    const res = await fetch(url, opts);
+    const res = await fetch(urlWithSession, opts);
     const txt = await res.text();
-    try{ return txt ? JSON.parse(txt) : null; } catch(e){ return txt; }
-  }catch(e){
-    console.warn('api error', e);
+    try { return txt ? JSON.parse(txt) : null; } catch(e) { return txt; }
+  } catch (err) {
+    console.warn('api error', err);
     return null;
   }
 }
 
 /* -------------------------
-   Telegram + client init
+   Telegram init
 -------------------------*/
-function initTelegram(){
+function initTelegram() {
   try {
-    if (window.Telegram && window.Telegram.WebApp){
+    if (window.Telegram && window.Telegram.WebApp) {
       const tg = window.Telegram.WebApp;
-      try{ if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
+      try { if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
       const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
-      if (u){
+      if (u) {
         clientState.telegramId = u.id;
         clientState.username = clientState.username || (u.username || `${u.first_name||''} ${u.last_name||''}`.trim() || null);
         if (clientState.username) localStorage.setItem('hexon_username', clientState.username);
       }
     }
-  } catch(e){ console.warn('initTelegram', e); }
+  } catch(e) { console.warn('initTelegram', e); }
 }
 
-async function loadClientState(){
-  // Sync session and gp with server (idempotent)
+/* -------------------------
+   Load client state (gp, username)
+-------------------------*/
+async function loadClientState() {
   const resp = await api('/client/init','POST',{ sessionId: clientState.sessionId });
-  if (resp && resp.ok){
+  if (resp && resp.ok) {
     clientState.sessionId = resp.sessionId || clientState.sessionId;
     clientState.username = resp.username || clientState.username;
     clientState.gp = typeof resp.gp !== 'undefined' ? Number(resp.gp) : clientState.gp;
@@ -171,7 +182,7 @@ async function loadClientState(){
   updateBalanceUI();
 }
 
-function updateBalanceUI(){
+function updateBalanceUI() {
   const el = $('gpAmount');
   el.textContent = (clientState.gp === null || typeof clientState.gp === 'undefined') ? '—' : Number(clientState.gp).toLocaleString();
 }
@@ -179,19 +190,17 @@ function updateBalanceUI(){
 /* -------------------------
    Discover leaderboard endpoint
 -------------------------*/
-async function discoverLeaderboardEndpoint(){
-  for (const p of DISPLAY_CANDIDATES){
-    try{
+async function discoverLeaderboardEndpoint() {
+  for (const p of DISPLAY_CANDIDATES) {
+    try {
       const res = await api(p,'GET');
       if (!res) continue;
       if (Array.isArray(res)) return p;
-      if (res && typeof res === 'object'){
-        if (Array.isArray(res.items)) return p;
-        if (Array.isArray(res.data)) return p;
-        // if object contains array anywhere, pick it
-        for (const k of Object.keys(res)){ if (Array.isArray(res[k])) return p; }
+      if (res && typeof res === 'object') {
+        if (Array.isArray(res.items) || Array.isArray(res.data)) return p;
+        for (const k of Object.keys(res)) if (Array.isArray(res[k])) return p;
       }
-    }catch(e){ /* ignore and continue */ }
+    } catch(e) { /* ignore and try next */ }
   }
   return null;
 }
@@ -200,42 +209,49 @@ async function discoverLeaderboardEndpoint(){
    Render leaderboard
 -------------------------*/
 let discovered = null;
-async function renderLeaderboard(){
+
+function renderEmpty(msg) {
+  $('list').innerHTML = `<div class="muted" style="padding:12px">${escapeHtml(msg)}</div>`;
+}
+
+async function renderLeaderboard() {
   initTelegram();
-  const list = $('list');
-  list.innerHTML = '<div class="muted" style="padding:12px">Loading leaderboard…</div>';
+  renderEmpty('Loading leaderboard…');
 
   await loadClientState();
 
   if (!discovered) {
     discovered = await discoverLeaderboardEndpoint();
-    if (!discovered) {
-      list.innerHTML = '<div class="muted" style="padding:12px">Leaderboard endpoint not found</div>';
-      return;
-    }
+    $('debug').textContent = discovered ? `discovered: ${discovered}` : 'no leaderboard endpoint discovered';
   }
 
-  let resp = await api(discovered,'GET');
-  if (!resp) {
-    list.innerHTML = '<div class="muted" style="padding:12px">Failed to fetch leaderboard</div>';
+  if (!discovered) {
+    renderEmpty('Leaderboard endpoint not found');
     return;
   }
 
-  // find array of entries in response
+  const resp = await api(discovered,'GET');
+  if (!resp) {
+    renderEmpty('Failed to fetch leaderboard');
+    return;
+  }
+
   let arr = [];
   if (Array.isArray(resp)) arr = resp;
   else if (Array.isArray(resp.items)) arr = resp.items;
   else if (Array.isArray(resp.data)) arr = resp.data;
   else {
-    for (const k of Object.keys(resp)){ if (Array.isArray(resp[k])) { arr = resp[k]; break; } }
+    for (const k of Object.keys(resp)) {
+      if (Array.isArray(resp[k])) { arr = resp[k]; break; }
+    }
   }
 
-  if (!arr || arr.length === 0){
-    list.innerHTML = '<div class="muted" style="padding:12px">No leaderboard data</div>';
+  if (!arr || arr.length === 0) {
+    renderEmpty('No leaderboard data');
     return;
   }
 
-  // create header row
+  const list = $('list');
   const header = document.createElement('div');
   header.className = 'row header';
   header.innerHTML = `<div class="rank">#</div><div class="name">Player</div><div class="score">Score</div>`;
@@ -250,20 +266,16 @@ async function renderLeaderboard(){
     const score = (typeof it.score !== 'undefined') ? it.score : (typeof it.points !== 'undefined' ? it.points : '—');
     const row = document.createElement('div');
     const highlight = userLower && String(name).toLowerCase() === userLower;
-    if (highlight) { row.className = 'row highlight'; foundSelf = true; }
-    else row.className = 'row';
-
+    row.className = 'row' + (highlight ? ' highlight' : '');
+    if (highlight) foundSelf = true;
     row.innerHTML = `<div class="rank">${idx+1}</div><div class="name">${escapeHtml(name)}</div><div class="score">${(score!==null && score!=='—')?Number(score).toLocaleString():'—'}</div>`;
     list.appendChild(row);
   });
 
-  // if we didn't find user's name but server returned user id or user stats, try to locate them
-  if (!foundSelf && clientState.username && typeof resp.find === 'function') {
-    // some APIs might include the current user's rank in resp.meta/current or similar; try common fields
-    // (best-effort; not guaranteed)
-    if (resp.current && (resp.current.username || resp.current.name)) {
-      // append/insert user's current as a bottom row
-      const me = resp.current;
+  // Show "current user" block if server provided and not already highlighted
+  if (!foundSelf && resp && (resp.current || resp.me)) {
+    const me = resp.current || resp.me;
+    if (me && (me.username || me.name)) {
       const meRow = document.createElement('div');
       meRow.className = 'row highlight';
       meRow.innerHTML = `<div class="rank">${me.rank || '—'}</div><div class="name">${escapeHtml(me.username || me.name)}</div><div class="score">${(typeof me.score!=='undefined')?Number(me.score).toLocaleString():'—'}</div>`;
@@ -277,12 +289,12 @@ async function renderLeaderboard(){
 /* -------------------------
    Wiring & boot
 -------------------------*/
-document.addEventListener('DOMContentLoaded', ()=>{
+document.addEventListener('DOMContentLoaded', () => {
+  $('refreshBtn').addEventListener('click', () => renderLeaderboard());
+  $('backBtn').addEventListener('click', () => window.location.href = 'index.html');
   initTelegram();
   renderLeaderboard();
-  $('refreshBtn').addEventListener('click', ()=> renderLeaderboard());
-  $('backBtn').addEventListener('click', ()=> window.location.href = 'index.html');
-  setInterval(renderLeaderboard, 15000); // auto-refresh
+  setInterval(renderLeaderboard, 15000);
 });
 </script>
 </body>
