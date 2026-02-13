@@ -182,12 +182,7 @@
     </aside>
   </div>
 
-  <div id="touchFooter" class="touch-footer" aria-hidden="false" role="toolbar" aria-label="Touch controls">
-    <div class="touch-btn" id="tf-left" title="Left"><i class="fa-solid fa-arrow-left"></i></div>
-    <div class="touch-btn" id="tf-rotate" title="Rotate"><i class="fa-solid fa-rotate"></i></div>
-    <div class="touch-btn" id="tf-down" title="Drop"><i class="fa-solid fa-arrow-down"></i></div>
-    <div class="touch-btn" id="tf-right" title="Right"><i class="fa-solid fa-arrow-right"></i></div>
-  </div>
+  <!-- removed on-screen piece navigation buttons (we use gestures) -->
 
   <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="bottom-sheet" role="document" aria-label="Inline sheet">
@@ -300,12 +295,13 @@
     dropInterval: INITIAL_DROP_MS,
     isPlaying: false,
     combo: 0,
-    lastSavedAt: null,   // time we saved state
-    lastTickAt: null,    // last actual drop tick time (only set on real ticks / spawn)
+    lastSavedAt: null,
+    lastTickAt: null,
     hiddenAt: null,
     wasPlayingBeforeHidden: null,
-    pausedForEnergy: false, // track if the game is paused because energy ran out
-    tickRemaining: null // ms remaining until next drop when paused
+    pausedForEnergy: false,
+    tickRemaining: null,
+    _forceResume: false // internal helper
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -528,7 +524,7 @@
   setInterval(()=> { if (!gameState.isPlaying) return; sendState('heartbeat'); }, 2000);
 
   // -----------------------
-  // Phaser scenes (with robust resize handling)
+  // Phaser scenes
   // -----------------------
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
@@ -559,10 +555,11 @@
       }
 
       this.setupInput();
+
       // recharge timer (doesn't touch lastTickAt)
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
 
-      // Save interval: only saves state but does NOT modify lastTickAt
+      // Save interval
       this.saveStateTimer = this.time.addEvent({
         delay: 2000,
         loop: true,
@@ -730,6 +727,7 @@
     setupInput(){
       this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
       window.addEventListener('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
+      // Touch gestures are handled by pointer events on the canvas (in create)
       setupTouchControls(this);
 
       if (!this._gestureBound){
@@ -807,6 +805,7 @@
 
     catchUpMissedTicks(){
       try {
+        // if hiddenAt exists we don't auto-catchup here; resume logic will handle it
         if (gameState.hiddenAt) {
           return;
         }
@@ -831,7 +830,7 @@
   }
 
   // -----------------------
-  // Game functions (with live sends)
+  // Game functions
   // -----------------------
   function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
 
@@ -853,6 +852,7 @@
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
       try {
+        // compute tickRemaining so we can later resume the tick precisely
         const now = Date.now();
         if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
           const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
@@ -988,20 +988,17 @@
   function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
 
   // -----------------------
-  // Touch controls wiring (ONLY floating footer)
+  // Touch controls wiring (no on-screen buttons — gestures handle everything)
   // -----------------------
   function setupTouchControls(scene){
-    const tfLeft = $('tf-left'), tfRight = $('tf-right'), tfRotate = $('tf-rotate'), tfDown = $('tf-down');
-    if (tfLeft) tfLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('footer_left'); sendState('footer_left'); updateUI(); saveGameToStorage(); };
-    if (tfRight) tfRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('footer_right'); sendState('footer_right'); updateUI(); saveGameToStorage(); };
-    if (tfRotate) tfRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('footer_rotate'); sendState('footer_rotate'); updateUI(); saveGameToStorage(); };
-    if (tfDown) tfDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('footer_down'); sendState('footer_down'); updateUI(); saveGameToStorage(); };
+    // Intentionally minimal: we rely on pointer gestures on the canvas (tap/swipe).
+    // Keep this function so calls remain valid; if we later add UI buttons we can bind them here.
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet + deep link code (kept largely unchanged)
+  // Wallet + deep link code (unchanged)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -1239,7 +1236,7 @@
   }
 
   // -----------------------
-  // Referral modal: keep only the Telegram web referral
+  // Referral modal
   // -----------------------
   function showReferralModal(){
     (async ()=>{
@@ -1452,9 +1449,10 @@
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
       const was = gameState.wasPlayingBeforeHidden;
+      const forced = gameState._forceResume === true;
 
-      if (was === true){
-        // Only resume if it was playing before hidden
+      // Resume if it was playing before hidden OR resume was forced by loader
+      if (was === true || forced) {
         gameState.isPlaying = true;
 
         if (scene) {
@@ -1474,7 +1472,7 @@
           }
         }
 
-        // set lastTickAt to now so subsequent catchup/tick maths are consistent
+        // update lastTickAt so catch-up math is consistent
         gameState.lastTickAt = Date.now();
         sendState('resume');
         saveGameToStorage();
@@ -1486,8 +1484,10 @@
         saveGameToStorage();
       }
 
+      // cleanup flags
       delete gameState.hiddenAt;
       delete gameState.wasPlayingBeforeHidden;
+      delete gameState._forceResume;
       // do not delete tickRemaining here — it's cleared by startDropLoop when the scheduled tick executes
     } catch(e){ console.warn('resumeFromHidden error', e); }
   }
@@ -1501,6 +1501,22 @@
         gameState.pausedForEnergy = false;
         if (!gameState.activePiece) spawnPiece();
         gameState.isPlaying = true;
+
+        // ensure tickRemaining exists (compute best-effort)
+        if (!gameState.tickRemaining){
+          try {
+            if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
+              const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
+              const elapsed = Math.max(0, Date.now() - gameState.lastTickAt);
+              gameState.tickRemaining = ((di - (elapsed % di)) + di) % di || di;
+            } else {
+              gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
+            }
+          } catch(e){
+            gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
+          }
+        }
+
         try {
           const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           if (scene){
@@ -1523,7 +1539,7 @@
   }
 
   // -----------------------
-  // Boot / init & Phaser startup (redone sizing + robust resize)
+  // Boot / init & Phaser startup
   // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
@@ -1550,7 +1566,11 @@
         clientState.sessionId = keepSession || clientState.sessionId;
       }
 
+      // Load saved game and determine whether to attempt resume
       const savedGame = loadGameFromStorage();
+      let shouldAttemptResume = false;
+      let resumeTickRemaining = null;
+
       if (savedGame){
         try {
           if (Array.isArray(savedGame.grid) && savedGame.grid.length === GRID_ROWS){
@@ -1569,9 +1589,31 @@
             gameState.wasPlayingBeforeHidden = savedGame.wasPlayingBeforeHidden || null;
             gameState.pausedForEnergy = savedGame.pausedForEnergy || false;
             gameState.tickRemaining = savedGame.tickRemaining || null;
+
+            // Decide if we should attempt resume:
+            // If the saved game indicates it was playing, or was playing before hidden, or had a hiddenAt -> try resuming
+            const wasPlayingFlag = Boolean(savedGame.wasPlayingBeforeHidden);
+            const savedMarkedPlaying = Boolean(savedGame.isPlaying);
+            const hadHidden = Boolean(savedGame.hiddenAt);
+
+            if (wasPlayingFlag || savedMarkedPlaying || hadHidden) {
+              shouldAttemptResume = true;
+              // prefer stored tickRemaining; otherwise compute from lastTickAt + dropInterval
+              if (savedGame.tickRemaining && Number.isFinite(savedGame.tickRemaining)) {
+                resumeTickRemaining = savedGame.tickRemaining;
+              } else if (savedGame.lastTickAt && savedGame.dropInterval) {
+                const di = Math.max(40, savedGame.dropInterval || INITIAL_DROP_MS);
+                const elapsed = Math.max(0, Date.now() - savedGame.lastTickAt);
+                resumeTickRemaining = ((di - (elapsed % di)) + di) % di || di;
+              } else {
+                resumeTickRemaining = savedGame.dropInterval || INITIAL_DROP_MS;
+              }
+            }
+
             // If savedGame indicated it was hidden when last saved, ensure the game isn't started until we attempt resume
             if (gameState.hiddenAt) gameState.isPlaying = false;
-            // If the game was paused for energy but we've since got energy, allow resume
+
+            // If the game was paused for energy but we've since got energy, allow resume (attempt now)
             if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
               gameState.pausedForEnergy = false;
               if (!gameState.activePiece) spawnPiece();
@@ -1648,15 +1690,14 @@
         }
       });
 
-      // If there was a saved game that was playing when hidden, attempt automatic resume now.
-      // This covers cases where user closed the tab/app and later returned — we try to resume automatically.
-      if (savedGame && savedGame.hiddenAt && (savedGame.wasPlayingBeforeHidden || savedGame.isPlaying)) {
-        // small delay to allow Phaser scenes to initialize
+      // If we decided previously that a saved game should be resumed, try now.
+      if (shouldAttemptResume) {
         setTimeout(()=> {
-          // If energy is available resume; otherwise leave paused for energy (will auto-resume when energy arrives)
+          // If energy is available resume; otherwise mark pausedForEnergy
           if ((clientState.energy || 0) > 0) {
-            // mark that we should resume and call the resume helper
-            gameState.wasPlayingBeforeHidden = true;
+            // flag forced resume and pass tickRemaining
+            gameState._forceResume = true;
+            gameState.tickRemaining = resumeTickRemaining || gameState.tickRemaining || gameState.dropInterval || INITIAL_DROP_MS;
             resumeFromHidden();
             showToast('Resuming previous game…', 1200);
           } else {
