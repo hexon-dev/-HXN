@@ -90,6 +90,7 @@
     <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
 
     <aside id="uiPanel" aria-live="polite" role="complementary" aria-label="Game controls and stats">
+      <!-- UI panel unchanged -->
       <nav>
         <a href="index.html"><i class="fa-solid fa-gamepad"></i> Game</a>
         <a href="shop.html"><i class="fa-solid fa-mining"></i> Miners</a>
@@ -302,8 +303,8 @@
     dropInterval: INITIAL_DROP_MS,
     isPlaying: false,
     combo: 0,
-    lastSavedAt: null,
-    lastTickAt: null,
+    lastSavedAt: null,   // time we saved state
+    lastTickAt: null,    // last actual drop tick time (only set on real ticks / spawn)
     hiddenAt: null,
     wasPlayingBeforeHidden: null,
     pausedForEnergy: false, // track if the game is paused because energy ran out
@@ -565,8 +566,19 @@
       }
 
       this.setupInput();
+      // recharge timer (doesn't touch lastTickAt)
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
-      this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
+
+      // Save interval: only saves state but does NOT modify lastTickAt
+      this.saveStateTimer = this.time.addEvent({
+        delay: 2000,
+        loop: true,
+        callback: () => {
+          gameState.lastSavedAt = Date.now();
+          saveGameToStorage();
+          saveClientToStorage();
+        }
+      });
     }
 
     drawBoard(){
@@ -582,10 +594,8 @@
         const totalH = GRID_ROWS * CELL + Math.max(0, GRID_ROWS - 1) * GAP;
 
         g.lineStyle(1, 0x0d2130, 0.6);
-        // horizontal lines (rows+1 lines)
+        // horizontal lines
         for (let r=0; r<=GRID_ROWS; r++){
-          const y = this.gridOrigin.y + r * (CELL + GAP) - (r>0 ? GAP * r - GAP * r : 0); // simpler: use r*(CELL+GAP), consistent with cell positions
-          // simplified consistent placement:
           const yy = this.gridOrigin.y + r * (CELL + GAP);
           g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, yy, this.gridOrigin.x + totalW, yy));
         }
@@ -660,6 +670,7 @@
             if (!moved) {
               lockPiece();
             }
+            // mark the tick as having occurred
             gameState.lastTickAt = Date.now();
             // clear tickRemaining because we just executed that delayed tick
             gameState.tickRemaining = null;
@@ -668,6 +679,8 @@
             // Now start normal repeating loop
             try {
               if (this.dropEvent) { try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+              // set lastTickAt to now (we just ran one)
+              gameState.lastTickAt = Date.now();
               this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: () => {
                 if (!gameState.isPlaying) return;
                 const moved2 = movePieceDown();
@@ -682,9 +695,11 @@
               console.warn('startDropLoop fallback to single loop failed', err);
             }
           }, [], this);
-          // We do not set lastTickAt until the tick actually occurs, keeping parity with pause/resume math.
+          // keep lastTickAt unchanged until first tick executes (we saved tickRemaining earlier)
         } else {
           // Normal repeating loop
+          // create event and set lastTickAt so pause/resume math remains consistent
+          gameState.lastTickAt = Date.now();
           this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: ()=> {
             if (!gameState.isPlaying) return;
             const moved = movePieceDown();
@@ -826,9 +841,9 @@
 
     catchUpMissedTicks(){
       try {
+        // If hiddenAt is present, don't attempt to replay ticks here; resumeFromHidden will handle.
         if (gameState.hiddenAt) {
-          gameState.lastTickAt = Date.now();
-          saveGameToStorage();
+          // do not change lastTickAt
           return;
         }
         if (!gameState.lastTickAt || !gameState.isPlaying) return;
@@ -879,7 +894,7 @@
         if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
           const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
           const elapsed = Math.max(0, now - gameState.lastTickAt);
-          gameState.tickRemaining = di - (elapsed % di);
+          gameState.tickRemaining = ((di - (elapsed % di)) + di) % di || di;
         } else {
           gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
         }
@@ -1410,7 +1425,7 @@
       Object.keys(optionMap).forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopPropagation(); try{ await optionMap[id](); } catch(e){ console.warn(e); showToast('Connection failed', 1200); } }, { passive:false });
+        el.addEventListener('pointerdown', async (ev)=>{ ev.preventDefault(); ev.stopImmediatePropagation(); try{ await optionMap[id](); } catch(e){ console.warn(e); showToast('Connection failed', 1200); } }, { passive:false });
         el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); optionMap[id](); } });
       });
 
@@ -1450,7 +1465,7 @@
         const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
         if (gameState.lastTickAt && Number.isFinite(gameState.lastTickAt)){
           const elapsed = Math.max(0, now - gameState.lastTickAt);
-          gameState.tickRemaining = di - (elapsed % di);
+          gameState.tickRemaining = ((di - (elapsed % di)) + di) % di || di;
         } else {
           gameState.tickRemaining = di;
         }
@@ -1709,8 +1724,8 @@
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
-      setInterval(()=>{ gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); }, 3000);
-
+      // removed any periodic writes to lastTickAt here to preserve true tick timing.
+      // document visibility + focus handlers will drive pause/resume precisely.
       document.addEventListener('visibilitychange', ()=> {
         try {
           if (document.hidden) pauseForHidden();
