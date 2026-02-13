@@ -71,6 +71,21 @@ input[type="text"]{
   color:inherit;
   box-sizing:border-box;
 }
+
+/* simple small toast */
+#toast {
+  position:fixed;
+  left:50%;
+  transform:translateX(-50%);
+  bottom:28px;
+  background:rgba(0,0,0,0.7);
+  color:#fff;
+  padding:8px 12px;
+  border-radius:8px;
+  font-size:14px;
+  display:none;
+  z-index:9999;
+}
 </style>
 </head>
 
@@ -84,37 +99,38 @@ input[type="text"]{
 </nav>
 
 <div class="card">
-<h2>Invite friends</h2>
-<p class="muted">
-Share this link. It opens the Telegram Mini App directly.
-</p>
+  <h2>Invite friends</h2>
+  <p class="muted">
+    Share this link. It opens the Telegram Mini App directly.
+  </p>
 
-<div style="margin-top:12px;">
-<label class="muted">Your referral link</label>
-<input id="refLink" type="text" readonly />
+  <div style="margin-top:12px;">
+    <label class="muted">Your referral link</label>
+    <input id="refLink" type="text" readonly />
+  </div>
+
+  <div style="display:flex; gap:8px; margin-top:12px;">
+    <button id="copyBtn" class="button" type="button">
+      <i class="fa-solid fa-copy"></i> Copy link
+    </button>
+
+    <button id="shareBtn" class="btn-ghost" type="button">
+      <i class="fa-solid fa-share-nodes"></i> Share
+    </button>
+
+    <button class="btn-ghost" type="button" id="backBtn">
+      <i class="fa-solid fa-arrow-left"></i> Back
+    </button>
+  </div>
+
+  <div id="status" class="muted" style="margin-top:12px;">
+    Loading referral status…
+  </div>
 </div>
 
-<div style="display:flex; gap:8px; margin-top:12px;">
-<button id="copyBtn" class="button">
-<i class="fa-solid fa-copy"></i> Copy link
-</button>
-
-<button id="shareBtn" class="btn-ghost">
-<i class="fa-solid fa-share-nodes"></i> Share
-</button>
-
-<button class="btn-ghost" onclick="window.location.href='index.html'">
-<i class="fa-solid fa-arrow-left"></i> Back
-</button>
-</div>
-
-<div id="status" class="muted" style="margin-top:12px;">
-Loading referral status…
-</div>
-</div>
+<div id="toast"></div>
 
 <script>
-
 /* ================= CONFIG ================= */
 
 const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
@@ -129,6 +145,15 @@ let clientState = {
   username: null,
   telegramId: null
 };
+
+/* small toast helper */
+function showToast(msg, ms = 2000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(()=> t.style.display = 'none', ms);
+}
 
 function api(path, method='GET', body=null){
   return (async ()=>{
@@ -148,13 +173,24 @@ function api(path, method='GET', body=null){
       const opts = {method, headers};
 
       if(body){
-        body.sessionId = clientState.sessionId;
-        body.username = clientState.username;
-        body.telegramId = clientState.telegramId;
+        // attach client info for server convenience
+        body = Object.assign({}, body, {
+          sessionId: clientState.sessionId,
+          username: clientState.username,
+          telegramId: clientState.telegramId
+        });
         opts.body = JSON.stringify(body);
       }
 
       const res = await fetch(url, opts);
+
+      // HTTP errors
+      if(!res.ok){
+        const txt = await res.text();
+        console.warn('api error', res.status, txt);
+        return null;
+      }
+
       const txt = await res.text();
       return txt ? JSON.parse(txt) : null;
 
@@ -168,10 +204,8 @@ function api(path, method='GET', body=null){
 function initTelegram(){
   if(window.Telegram?.WebApp){
     const tg = window.Telegram.WebApp;
-    tg.ready();
-
+    try { tg.ready(); } catch(e){}
     const user = tg.initDataUnsafe?.user;
-
     if(user){
       clientState.telegramId = user.id;
       clientState.username =
@@ -184,6 +218,8 @@ function initTelegram(){
 /* ================= REFERRAL ================= */
 
 function buildMiniAppLink(refCode){
+  // t.me deep link that opens the bot and (if supported) the mini app
+  // keep the same param you used earlier (startapp)
   return `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=${encodeURIComponent(refCode)}`;
 }
 
@@ -191,25 +227,62 @@ async function loadReferral(){
 
   initTelegram();
 
+  document.getElementById('status').textContent = 'Loading referral status…';
+
+  // try to fetch player's referral
   let resp = await api('/player/referral','GET');
   let refCode = resp?.refCode || null;
 
+  // fallback: init client to get referralCode
   if(!refCode){
     const init = await api('/client/init','POST',{});
     refCode = init?.referralCode || null;
   }
 
   if(refCode){
-
     const link = buildMiniAppLink(refCode);
-
     document.getElementById('refLink').value = link;
-
     document.getElementById('status').innerHTML =
       `Referrals active: ${resp?.count || 0}`;
-
   }else{
     document.getElementById('refLink').value = 'Unavailable';
+    document.getElementById('status').textContent = 'Referral unavailable';
+  }
+}
+
+/* ================= COPY (clipboard) ================= */
+
+async function copyToClipboard(text){
+  // prefer modern API
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  // fallback - select input and execCommand
+  const input = document.getElementById('refLink');
+  const prevReadOnly = input.readOnly;
+  try{
+    input.readOnly = false;       // temporarily allow selection on some browsers
+    input.focus();
+    input.select();
+
+    // For mobile where select() might not select, create a temporary textarea
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // position off-screen
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }catch(e){
+    console.warn('copy fallback failed', e);
+    return false;
+  }finally{
+    input.readOnly = prevReadOnly;
   }
 }
 
@@ -217,48 +290,91 @@ async function loadReferral(){
 
 document.addEventListener('DOMContentLoaded',()=>{
 
+  // load referral data
   loadReferral();
 
-  document.getElementById('copyBtn').onclick = async ()=>{
-    try{
-      await navigator.clipboard.writeText(
-        document.getElementById('refLink').value
-      );
-      alert('Copied');
-    }catch{
-      alert('Copy failed');
-    }
-  };
+  // Back button
+  document.getElementById('backBtn').addEventListener('click', (ev)=>{
+    ev.preventDefault();
+    window.location.href = 'index.html';
+  });
 
-  document.getElementById('shareBtn').onclick = async ()=>{
-
+  // Copy button
+  document.getElementById('copyBtn').addEventListener('click', async (ev)=>{
+    ev.preventDefault();
     const url = document.getElementById('refLink').value;
+    if(!url || url === 'Unavailable'){ showToast('No referral link'); return; }
 
     try{
+      const ok = await copyToClipboard(url);
+      if(ok){
+        showToast('Copied to clipboard');
+      }else{
+        showToast('Copy failed — select & copy manually');
+      }
+    }catch(err){
+      console.warn(err);
+      showToast('Copy failed');
+    }
+  });
 
-      /* Telegram Native Share */
+  // Share button
+  document.getElementById('shareBtn').addEventListener('click', async (ev)=>{
+    ev.preventDefault();
+    const url = document.getElementById('refLink').value;
+    if(!url || url === 'Unavailable'){ showToast('No referral link'); return; }
+
+    try{
+      // Telegram Web App native link open
       if(window.Telegram?.WebApp){
-        Telegram.WebApp.openTelegramLink(url);
-        return;
+        const tg = window.Telegram.WebApp;
+        // try the standard API variants in order of likelihood
+        if(typeof tg.openTelegramLink === 'function'){
+          tg.openTelegramLink(url);
+          return;
+        }else if(typeof tg.openUrl === 'function'){
+          // openUrl is commonly present
+          tg.openUrl(url);
+          return;
+        }else{
+          // fallback to opening in new window/tab
+          window.open(url, '_blank');
+          return;
+        }
       }
 
-      /* Browser Share */
+      // Browser native share API
       if(navigator.share){
         await navigator.share({
           title:'Join Hexon',
-          url:url
+          text:'Join me on Hexon — open in Telegram Mini App',
+          url: url
         });
+        return;
+      }
+
+      // final fallback: copy to clipboard and tell user to paste
+      const ok = await copyToClipboard(url);
+      if(ok){
+        showToast('Link copied — paste to share');
       }else{
-        alert('Copy and share manually');
+        alert('Copy and share manually: ' + url);
       }
 
     }catch(e){
-      console.warn(e);
+      console.warn('share failed', e);
+      // fallback copy attempt
+      try{
+        const ok2 = await copyToClipboard(url);
+        if(ok2) showToast('Link copied — paste to share');
+        else alert('Share failed — copy link manually: ' + url);
+      }catch(_){
+        alert('Share failed — copy link manually: ' + url);
+      }
     }
-  };
+  });
 
 });
-
 </script>
 </body>
 </html>
