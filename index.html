@@ -158,19 +158,20 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
-            <div class="muted small">Claimable HXN</div>
-            <div class="stat" id="ui-hxn">— HXN</div>
-            <div class="small-muted" id="ui-hxn-sub" style="margin-top:6px;">loading…</div>
+            <div class="small muted">Claimable HXN (server-backed)</div>
+            <div class="stat" id="ui-hxn">0 HXN</div>
+            <div class="small-muted" id="ui-hxn-details" style="margin-top:6px;">est/day: 0 • balance: — • credits: —</div>
           </div>
           <div style="text-align:right;">
             <div class="muted small">Hash Units</div>
             <div class="small" id="ui-au">AU: 0</div>
-            <div class="small-muted" id="ui-total-au" style="margin-top:6px;">total AU: —</div>
+            <div style="height:6px"></div>
+            <button id="syncHxnBtn" class="btn-ghost" title="Refresh mining & balance">Refresh mining</button>
           </div>
         </div>
         <div style="display:flex; gap:8px; margin-top:10px;">
-          <button id="syncHxnBtn" class="btn-ghost"><i class="fa-solid fa-sync"></i> Sync Mining</button>
-          <button id="claimRewardBtn" class="button"><i class="fa-solid fa-gift"></i> View / Claim</button>
+          <button id="viewAlloc" class="btn-ghost"><i class="fa-solid fa-layer-group"></i> View Allocation</button>
+          <button id="claimRewardBtn" class="button"><i class="fa-solid fa-gift"></i> Claim & Close</button>
         </div>
       </div>
 
@@ -239,8 +240,8 @@
   // Config / constants
   // -----------------------
   const TELEGRAM_BOT_USERNAME = 'hxxxnbot';
-  const API_BASE = 'https://extensions-charity-club-specifies.trycloudflare.com';
-  const DAILY_EMISSION_CAP = 1250000; // daily HXN emission (used for preview)
+  const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
+  const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
   const BASE_CELL = 20, BASE_GAP = 2;
   const INITIAL_DROP_MS = 800;
@@ -284,10 +285,10 @@
     telegramId: null,
     wallet: loadBoundWalletFromStorage(),
     walletProvider: localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER) || null,
-    gpBase: 0,
-    serverScore: null,
+    gpBase: 0,            // authoritative server GP base (server-side stored gp)
+    serverScore: null,    // latest server-reported score
     energy: 100,
-    energyLastUpdatedAt: Date.now(),
+    energyLastUpdatedAt: Date.now(), // timestamp (ms) used for offline/hidden recharge calculation
     miners: [],
     shopItems: [],
     userAU: 0,
@@ -295,16 +296,21 @@
     referralCode: null,
     pendingReferral: null,
     referralsActive: 0,
+    // ad-related persisted fields:
     adsThisSitting: 0,
-    adsThisSittingStartedAt: null,
+    adsThisSittingStartedAt: null, // ms timestamp when current sitting began
     sittingsUsedToday: 0,
     adsToday: 0,
-    adsTodayDate: null,
+    adsTodayDate: null, // ISO date string of the adsToday day
     actionLog: [],
-    lastSent: { gpTotal: 0, score: 0 },
-    // HXN fields (server authoritative)
-    hxnBalance: null,   // string numeric or null
-    hxnCredits: null    // total credits from ledger (string) if returned
+    // sync tracking: last-sent totals to server (so we send deltas, not totals)
+    lastSent: {
+      gpTotal: 0,   // last total gp value acknowledged/sent to server
+      score: 0      // last score acknowledged/sent to server
+    },
+    // HXN fields (authoritative from server)
+    hxnBalance: "0",   // string decimal returned by /hxn/balance
+    hxnCredits: "0"    // sum of hxn_ledger credits returned by server
   };
 
   const gameState = {
@@ -323,7 +329,7 @@
     wasPlayingBeforeHidden: null,
     pausedForEnergy: false,
     tickRemaining: null,
-    _forceResume: false
+    _forceResume: false // internal helper
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -340,8 +346,8 @@
   function saveClientToStorage(){
     try {
       const toSave = Object.assign({}, clientState);
+      // keep action log trimmed
       toSave.actionLog = (clientState.actionLog || []).slice(-2000);
-      // don't store heavy or transient fields, but fine to store hxnBalance as string
       localStorage.setItem(STORAGE_KEYS.CLIENT, JSON.stringify(toSave));
     } catch(e){ console.warn('saveClientToStorage error', e); }
   }
@@ -421,21 +427,25 @@
       const prev = Number(clientState.energy || 0);
       clientState.energy = clamped;
       if (setTimestamp) clientState.energyLastUpdatedAt = Date.now();
+      // if energy changed, persist and update UI
       if (clamped !== prev) {
         logAction('energy_set', { from: prev, to: clamped });
         saveClientToStorage();
         updateUI();
       } else {
+        // still persist timestamp change if requested
         if (setTimestamp) saveClientToStorage();
       }
     } catch(e){ console.warn('setEnergy error', e); }
   }
 
+  // Apply any missed recharges that would have occurred while the page was closed or hidden.
   function applyOfflineEnergyRecharge(){
     try {
       if (typeof clientState.energy !== 'number') clientState.energy = 100;
       const last = Number(clientState.energyLastUpdatedAt || Date.now());
       const now = Date.now();
+      // If last is in the future for some reason, clamp it
       const safeLast = last > now ? now : last;
       const elapsed = Math.max(0, now - safeLast);
       const perMs = AUTO_RECHARGE_MINUTES * 60e3;
@@ -443,12 +453,14 @@
       if (increments > 0){
         const add = increments * AUTO_RECHARGE_PERCENT;
         const newEnergy = Math.min(100, (clientState.energy || 0) + add);
+        // advance the last-updated timestamp by the consumed increments (so partial leftover time is preserved)
         clientState.energyLastUpdatedAt = safeLast + increments * perMs;
         clientState.energy = newEnergy;
         logAction('offline_recharge', { increments, add, energy: clientState.energy });
         saveClientToStorage();
         updateUI();
       } else {
+        // No full increments passed — keep things as they are (do not move timestamp)
         if (!clientState.energyLastUpdatedAt) {
           clientState.energyLastUpdatedAt = now;
           saveClientToStorage();
@@ -457,11 +469,15 @@
     } catch(e){ console.warn('applyOfflineEnergyRecharge error', e); }
   }
 
+  // force a visible immediate refill tick (called by Phaser timer while page active)
   function doAutoRechargeTick(){
     try {
+      // apply any missed recharges first (makes periodic ticks tolerant)
       applyOfflineEnergyRecharge();
+      // then apply a single tick (prevents double-adding if applyOfflineEnergyRecharge already added multiples)
       setEnergy((clientState.energy || 0) + AUTO_RECHARGE_PERCENT, true);
       logAction('auto_recharge_tick', { energy: clientState.energy });
+      // attempt to resume if we were paused for energy
       attemptResumeAfterEnergy();
       sendState('auto_recharge', { energy: clientState.energy });
     } catch(e){ console.warn('doAutoRechargeTick error', e); }
@@ -477,6 +493,7 @@
         clientState.adsTodayDate = today;
         clientState.adsToday = 0;
         clientState.sittingsUsedToday = 0;
+        // clear any in-progress sitting if its cooldown expired
         if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
           clientState.adsThisSitting = 0;
           clientState.adsThisSittingStartedAt = null;
@@ -487,12 +504,14 @@
     } catch(e){ console.warn('resetDailyAdsIfNeeded', e); }
   }
 
+  // call on load and periodically (handles midnight rollover while page open)
   function normalizeAdStateOnLoad(){
     try {
       const today = isoDateStr();
       if (!clientState.adsTodayDate){
         clientState.adsTodayDate = today;
       }
+      // reset if date mismatch
       if (clientState.adsTodayDate !== today){
         clientState.adsTodayDate = today;
         clientState.adsToday = 0;
@@ -501,10 +520,12 @@
         clientState.adsThisSittingStartedAt = null;
         saveClientToStorage();
       } else {
+        // if sitting started but cooldown expired, clear sitting so a new sitting can be started
         if (clientState.adsThisSittingStartedAt){
           if ((Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
             clientState.adsThisSitting = 0;
             clientState.adsThisSittingStartedAt = null;
+            // we do NOT change sittingsUsedToday here (sittingsUsedToday is incremented only when a sitting completes)
             saveClientToStorage();
           }
         }
@@ -517,13 +538,17 @@
     return Math.max(0, (MAX_SITTINGS_PER_DAY - (clientState.sittingsUsedToday || 0)));
   }
 
+  // returns ms until next sitting availability (0 if allowed now)
   function timeUntilNextSittingAvailable(){
+    // daily exhausted?
     if ((clientState.sittingsUsedToday || 0) >= MAX_SITTINGS_PER_DAY){
       return msUntilNextLocalMidnight();
     }
+    // if currently in a sitting and not yet reached ad limit -> allowed now
     if ((clientState.adsThisSitting || 0) < MAX_ADS_PER_SITTING){
       return 0;
     }
+    // sitting reached ad limit -> check cooldown from start
     if (clientState.adsThisSittingStartedAt){
       const elapsed = Date.now() - clientState.adsThisSittingStartedAt;
       const rem = Math.max(0, SITTING_COOLDOWN_MS - elapsed);
@@ -534,18 +559,24 @@
 
   function canWatchAd(){
     resetDailyAdsIfNeeded();
+    // daily ad cap
     if ((clientState.adsToday || 0) >= MAX_ADS_PER_DAY) return false;
+    // time until next sitting
     return timeUntilNextSittingAvailable() === 0;
   }
 
+  // mark start of sitting (when first ad of sitting is requested/granted)
+  // NOTE: we only set startedAt here — we increment sittingsUsedToday when the sitting completes (reaches MAX_ADS_PER_SITTING)
   function startSittingIfNeeded(){
     if (!clientState.adsThisSittingStartedAt || clientState.adsThisSittingStartedAt === null){
       clientState.adsThisSittingStartedAt = Date.now();
     }
   }
 
+  // When a sitting finishes (reached MAX_ADS_PER_SITTING) we call this to consume a daily sitting.
   function finishSittingAndConsume(){
     clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1;
+    // keep adsThisSitting and adsThisSittingStartedAt so cooldown can be computed against startedAt.
     saveClientToStorage();
   }
 
@@ -586,68 +617,79 @@
   }
 
   // -----------------------
-  // HXN-specific helpers (new)
+  // HXN sync + balance wiring (new)
   // -----------------------
-
-  // Fetch authoritative HXN balance and credits (calls GET /hxn/balance)
-  async function fetchHxnBalance(){
+  // Call /hxn/sync (POST) to calculate & credit mined HXN for this user (non-retroactive).
+  async function syncHXN(showUIFeedback = true){
     try {
-      const resp = await api('/hxn/balance','GET');
-      if (resp && resp.ok){
-        clientState.hxnBalance = resp.balance != null ? String(resp.balance) : null;
-        clientState.hxnCredits = resp.credits != null ? String(resp.credits) : null;
-        // server also returns userAU/totalAU via other endpoints; we will keep consistent on init/sync
-        updateUI();
-        saveClientToStorage();
-        return resp;
-      } else {
-        // keep existing state but update UI
-        updateUI();
-        return resp;
+      if (showUIFeedback) showToast('Syncing mining…', 900);
+      const payload = { sessionId: clientState.sessionId };
+      const res = await api('/hxn/sync', 'POST', payload);
+      if (!res) {
+        if (showUIFeedback) showToast('Sync failed', 1200);
+        return null;
       }
-    } catch(e){ console.warn('fetchHxnBalance error', e); updateUI(); return null; }
-  }
-
-  // Sync mining for the authenticated user. Calls POST /hxn/sync to credit newly mined HXN since last mined ledger entry.
-  // Returns server response which includes earnedHXN, userAU and totalAU.
-  async function syncHxnMining(){
-    try {
-      showToast('Syncing mining…', 1200);
-      const resp = await api('/hxn/sync','POST', { sessionId: clientState.sessionId });
-      if (resp && resp.ok){
-        // update local AU totals returned by server
-        if (typeof resp.userAU !== 'undefined') clientState.userAU = Number(resp.userAU || 0);
-        if (typeof resp.totalAU !== 'undefined') clientState.totalAU = Number(resp.totalAU || 0);
-        // server returns earnedHXN as string
-        if (typeof resp.earnedHXN !== 'undefined') {
-          const earned = resp.earnedHXN;
-          showSheet({ title: 'Mining Sync', bodyHtml: `<div class="small-muted">Synced mining — newly credited: <b>${escapeHtml(String(earned))} HXN</b></div>` , actionsHtml:`<button id="syncClose" class="btn-ghost">Close</button>` , onMounted: ()=> { const c = $('syncClose'); if (c) c.onclick = hideSheet; }});
-        } else {
-          showToast('Sync complete', 1000);
+      if (res.ok) {
+        // server returns earnedHXN (string decimal), userAU, totalAU
+        if (typeof res.earnedHXN !== 'undefined') {
+          // show small earned info as transient toast
+          const earned = (res.earnedHXN || '0').toString();
+          if (earned && earned !== '0') showToast('Mined +' + Number(earned).toFixed(6) + ' HXN', 1600);
         }
-        // fetch fresh balance (ledger may have been updated)
-        await fetchHxnBalance();
+        clientState.userAU = Number(res.userAU || clientState.userAU || 0);
+        clientState.totalAU = Number(res.totalAU || clientState.totalAU || 0);
         saveClientToStorage();
+        // fetch authoritative balance after sync to show ledger entries & balance
+        await fetchHXNBalance(false);
         updateUI();
-        return resp;
+        return res;
       } else {
-        showToast('Sync failed', 1200);
-        return resp;
+        if (showUIFeedback) showToast('Sync failed: ' + (res.error || 'server error'), 2000);
+        return res;
       }
-    } catch(e){ console.warn('syncHxnMining error', e); showToast('Sync error',1200); return null; }
+    } catch (e) {
+      console.warn('syncHXN error', e);
+      if (showUIFeedback) showToast('Sync error', 1200);
+      return null;
+    }
   }
 
-  // Convert numeric or string values to a pretty-localized HXN display
-  function prettyHxn(v){
-    if (v === null || typeof v === 'undefined') return '—';
+  // Call /hxn/balance (GET) to retrieve the authoritative balance & ledger credits
+  async function fetchHXNBalance(showUIFeedback = true){
     try {
-      // try to keep up to 6 fractional digits when necessary
-      const n = Number(v);
-      if (!isFinite(n)) return String(v);
-      if (Math.abs(n) < 1) return n.toFixed(6).replace(/\.?0+$/,'');
-      if (n < 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
-      return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-    } catch(e){ return String(v); }
+      if (showUIFeedback) showToast('Fetching HXN balance…', 700);
+      const res = await api('/hxn/balance', 'GET', null);
+      if (!res) {
+        if (showUIFeedback) showToast('Balance fetch failed', 1200);
+        return null;
+      }
+      if (res.ok) {
+        clientState.hxnBalance = (res.balance != null) ? String(res.balance) : clientState.hxnBalance || "0";
+        clientState.hxnCredits = (res.credits != null) ? String(res.credits) : clientState.hxnCredits || "0";
+        // totalAU & userAU may be available elsewhere; keep them in sync if provided
+        if (typeof res.userAU !== 'undefined') clientState.userAU = Number(res.userAU || clientState.userAU || 0);
+        if (typeof res.totalAU !== 'undefined') clientState.totalAU = Number(res.totalAU || clientState.totalAU || 0);
+        saveClientToStorage();
+        updateUI();
+        return res;
+      } else {
+        if (showUIFeedback) showToast('Balance fetch failed: ' + (res.error || 'server error'), 1500);
+        return res;
+      }
+    } catch (e) {
+      console.warn('fetchHXNBalance error', e);
+      if (showUIFeedback) showToast('Balance error', 1200);
+      return null;
+    }
+  }
+
+  // Compute an estimated daily allocation based on AU and the DAILY_EMISSION_CAP
+  function computeDailyEstimate(userAU, totalAU){
+    userAU = Number(userAU || 0);
+    totalAU = Number(totalAU || 0);
+    if (!totalAU || totalAU <= 0) return 0;
+    const est = (userAU / totalAU) * DAILY_EMISSION_CAP;
+    return Math.round(est);
   }
 
   // -----------------------
@@ -687,6 +729,7 @@
 
   function updateUI(){
     if ($('ui-score')) {
+      // show local score with server score as muted subtext
       const server = (clientState.serverScore != null) ? Number(clientState.serverScore).toLocaleString() : '—';
       $('ui-score').innerHTML = `${(gameState.score || 0).toLocaleString()} <div class="small-muted" style="margin-top:4px;">server: ${server}</div>`;
     }
@@ -701,24 +744,19 @@
     if ($('ui-level')) $('ui-level').innerText = gameState.level;
     if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
     if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
-    if ($('ui-total-au')) $('ui-total-au').innerText = 'total AU: ' + (clientState.totalAU||0);
 
-    // HXN display: prefer server balance if available, otherwise show estimate by AU share
-    const hxnEl = $('ui-hxn');
-    const hxnSub = $('ui-hxn-sub');
-    let displayedHXN = '— HXN';
-    if (clientState.hxnBalance != null){
-      displayedHXN = prettyHxn(clientState.hxnBalance) + ' HXN';
-      if (hxnSub){
-        hxnSub.innerHTML = `ledger credits: ${clientState.hxnCredits ? prettyHxn(clientState.hxnCredits) + ' HXN' : '—'} • preview/day: ${computeHxnPreviewPerDay()}`;
-      }
-    } else {
-      // fallback preview based on AU share
-      const preview = computeHxnPreviewPerDay();
-      displayedHXN = `${preview} HXN (preview)`;
-      if (hxnSub) hxnSub.innerHTML = 'server balance unavailable — showing estimate by AU share';
+    // HXN display: estimated daily allocation + server balance/credits when available
+    const estDaily = computeDailyEstimate(clientState.userAU, clientState.totalAU);
+    if ($('ui-hxn')){
+      // Primary stat shows estimated daily allocation (rounded) for immediate sense
+      $('ui-hxn').innerText = estDaily.toLocaleString() + ' HXN/day (est)';
     }
-    if (hxnEl) hxnEl.innerText = displayedHXN;
+    if ($('ui-hxn-details')) {
+      const bal = clientState.hxnBalance != null ? String(clientState.hxnBalance) : '—';
+      const credits = clientState.hxnCredits != null ? String(clientState.hxnCredits) : '—';
+      const details = `est/day: ${estDaily.toLocaleString()} • balance: ${Number(bal).toLocaleString()} • credits: ${Number(credits).toLocaleString()}`;
+      $('ui-hxn-details').innerText = details;
+    }
 
     if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
     if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
@@ -726,16 +764,6 @@
     if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
     if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
     if ($('ui-sittings')) $('ui-sittings').innerText = `${sittingsRemainingToday()}/${MAX_SITTINGS_PER_DAY}`;
-  }
-
-  function computeHxnPreviewPerDay(){
-    try {
-      const userAU = Number(clientState.userAU || 0);
-      const totalAU = Number(clientState.totalAU || 0);
-      if (!totalAU || totalAU <= 0) return '—';
-      const share = (userAU / totalAU) * DAILY_EMISSION_CAP;
-      return Math.round(share).toLocaleString() + '';
-    } catch(e){ return '—'; }
   }
 
   // -----------------------
@@ -762,13 +790,14 @@
   }
 
   // -----------------------
-  // Real-time REST sync (throttled sends, now sending deltas)
+  // Real-time REST sync (unchanged)
   // -----------------------
   const SEND_THROTTLE_MS = 400;
   let lastSendAt = 0;
   let pendingSendTimer = null;
 
   function buildStatePayload(eventType='heartbeat', extra={}){
+    // compute current displayed totals
     const displayedGP = computeDisplayedGP();
     const lastSentGp = Number((clientState.lastSent && clientState.lastSent.gpTotal) || 0);
     const gpDelta = displayedGP - lastSentGp;
@@ -777,6 +806,7 @@
     const lastSentScore = Number((clientState.lastSent && clientState.lastSent.score) || 0);
     const scoreDelta = displayedScore - lastSentScore;
 
+    // Build the base payload
     const base = {
       sessionId: clientState.sessionId,
       event: eventType,
@@ -790,8 +820,10 @@
       nextPiece: gameState.nextPiece || null,
       actionLog: (clientState.actionLog || []).slice(-200),
       ts: Date.now(),
+      // delta fields: prefer sending increments so server can add them
       gpDelta: gpDelta !== 0 ? gpDelta : 0,
       scoreDelta: scoreDelta !== 0 ? scoreDelta : 0,
+      // include totals for server convenience/audit (server may choose to ignore)
       gpTotalClient: displayedGP,
       scoreTotalClient: displayedScore
     };
@@ -817,12 +849,17 @@
     try {
       lastSendAt = Date.now();
       const res = await api('/game/submit-score','POST', payload);
+      // On success/ack, update local authoritative fields when server returns them.
+      // We only update our lastSent markers when server confirms (res.ok) or returns gp/score fields.
       if (res){
+        // if server returned authoritative gp, adopt it as gpBase and set lastSent gp total to server gp
         if (typeof res.gp !== 'undefined'){
           clientState.gpBase = Number(res.gp || 0);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.gpTotal = Number(clientState.gpBase);
         } else {
+          // If server didn't return gp but request had gpDelta we optimistically assume server added it
+          // Only update lastSent gpTotal if gpDelta > 0 (avoid overwriting if server didn't accept)
           if (payload.gpDelta && payload.gpDelta !== 0){
             clientState.lastSent = clientState.lastSent || {};
             clientState.lastSent.gpTotal = Number((clientState.lastSent.gpTotal || 0) + payload.gpDelta);
@@ -840,6 +877,7 @@
           }
         }
 
+        // if server returned any updated user fields, reconcile them
         if (typeof res.userAU !== 'undefined') clientState.userAU = res.userAU;
         if (typeof res.totalAU !== 'undefined') clientState.totalAU = res.totalAU;
         if (typeof res.miners !== 'undefined') clientState.miners = res.miners;
@@ -859,7 +897,7 @@
   setInterval(()=> { if (!gameState.isPlaying) return; sendState('heartbeat'); }, 2000);
 
   // -----------------------
-  // Phaser scenes (copied from your existing code)
+  // Phaser scenes (unchanged)
   // -----------------------
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
@@ -879,6 +917,7 @@
       updateUI();
       this.catchUpMissedTicks();
 
+      // If we have a saved tickRemaining, use it to resume precisely.
       const scene = this;
       if (gameState.isPlaying){
         if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
@@ -889,8 +928,12 @@
       }
 
       this.setupInput();
+
+      // recharge timer (doesn't touch lastTickAt)
+      // Use a Phaser timer for active ticks; offline/hidden catch-up handled by applyOfflineEnergyRecharge()
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: doAutoRechargeTick, callbackScope: this, loop: true });
 
+      // Save interval
       this.saveStateTimer = this.time.addEvent({
         delay: 2000,
         loop: true,
@@ -1058,6 +1101,7 @@
     setupInput(){
       this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
       window.addEventListener('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
+      // Touch gestures are handled by pointer events on the canvas (in create)
       setupTouchControls(this);
 
       if (!this._gestureBound){
@@ -1135,6 +1179,7 @@
 
     catchUpMissedTicks(){
       try {
+        // if hiddenAt exists we don't auto-catchup here; resume logic will handle it
         if (gameState.hiddenAt) {
           return;
         }
@@ -1181,6 +1226,7 @@
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
       try {
+        // compute tickRemaining so we can later resume the tick precisely
         const now = Date.now();
         if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
           const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
@@ -1246,6 +1292,7 @@
     const ap = gameState.activePiece; if (!ap) return;
     const cells = getPieceCells(ap);
     for (const p of cells){ if (p.y >= 0 && p.y < GRID_ROWS && p.x >= 0 && p.x < GRID_COLS){ gameState.grid[p.y][p.x] = ap.type; } }
+    // decrement energy via setEnergy (updates timestamp & persistence)
     setEnergy((clientState.energy || 0) - 1, true);
     const cleared = [];
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
@@ -1278,14 +1325,19 @@
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
 
     try{
+      // Build final payload using same delta logic (server can add gpDelta/scoreDelta)
       const finalPayload = buildStatePayload('final', {
         partial: false,
+        // include a flag so server treats this as final/complete result for the run
         finalSubmission: true,
+        // include actionLog (larger)
         actionLog: (clientState.actionLog || []).slice(-2000)
       });
 
+      // send and await server acknowledgement
       const res = await api('/game/submit-score','POST', finalPayload);
 
+      // If server returns authoritative gp/score, reconcile locally
       if (res){
         if (typeof res.gp !== 'undefined'){
           clientState.gpBase = Number(res.gp || 0);
@@ -1297,12 +1349,15 @@
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.score = Number(clientState.serverScore);
         }
+        // save any additional fields server sends
         if (typeof res.userAU !== 'undefined') clientState.userAU = res.userAU;
         if (typeof res.totalAU !== 'undefined') clientState.totalAU = res.totalAU;
+        if (typeof res.miners !== 'undefined') clientState.miners = res.miners;
         saveClientToStorage();
       }
     } catch(e){ console.warn(e); }
 
+    // Show Game Over UI — do NOT modify GP here (server or bind actions control gpBase)
     showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
     saveGameToStorage();
     saveClientToStorage();
@@ -1310,9 +1365,12 @@
   }
 
   function resetForPlay(){
+    // Reset the *game* state only. Do NOT touch gpBase or last-sent gp markers.
     initGrid();
     gameState.dropInterval = INITIAL_DROP_MS;
+    // preserve action log or clear it depending on design — we'll clear to avoid repeated large logs.
     clientState.actionLog = [];
+    // energy stays as-is (we decrement when locking piece, and ads/claim update it)
     clientState.energy = Math.max(0, clientState.energy);
     spawnPiece();
     gameState.isPlaying = true;
@@ -1330,13 +1388,14 @@
   // Touch controls wiring (no on-screen buttons — gestures handle everything)
   // -----------------------
   function setupTouchControls(scene){
-    // intentionally minimal: gestures are on the canvas
+    // Intentionally minimal: we rely on pointer gestures on the canvas (tap/swipe).
+    // Keep this function so calls remain valid; if we later add UI buttons we can bind them here.
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet + deep link code (unchanged, except we ensure lastSent markers set on bind)
+  // Wallet + deep link code (unchanged, except on bind we now set lastSent markers)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -1435,6 +1494,7 @@
         if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.wallet = publicKey;
         clientState.userId = res.userId ?? clientState.userId;
+        // adopt authoritative gp from server and set lastSent markers so we don't double-send
         clientState.gpBase = typeof res.gp !== 'undefined' ? Number(res.gp) : clientState.gpBase;
         clientState.miners = res.miners ?? clientState.miners;
         clientState.userAU = res.userAU ?? clientState.userAU;
@@ -1442,14 +1502,17 @@
         clientState.referralCode = res.referralCode ?? clientState.referralCode;
         clientState.referralsActive = res.referralsActive ?? clientState.referralsActive;
         if (res.referralAccepted) clearPendingReferral();
+        // server may return the current authoritative score; store it and set lastSent markers
         if (typeof res.score !== 'undefined'){
           clientState.serverScore = Number(res.score);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.score = Number(res.score);
         }
+        // set lastSent gp total equal to server gp base (server is authoritative)
         clientState.lastSent = clientState.lastSent || {};
         clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
 
+        // if server provided energy, set via setEnergy (this will update timestamp)
         if (typeof res.energy === 'number') {
           setEnergy(Math.max(0, Math.min(100, res.energy)), true);
         }
@@ -1611,30 +1674,31 @@
     })();
   }
 
-  // -----------------------
-  // Claim / rewards flow adjustments (we now show HXN server balance & sync)
-  // -----------------------
   async function claimRewards(){
-    // keep existing GP claim flow (rewards_claim) for GP, but show HXN info in sheet
-    showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Requesting claim…</div>' });
+    showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Claiming rewards…</div>' });
     try {
-      // refresh HXN balance first
-      await fetchHxnBalance();
-
-      const balance = clientState.hxnBalance != null ? prettyHxn(clientState.hxnBalance) : '—';
-      const credits = clientState.hxnCredits != null ? prettyHxn(clientState.hxnCredits) : '—';
-      const body = `<div style="text-align:left">
-        <div class="small-muted">HXN balance (server): <b>${escapeHtml(balance)} HXN</b></div>
-        <div class="small-muted" style="margin-top:6px">Ledger credits: ${escapeHtml(credits)} HXN</div>
-        <div class="small-muted" style="margin-top:8px">AU: ${clientState.userAU || 0} • total AU: ${clientState.totalAU || 0}</div>
-        <div style="margin-top:10px;" class="small-muted">To withdraw on-chain, implement a withdrawal endpoint or follow the off-chain payout procedure in your backend.</div>
-      </div>`;
-      const actions = `<button id="refreshHxn" class="button"><i class="fa-solid fa-sync"></i> Refresh</button><button id="closeClaim" class="btn-ghost">Close</button>`;
-      showSheet({ title:'Claim HXN', bodyHtml: body, actionsHtml: actions, onMounted: ()=> {
-        const r = $('refreshHxn'); const c = $('closeClaim');
-        if (r) r.onclick = async ()=> { r.disabled=true; await syncHxnMining(); await fetchHxnBalance(); r.disabled=false; hideSheet(); showToast('Synced and refreshed',1200); };
-        if (c) c.onclick = hideSheet;
-      }});
+      const resp = await api('/rewards/claim','POST',{ sessionId: clientState.sessionId });
+      if (resp && resp.ok){
+        clientState.gpBase = resp.gp ?? clientState.gpBase;
+        clientState.userAU = resp.userAU ?? clientState.userAU;
+        if (typeof resp.energy === 'number') setEnergy(Math.max(0, Math.min(100, resp.energy)), true);
+        // sync lastSent marker to server gp so we don't re-send already-credited gp
+        clientState.lastSent = clientState.lastSent || {};
+        clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
+        if (typeof resp.score !== 'undefined'){
+          clientState.serverScore = Number(resp.score);
+          clientState.lastSent.score = Number(resp.score);
+        }
+        saveClientToStorage();
+        updateUI();
+        showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
+        setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
+        attemptResumeAfterEnergy();
+      } else {
+        const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
+        showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
+        setTimeout(hideSheet,1200);
+      }
     } catch(e){ console.warn('claimRewards error', e); showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Network error — try again later.</div>' }); setTimeout(hideSheet,1200); }
   }
 
@@ -1766,6 +1830,7 @@
   function pauseForHidden(){
     try {
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+      // store whether the game was running before we hide — needed to resume later
       gameState.wasPlayingBeforeHidden = gameState.isPlaying;
 
       if (!gameState.isPlaying) {
@@ -1774,6 +1839,7 @@
         return;
       }
 
+      // compute tickRemaining so we can resume exactly where we left off
       try {
         const now = Date.now();
         const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
@@ -1787,6 +1853,7 @@
         gameState.tickRemaining = gameState.dropInterval || INITIAL_DROP_MS;
       }
 
+      // pause visual ticking
       gameState.isPlaying = false;
       gameState.hiddenAt = Date.now();
       if (scene){
@@ -1800,12 +1867,14 @@
 
   function resumeFromHidden(){
     try {
+      // first, apply any offline recharges that occurred while hidden
       applyOfflineEnergyRecharge();
 
       const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
       const was = gameState.wasPlayingBeforeHidden;
       const forced = gameState._forceResume === true;
 
+      // Resume if it was playing before hidden OR resume was forced by loader
       if (was === true || forced) {
         gameState.isPlaying = true;
 
@@ -1826,19 +1895,23 @@
           }
         }
 
+        // update lastTickAt so catch-up math is consistent
         gameState.lastTickAt = Date.now();
         sendState('resume');
         saveGameToStorage();
         saveClientToStorage();
         updateUI();
       } else {
+        // If it wasn't playing before hidden, just refresh tick time so no catch-up runs unexpectedly.
         gameState.lastTickAt = Date.now();
         saveGameToStorage();
       }
 
+      // cleanup flags
       delete gameState.hiddenAt;
       delete gameState.wasPlayingBeforeHidden;
       delete gameState._forceResume;
+      // do not delete tickRemaining here — it's cleared by startDropLoop when the scheduled tick executes
     } catch(e){ console.warn('resumeFromHidden error', e); }
   }
 
@@ -1847,6 +1920,7 @@
   // -----------------------
   function attemptResumeAfterEnergy(){
     try {
+      // ensure any offline recharges are applied first
       applyOfflineEnergyRecharge();
 
       if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
@@ -1854,6 +1928,7 @@
         if (!gameState.activePiece) spawnPiece();
         gameState.isPlaying = true;
 
+        // ensure tickRemaining exists (compute best-effort)
         if (!gameState.tickRemaining){
           try {
             if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
@@ -1869,14 +1944,20 @@
         }
 
         try {
+          const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.scene && phaserGame.scene.keys.GameScene || phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           const sceneRef = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          if (sceneRef){
+          const sceneRef2 = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+          const sceneRefReal = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+          const sceneRefChosen = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+          const sceneRefFinal = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+          const sceneRefObj = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+          if (sceneRefObj){
             if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
-              sceneRef.resumeDropLoop(gameState.tickRemaining);
-            } else if (sceneRef.dropEvent && typeof sceneRef.dropEvent.paused !== 'undefined'){
-              sceneRef.dropEvent.paused = false;
-            } else if (typeof sceneRef.startDropLoop === 'function'){
-              sceneRef.startDropLoop();
+              sceneRefObj.resumeDropLoop(gameState.tickRemaining);
+            } else if (sceneRefObj.dropEvent && typeof sceneRefObj.dropEvent.paused !== 'undefined'){
+              sceneRefObj.dropEvent.paused = false;
+            } else if (typeof sceneRefObj.startDropLoop === 'function'){
+              sceneRefObj.startDropLoop();
             }
           }
         } catch(e){ console.warn('attemptResumeAfterEnergy startDropLoop failed', e); }
@@ -1890,7 +1971,7 @@
   }
 
   // -----------------------
-  // Boot / init & Phaser startup (main)
+  // Boot / init & Phaser startup
   // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
@@ -1904,11 +1985,25 @@
       try{ const os = $('openStore'); if (os) os.addEventListener('click', ()=> window.location.href = 'shop.html'); } catch(e){}
       try{ const bw = $('bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); if (typeof window._hexon_openWalletSheet === 'function') { window._hexon_openWalletSheet(); } else { showSheet({ title: 'Connect Wallet' }); } }); } catch(e){}
       try{ const sr = $('showRefBtn'); if (sr) sr.addEventListener('click', showReferralModal); } catch(e){}
-      try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
+      try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> {
+          // show allocation breakdown using server totals (best-effort)
+          const estDaily = computeDailyEstimate(clientState.userAU, clientState.totalAU);
+          const body = `<div class="small-muted">Allocation preview</div>
+                        <div style="margin-top:8px;"><b>Your AU:</b> ${clientState.userAU || 0}<br><b>Total AU:</b> ${clientState.totalAU || 0}</div>
+                        <div style="margin-top:8px;"><b>Estimated daily HXN:</b> ${estDaily.toLocaleString()} HXN</div>
+                        <div style="margin-top:8px; margin-bottom:8px;" class="small-muted">This estimate uses server AU totals, but actual balance is authoritative (server). Use Refresh mining to sync ledger credits.</div>`;
+          showSheet({ title:'Allocation', bodyHtml: body, actionsHtml: `<button id="closeAlloc" class="btn-ghost">Close</button>`, onMounted: ()=> { const c=$('closeAlloc'); if (c) c.onclick = hideSheet; } });
+        }); } catch(e){}
       try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
-      try{ const sh = $('syncHxnBtn'); if (sh) sh.addEventListener('click', async ()=> { sh.disabled=true; await syncHxnMining(); sh.disabled=false; }); } catch(e){}
 
       try{ const rb = $('resetGameBtn'); if (rb) rb.addEventListener('click', ()=> { resetForPlay(); showToast('Game reset',900); }); } catch(e){}
+
+      const syncBtn = $('syncHxnBtn');
+      if (syncBtn) syncBtn.addEventListener('click', async ()=> {
+        syncBtn.disabled = true;
+        await syncHXN(true);
+        setTimeout(()=> syncBtn.disabled = false, 900);
+      });
 
       // Load saved client and game state from localStorage
       const savedClient = loadClientFromStorage();
@@ -1918,13 +2013,18 @@
         clientState.sessionId = keepSession || clientState.sessionId;
       }
 
+      // If clientState.lastSent missing, initialize sensible defaults
       clientState.lastSent = clientState.lastSent || { gpTotal: Number(clientState.gpBase || 0), score: Number(clientState.serverScore || 0) };
 
+      // Ensure ad state normalized for date / cooldowns
       normalizeAdStateOnLoad();
+      // Periodic check for midnight rollover (while page open)
       setInterval(resetDailyAdsIfNeeded, 60e3);
 
+      // Apply offline energy recharges (if any) BEFORE attempting to resume game
       applyOfflineEnergyRecharge();
 
+      // Load saved game and determine whether to attempt resume
       const savedGame = loadGameFromStorage();
       let shouldAttemptResume = false;
       let resumeTickRemaining = null;
@@ -1948,12 +2048,14 @@
             gameState.pausedForEnergy = savedGame.pausedForEnergy || false;
             gameState.tickRemaining = savedGame.tickRemaining || null;
 
+            // Decide if we should attempt resume:
             const wasPlayingFlag = Boolean(savedGame.wasPlayingBeforeHidden);
             const savedMarkedPlaying = Boolean(savedGame.isPlaying);
             const hadHidden = Boolean(savedGame.hiddenAt);
 
             if (wasPlayingFlag || savedMarkedPlaying || hadHidden) {
               shouldAttemptResume = true;
+              // prefer stored tickRemaining; otherwise compute from lastTickAt + dropInterval
               if (savedGame.tickRemaining && Number.isFinite(savedGame.tickRemaining)) {
                 resumeTickRemaining = savedGame.tickRemaining;
               } else if (savedGame.lastTickAt && savedGame.dropInterval) {
@@ -1965,8 +2067,10 @@
               }
             }
 
+            // If savedGame indicated it was hidden when last saved, ensure the game isn't started until we attempt resume
             if (gameState.hiddenAt) gameState.isPlaying = false;
 
+            // If the game was paused for energy but we've since got energy, allow resume (attempt now)
             if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
               gameState.pausedForEnergy = false;
               if (!gameState.activePiece) spawnPiece();
@@ -2002,12 +2106,14 @@
           if (init.wallet) { clientState.wallet = init.wallet; clientState.walletProvider = init.walletProvider || clientState.walletProvider; saveBoundWalletToStorage(clientState.wallet, clientState.walletProvider); }
           if (typeof init.energy === 'number') setEnergy(Math.max(0, Math.min(100, init.energy)), true);
 
+          // server may return the authoritative server score
           if (typeof init.score !== 'undefined'){
             clientState.serverScore = Number(init.score);
             clientState.lastSent = clientState.lastSent || {};
             clientState.lastSent.score = Number(init.score);
           }
 
+          // set lastSent gpTotal to server gpBase so we don't double-send previously credited gp
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
 
@@ -2053,15 +2159,18 @@
         }
       });
 
-      // resume saved game if needed
+      // If we decided previously that a saved game should be resumed, try now.
       if (shouldAttemptResume) {
         setTimeout(()=> {
+          // If energy is available resume; otherwise mark pausedForEnergy
           if ((clientState.energy || 0) > 0) {
+            // flag forced resume and pass tickRemaining
             gameState._forceResume = true;
             gameState.tickRemaining = resumeTickRemaining || gameState.tickRemaining || gameState.dropInterval || INITIAL_DROP_MS;
             resumeFromHidden();
             showToast('Resuming previous game…', 1200);
           } else {
+            // restore paused-for-energy state so UI will allow resume once energy is available
             gameState.pausedForEnergy = true;
             saveGameToStorage();
             updateUI();
@@ -2108,19 +2217,17 @@
       setupInjectedProviderListeners();
       loadAdsGram();
 
-      // HXN: fetch balance on init and schedule regular refresh
-      await fetchHxnBalance();
-      setInterval(()=> { fetchHxnBalance(); }, 60e3); // refresh every 60s
-
       updateUI();
       renderMinersList();
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
+      // visibility / focus handlers keep timing precise
       document.addEventListener('visibilitychange', ()=> {
         try {
           if (document.hidden) pauseForHidden();
           else {
+            // when becoming visible, apply any missed energy recharges and resume
             applyOfflineEnergyRecharge();
             resumeFromHidden();
           }
@@ -2131,6 +2238,21 @@
 
       window.addEventListener('pagehide', (e) => { try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {} }, { passive: true });
       window.addEventListener('beforeunload', (e) => { try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {} });
+
+      // Immediately sync HXN and balance on load so UI reflects DB-mined values
+      // If user is not bound, these endpoints will still use sessionId to map user.
+      setTimeout(async ()=>{
+        await syncHXN(false);     // attempt to credit any mined HXN since last 'mined' ledger row for this user
+        await fetchHXNBalance(false);
+      }, 600);
+
+      // Poll for HXN updates every 60s
+      setInterval(async ()=> {
+        try {
+          await syncHXN(false);
+          await fetchHXNBalance(false);
+        } catch(e){ /* ignore poll errors */ }
+      }, 60e3);
 
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
@@ -2145,18 +2267,21 @@
     try {
       resetDailyAdsIfNeeded();
 
+      // daily ad cap
       if ((clientState.adsToday||0) >= MAX_ADS_PER_DAY){
         const rem = msUntilNextLocalMidnight();
         showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Daily ad limit reached. Next reset in <b>${formatMs(rem)}</b>.</div>` });
         return;
       }
 
+      // If current sitting already reached max and cooldown not expired -> block
       if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
         if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) < SITTING_COOLDOWN_MS){
           const rem = Math.max(0, SITTING_COOLDOWN_MS - (Date.now() - clientState.adsThisSittingStartedAt));
           showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Sitting limit reached. Next sitting available in <b>${formatMs(rem)}</b>.</div>` });
           return;
         } else {
+          // cooldown expired — clear sitting so new sitting may start
           clientState.adsThisSitting = 0;
           clientState.adsThisSittingStartedAt = null;
           saveClientToStorage();
@@ -2172,8 +2297,10 @@
         return;
       }
 
+      // OK to show an ad — show explanatory sheet and start ad flow
       showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
 
+      // start sitting timestamp (do not consume the daily sitting allowance yet — consume on sitting completion)
       startSittingIfNeeded();
       saveClientToStorage();
       updateUI();
@@ -2183,22 +2310,28 @@
         provider='AdsGram';
         try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
       } else {
+        // fallback simulated ad delay if SDK not available
         await new Promise(res=>setTimeout(res,1800));
       }
 
       const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
       hideSheet();
       if (resp && resp.grantedPercent){
+        // apply reward
         setEnergy((clientState.energy || 0) + resp.grantedPercent, true);
 
+        // increment counters
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
 
+        // ensure we do not exceed max ads per sitting
         if (clientState.adsThisSitting > MAX_ADS_PER_SITTING){
           clientState.adsThisSitting = MAX_ADS_PER_SITTING;
         }
 
+        // If this sitting reached the per-sitting max, consume one sitting from daily allowance now.
         if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
+          // increment daily sittings used (this reduces Sittings Left)
           finishSittingAndConsume();
         }
 
@@ -2215,7 +2348,7 @@
   }
 
   // -----------------------
-  // Small UI sheet helpers
+  // Small UI sheet helpers (unchanged)
   // -----------------------
   function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display = 'block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
   function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
