@@ -18,8 +18,11 @@
     html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
     *,*:before,*:after{ box-sizing: inherit; }
 
+    /* Layout */
     #pageWrap { display:flex; flex-direction:column; gap:12px; padding:12px; min-height:100dvh; padding-top: calc(var(--safe-pad) + 8px); padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px); }
-    #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; }
+    /* Phaser container: ensure it centers & reserves space for the canvas */
+    #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; min-height:260px; box-sizing:border-box; }
+    /* Force Phaser canvas to size responsively while preserving display */
     #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-height:56vh; }
 
     #uiPanel{ width:100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: 48vh; overflow:auto; -webkit-overflow-scrolling: touch; }
@@ -56,9 +59,12 @@
       #uiPanel{ flex: 1; max-width: 340px; max-height: calc(100dvh - 48px); overflow:auto; }
       #phaserCanvas canvas { max-height:80vh; }
     }
+
+    /* Minimal reset to avoid Telegram padding issues */
+    .tgmini-reset { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
   </style>
 </head>
-<body>
+<body class="tgmini-reset">
   <div id="pageWrap" role="application" aria-label="Hexon game">
     <div id="phaserCanvas" role="region" aria-label="Game canvas"></div>
 
@@ -194,7 +200,7 @@
 
   <script>
   // -----------------------
-  // Config
+  // Config / constants
   // -----------------------
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
   const DAILY_EMISSION_CAP = 1250000;
@@ -221,7 +227,7 @@
   };
 
   // -----------------------
-  // Default state
+  // State
   // -----------------------
   let clientState = {
     sessionId: loadSessionFromStorage() || generateUUID(),
@@ -244,7 +250,6 @@
     actionLog: []
   };
 
-  // game state: persisted to resume mid-game
   const gameState = {
     grid: null,
     activePiece: null,
@@ -301,8 +306,7 @@
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.CLIENT);
       if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      return parsed;
+      return JSON.parse(raw);
     } catch(e){ return null; }
   }
 
@@ -310,25 +314,21 @@
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.GAME);
       if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      return parsed;
+      return JSON.parse(raw);
     } catch(e){ return null; }
   }
 
-  function clearSavedGame(){
-    try { localStorage.removeItem(STORAGE_KEYS.GAME); } catch(e) {}
-  }
+  function clearSavedGame(){ try { localStorage.removeItem(STORAGE_KEYS.GAME); } catch(e) {} }
 
   // -----------------------
   // Utilities
   // -----------------------
   function generateUUID(){ try{ if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
   function $(id){ return document.getElementById(id); }
+  function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); saveClientToStorage(); }
   function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
-  // -----------------------
-  // API helper (safe, shared headers)
-  // -----------------------
+  // lightweight API wrapper (keeps original behaviour)
   async function api(path, method='GET', body=null, optsExtra={}){
     try{
       let url = API_BASE + path;
@@ -344,7 +344,6 @@
       const fetchOpts = { method, headers, ...optsExtra };
       if (body !== null && body !== undefined){
         if (typeof body === 'object' && !Array.isArray(body)){
-          // attach known client identifiers to aid server
           body.username = body.username || clientState.username || null;
           body.telegramId = body.telegramId || clientState.telegramId || null;
           body.sessionId = body.sessionId || clientState.sessionId || null;
@@ -364,101 +363,15 @@
   }
 
   // -----------------------
-  // Real-time action batching (no new endpoints)
-  // We'll reuse /client/init as a safe ingestion point for events.
-  // -----------------------
-  const actionQueue = [];
-  let actionFlushTimer = null;
-  let actionFlushInFlight = false;
-  const ACTION_FLUSH_DEBOUNCE_MS = 800; // batch short bursts
-  const ACTION_FLUSH_MAX_MS = 3000; // ensure flush often
-
-  // Wrap previous logAction but now queue and schedule server flushes
-  function logAction(a,p={}){
-    const entry = { t: Date.now(), a, p };
-    clientState.actionLog.push(entry);
-    if (clientState.actionLog.length > 5000) clientState.actionLog.shift();
-    // queue for server
-    actionQueue.push(entry);
-    scheduleActionFlush();
-    saveClientToStorage();
-  }
-
-  function scheduleActionFlush(){
-    if (actionFlushTimer) clearTimeout(actionFlushTimer);
-    actionFlushTimer = setTimeout(()=> flushActionQueue().catch(()=>{}), ACTION_FLUSH_DEBOUNCE_MS);
-    // ensure a hard flush at max interval
-    if (!window._hexon_action_hard_flush_setup){
-      window._hexon_action_hard_flush_setup = true;
-      setInterval(()=> { if (actionQueue.length > 0) flushActionQueue().catch(()=>{}); }, ACTION_FLUSH_MAX_MS);
-    }
-  }
-
-  async function flushActionQueue(){
-    if (!actionQueue.length) return;
-    if (actionFlushInFlight) return;
-    const payloadEvents = actionQueue.splice(0, Math.min(200, actionQueue.length));
-    if (!payloadEvents.length) return;
-    actionFlushInFlight = true;
-    try {
-      // Reuse existing /client/init endpoint to carry events. Server should accept events in init.
-      const resp = await api('/client/init','POST',{
-        sessionId: clientState.sessionId,
-        events: payloadEvents,
-        // include minimal state so server can correlate quickly
-        state: { score: gameState.score, lines: gameState.lines, level: gameState.level, energy: clientState.energy }
-      });
-      // If server returned updated sessionId or metadata, merge it
-      if (resp && resp.sessionId && resp.sessionId !== clientState.sessionId){
-        clientState.sessionId = resp.sessionId;
-        saveSessionToStorage(clientState.sessionId);
-      }
-      if (resp && typeof resp.gp !== 'undefined') clientState.gpBase = resp.gp;
-      if (resp && resp.miners) clientState.miners = resp.miners;
-      saveClientToStorage();
-    } catch (err) {
-      console.warn('flushActionQueue error', err);
-      // on error, requeue events at front to retry later
-      actionQueue.unshift(...payloadEvents);
-    } finally {
-      actionFlushInFlight = false;
-    }
-  }
-
-  // Attempt to flush using sendBeacon during unload (best-effort)
-  function flushOnUnload(){
-    try {
-      if (!actionQueue.length) return;
-      const payload = JSON.stringify({
-        sessionId: clientState.sessionId,
-        events: actionQueue.slice(0, 200),
-        state: { score: gameState.score, lines: gameState.lines, level: gameState.level, energy: clientState.energy },
-        unload: true
-      });
-      const url = API_BASE + '/client/init';
-      if (navigator && typeof navigator.sendBeacon === 'function'){
-        const blob = new Blob([payload], { type: 'application/json' });
-        navigator.sendBeacon(url, blob);
-        // clear local queue (best-effort)
-        actionQueue.length = 0;
-      } else {
-        // fallback synchronous fetch (try to avoid long blocking)
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', url, false);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        try { xhr.send(payload); } catch(e) { /* ignore */ }
-      }
-    } catch(e){ /* ignore */ }
-  }
-
-  // -----------------------
-  // Telegram init (unchanged)
+  // Telegram init
   // -----------------------
   function initTelegram(){
     try {
       if (window.Telegram && window.Telegram.WebApp){
         const tg = window.Telegram.WebApp;
         try{ if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
+        // Expand the WebApp to available height - this helps avoid the white space
+        try { if (typeof tg.expand === 'function') tg.expand(); } catch(e){}
         const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
         if (u){
           clientState.telegramId = u.id || clientState.telegramId;
@@ -470,20 +383,19 @@
   }
 
   // -----------------------
-  // UI helpers (unchanged)
+  // UI helpers
   // -----------------------
   function getRefFromURL(){ try{ const params = new URLSearchParams(window.location.search); return params.get('ref') || params.get('refCode') || null; } catch(e){ return null; } }
   function savePendingReferral(code){ if (!code) return; try{ localStorage.setItem(STORAGE_KEYS.PENDING_REF, code); clientState.pendingReferral = code; saveClientToStorage(); } catch(e){} }
   function loadPendingReferral(){ try{ const code = localStorage.getItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = code || null; return clientState.pendingReferral; } catch(e){ return null; } }
   function clearPendingReferral(){ try{ localStorage.removeItem(STORAGE_KEYS.PENDING_REF); clientState.pendingReferral = null; saveClientToStorage(); } catch(e){} }
 
-  function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display = 'block'; setTimeout(()=> el.style.display='none', ms); }
-
+  function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display='block'; setTimeout(()=> el.style.display='none', ms); }
   function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
 
   async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
 
-  function derivedGPFromScore(score){ const d = Math.floor((score || 0) / 150); return d; }
+  function derivedGPFromScore(score){ return Math.floor((score || 0) / 150); }
   function computeDisplayedGP(){ const base = Number(clientState.gpBase || 0); const derived = derivedGPFromScore(gameState.score || 0); return base + derived; }
 
   function updateUI(){
@@ -503,7 +415,7 @@
   }
 
   // -----------------------
-  // Pieces & core logic
+  // Pieces & core logic (unchanged behaviour)
   // -----------------------
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
@@ -519,26 +431,89 @@
   let phaserGame;
   let CELL = BASE_CELL, GAP = BASE_GAP;
 
+  // -----------------------
+  // Real-time REST sync: use existing /game/submit-score endpoint for live updates
+  // - Throttled so we don't flood network
+  // - Sent on important events: tick, lock, clear, spawn, rotate, soft/hard drop
+  // - Also a periodic heartbeat
+  // -----------------------
+  const SEND_THROTTLE_MS = 400;   // minimum spacing between sends
+  let lastSendAt = 0;
+  let pendingSendTimer = null;
+
+  function buildStatePayload(eventType='heartbeat', extra={}){
+    // Minimal payload that is useful server-side; server may ignore unknown fields if strict.
+    return {
+      sessionId: clientState.sessionId,
+      event: eventType,
+      partial: true, // indicates this is not final score but a live update
+      score: gameState.score,
+      lines: gameState.lines,
+      level: gameState.level,
+      dropInterval: gameState.dropInterval,
+      energy: clientState.energy,
+      // shallow snapshot of active piece & next (sufficient to server-side verify/replay if needed)
+      activePiece: gameState.activePiece || null,
+      nextPiece: gameState.nextPiece || null,
+      // only include a light recent action log (last 200)
+      actionLog: (clientState.actionLog || []).slice(-200),
+      ts: Date.now(),
+      ...extra
+    };
+  }
+
+  async function sendState(eventType='heartbeat', extra={}){
+    try {
+      const now = Date.now();
+      const sinceLast = now - lastSendAt;
+      const payload = buildStatePayload(eventType, extra);
+      if (sinceLast < SEND_THROTTLE_MS){
+        // schedule a deferred send to coalesce quick events
+        if (pendingSendTimer) clearTimeout(pendingSendTimer);
+        pendingSendTimer = setTimeout(()=> { pendingSendTimer = null; doSend(payload); }, SEND_THROTTLE_MS - sinceLast + 10);
+        return;
+      }
+      await doSend(payload);
+    } catch(e){ console.warn('sendState error', e); }
+  }
+
+  async function doSend(payload){
+    try {
+      lastSendAt = Date.now();
+      // We reuse your existing endpoint for live updates.
+      // Server should tolerate repeated partial updates; if server expects only final submit, adapt later.
+      await api('/game/submit-score','POST', payload);
+    } catch(e){ console.warn('doSend error', e); }
+  }
+
+  // heartbeat every 2s for additional resilience
+  setInterval(()=> {
+    if (!gameState.isPlaying) return;
+    sendState('heartbeat');
+  }, 2000);
+
+  // -----------------------
+  // Phaser scenes
+  // -----------------------
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
+
   class GameScene extends Phaser.Scene {
     constructor(){ super({ key:'GameScene' }); }
     create(){
+      // compute local sizes based on CELL/GAP pre-calculated
       this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
       this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
       this.gridOrigin = { x:16, y:16 };
 
-      const g = this.add.graphics();
-      g.fillStyle(0x061426,1);
-      g.fillRoundedRect(this.gridOrigin.x -8, this.gridOrigin.y -8, this.boardPixelWidth, this.boardPixelHeight, 10);
-      g.lineStyle(1, 0x0d2130, 0.6);
-      for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
-      for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
+      // draw board background and grid lines
+      this.g = this.add.graphics();
+      this.drawBoard();
 
-      // If a saved grid exists, keep it; otherwise initialize.
+      // load saved grid or initialize
       if (!gameState.grid) initGrid();
-      // ensure activePiece exists; if not, spawn (spawnPiece respects energy)
       if (!gameState.activePiece) spawnPiece();
 
+      // create cell placeholders
       this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
       for (let r=0;r<GRID_ROWS;r++){
         for (let c=0;c<GRID_COLS;c++){
@@ -554,20 +529,44 @@
 
       gameState.isPlaying = gameState.isPlaying !== undefined ? gameState.isPlaying : true;
       updateUI();
-      // Catch up any missed ticks before scheduling the loop
+      // catch-up for missed ticks (in case tab was backgrounded)
       this.catchUpMissedTicks();
       this.startDropLoop();
       this.setupInput();
+
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
-      // autosave interval from scene (safe)
+      // autosave interval
       this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
+    }
+
+    drawBoard(){
+      try {
+        if (this.g) { this.g.clear(); }
+        const g = this.g;
+        g.fillStyle(0x061426,1);
+        g.fillRoundedRect(this.gridOrigin.x -8, this.gridOrigin.y -8, this.boardPixelWidth, this.boardPixelHeight, 10);
+        g.lineStyle(1, 0x0d2130, 0.6);
+        for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
+        for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
+      } catch(e){ console.warn('drawBoard error', e); }
     }
 
     startDropLoop(){
       if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
       const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-      // schedule recurring drop (we've already caught up to now)
-      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); gameState.lastTickAt = Date.now(); saveGameToStorage(); updateUI(); } });
+      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> {
+        if (!gameState.isPlaying) return;
+        const moved = movePieceDown();
+        logAction('tick_drop',{ moved });
+        // send a tick update (throttled)
+        sendState('tick', { moved });
+        if (!moved) {
+          lockPiece();
+        }
+        gameState.lastTickAt = Date.now();
+        saveGameToStorage();
+        updateUI();
+      }});
     }
 
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
@@ -586,7 +585,7 @@
       if (!document.querySelector('.touch-controls')) setupTouchControls(this);
     }
 
-    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); saveClientToStorage(); scheduleActionFlush(); }
+    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); sendState('auto_recharge', { energy: clientState.energy }); }
 
     catchUpMissedTicks(){
       try {
@@ -610,10 +609,14 @@
     }
   }
 
-  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); scheduleActionFlush(); }
+  // -----------------------
+  // Game functions (with live sends)
+  // -----------------------
+  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
+
   function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
 
-  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); logAction('init_grid', { rows: GRID_ROWS, cols: GRID_COLS }); scheduleActionFlush(); }
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); sendState('init'); }
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
@@ -627,8 +630,7 @@
     gameState.activePiece = { type, rot:0, x:xStart, y:0 };
     gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
     logAction('spawn',{ type, x:xStart, y:0 });
-    scheduleActionFlush();
-    // collision at spawn -> gameOver
+    sendState('spawn', { spawnedType: type, xStart });
     if (checkCollision(getPieceCells(gameState.activePiece))) {
       gameOver();
     } else {
@@ -638,15 +640,16 @@
   }
 
   function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
-  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); saveGameToStorage(); scheduleActionFlush(); } }
+
+  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); sendState('move',{dir}); saveGameToStorage(); } }
 
   function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
 
-  function softDrop(){ if (movePieceDown()){ gameState.score += 1; logAction('soft_drop'); updateUI(); saveGameToStorage(); scheduleActionFlush(); } }
+  function softDrop(){ if (movePieceDown()){ gameState.score += 1; logAction('soft_drop'); sendState('soft_drop'); updateUI(); saveGameToStorage(); } }
 
-  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); updateUI(); saveGameToStorage(); scheduleActionFlush(); }
+  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); sendState('hard_drop',{ falls }); updateUI(); saveGameToStorage(); }
 
-  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); saveGameToStorage(); scheduleActionFlush(); return; } } }
+  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); sendState('rotate',{ rot:cand.rot, kick:k }); saveGameToStorage(); return; } } }
 
   function lockPiece(){
     const ap = gameState.activePiece; if (!ap) return;
@@ -657,10 +660,8 @@
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
     if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
     gameState.activePiece = null;
-    // important real-time event: lock + state snapshot
-    logAction('lock_piece', { type: ap.type, at: Date.now(), score: gameState.score, lines: gameState.lines });
-    scheduleActionFlush();
-    // spawn next piece
+    // send lock event (authoritative-ish snapshot)
+    sendState('lock', { lockedPiece: ap, cleared });
     spawnPiece();
     try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
     saveClientToStorage();
@@ -674,26 +675,34 @@
     const count = rows.length; const base = [0,100,300,500,800];
     gameState.score += base[count] * gameState.level;
     gameState.lines += count; gameState.combo += 1;
-    logAction('clear',{ count, combo:gameState.combo, score: gameState.score, lines: gameState.lines });
-    scheduleActionFlush();
+    logAction('clear',{ count, combo:gameState.combo });
+    sendState('clear',{ count, combo: gameState.combo, clearedRows: rows });
     if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); }
     saveGameToStorage();
     updateUI();
   }
 
   async function gameOver(){
-    // mark not playing and submit final score
+    if (!gameState.isPlaying) return;
     gameState.isPlaying = false;
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
-    // flush pending events first
-    try { await flushActionQueue(); } catch(e){ /* ignore */ }
-    // Submit final score to server (existing endpoint)
+    // Send final score payload (partial=false indicates final)
     try{
-      await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) });
+      const finalPayload = {
+        sessionId: clientState.sessionId,
+        event: 'final',
+        partial: false,
+        score: gameState.score,
+        lines: gameState.lines,
+        level: gameState.level,
+        actionLog: (clientState.actionLog || []).slice(-2000),
+        ts: Date.now()
+      };
+      await api('/game/submit-score','POST', finalPayload);
     } catch(e){ console.warn(e); }
-    // show overlay and allow play again (playAgain should clear saved game)
-    showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick = hideSheet; }});
-    // persist final state (so user can inspect after reload) but mark not playing
+
+    // UI overlay
+    showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
     saveGameToStorage();
     saveClientToStorage();
     updateUI();
@@ -714,6 +723,9 @@
 
   function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
 
+  // -----------------------
+  // Touch controls wiring
+  // -----------------------
   function setupTouchControls(scene){
     if (document.querySelector('.touch-controls')) return;
     const wrapper = document.createElement('div'); wrapper.classList.add('touch-controls');
@@ -724,16 +736,16 @@
     [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
     wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
     const ui = $('uiPanel'); if (ui) ui.append(wrapper);
-    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); saveGameToStorage(); scheduleActionFlush(); };
-    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); saveGameToStorage(); scheduleActionFlush(); };
-    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); saveGameToStorage(); scheduleActionFlush(); };
-    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); saveGameToStorage(); scheduleActionFlush(); };
+    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); sendState('touch_left'); updateUI(); saveGameToStorage(); };
+    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); sendState('touch_right'); updateUI(); saveGameToStorage(); };
+    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); sendState('touch_rotate'); updateUI(); saveGameToStorage(); };
+    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); sendState('touch_drop'); updateUI(); saveGameToStorage(); };
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet code (kept, slightly trimmed for readability)
+  // Wallet + deep link code (kept largely unchanged)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -745,9 +757,7 @@
     };
   }
 
-  function setPendingDeepLink(providerName){
-    try { localStorage.setItem(STORAGE_KEYS.PENDING_DEEPLINK, JSON.stringify({ provider: providerName, ts: Date.now() })); } catch(e){}
-  }
+  function setPendingDeepLink(providerName){ try { localStorage.setItem(STORAGE_KEYS.PENDING_DEEPLINK, JSON.stringify({ provider: providerName, ts: Date.now() })); } catch(e){} }
   function clearPendingDeepLink(){ try{ localStorage.removeItem(STORAGE_KEYS.PENDING_DEEPLINK); }catch(e){} }
   function getPendingDeepLink(){ try{ const s = localStorage.getItem(STORAGE_KEYS.PENDING_DEEPLINK); return s ? JSON.parse(s) : null; }catch(e){return null;} }
 
@@ -901,6 +911,22 @@
   window.openSolflareDeepLink = () => openDeepLinkAndWait({ deepLink: solflareDeepLink(), installUrl: 'https://solflare.com/', appName: 'Solflare', providerName: 'solflare' });
   window.openBackpackDeepLink = () => openDeepLinkAndWait({ deepLink: backpackDeepLink(), installUrl: 'https://backpack.app/', appName: 'Backpack', providerName: 'backpack' });
   window.showWalletPicker = function(){ showSheet({ title:'Connect Wallet', bodyHtml: $('sheetBody').innerHTML }); };
+
+  function extractPublicKeyFromProviderResponse(resp){
+    try {
+      if (!resp) return null;
+      if (typeof resp === 'string') return resp;
+      if (resp.publicKey && typeof resp.publicKey.toString === 'function') return resp.publicKey.toString();
+      if (resp.publicKey && typeof resp.publicKey === 'string') return resp.publicKey;
+      if (resp.public_key && typeof resp.public_key === 'string') return resp.public_key;
+      if (resp.address && typeof resp.address === 'string') return resp.address;
+      if (resp.data && resp.data.publicKey) return resp.data.publicKey;
+      const s = JSON.stringify(resp);
+      const match = s.match(/([1-9A-HJ-NP-Za-km-z]{32,64})/);
+      if (match) return match[1];
+    } catch(e){}
+    return null;
+  }
 
   async function bindWalletWithPublicKey(publicKey, providerName){
     try {
@@ -1212,18 +1238,17 @@
   })();
 
   // -----------------------
-  // Boot / init
+  // Boot / init & Phaser startup (redone sizing)
   // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
       initTelegram();
-      // if returned from wallet deep link, try to read
       readWalletReturn();
 
       const ref = getRefFromURL();
       if (ref) savePendingReferral(ref); else loadPendingReferral();
 
-      // wire page buttons
+      // UI wiring
       try{ const wa = $('watchAdBtn'); if (wa) wa.addEventListener('click', showAdAndVerify); } catch(e){}
       try{ const os = $('openStore'); if (os) os.addEventListener('click', ()=> window.location.href = 'shop.html'); } catch(e){}
       try{ const bw = $('bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); if (typeof window._hexon_openWalletSheet === 'function') { window._hexon_openWalletSheet(); } else { showSheet({ title: 'Connect Wallet' }); } }); } catch(e){}
@@ -1231,7 +1256,7 @@
       try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
       try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
 
-      // Restore saved client & game if present (persistence)
+      // Restore saved client & game
       const savedClient = loadClientFromStorage();
       if (savedClient){
         const keepSession = clientState.sessionId;
@@ -1267,7 +1292,7 @@
         if (!gameState.activePiece) spawnPiece();
       }
 
-      // initial client init with server (best-effort). We also accept that server may return useful metadata.
+      // initial client init with server
       try {
         const init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null, username: clientState.username, telegramId: clientState.telegramId });
         if (init){
@@ -1287,11 +1312,12 @@
         }
       } catch(e){ console.warn('client init failed', e); }
 
-      // compute scale & start phaser
+      // compute initial scale & cell sizes using the container size
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
-      const availH = Math.max(260, rect.height || Math.min(window.innerHeight * 0.5, 900));
+      // use a reasonable height (allowing Telegram mini app to set actual visible area)
+      const availH = Math.max(260, Math.min(window.innerHeight * 0.68, rect.height || window.innerHeight * 0.68));
       const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
       const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
       const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
@@ -1299,9 +1325,57 @@
       GAP = Math.max(1, Math.floor(BASE_GAP * scale));
       const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
       const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
-      if (parentEl && parentEl.style){ parentEl.style.minWidth = Math.min(canvasWidth, Math.max(260, canvasWidth)) + 'px'; parentEl.style.minHeight = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px'; parentEl.style.maxHeight = '56vh'; }
 
-      phaserGame = new Phaser.Game({ type: Phaser.AUTO, parent: 'phaserCanvas', width: canvasWidth, height: canvasHeight, backgroundColor: '#061426', scene: [ BootScene, GameScene ], render: { pixelArt: false, antialias: true } });
+      // ensure the container reserves exactly the canvas height to avoid the white-right issue
+      if (parentEl && parentEl.style){
+        parentEl.style.minWidth = Math.min(canvasWidth, Math.max(260, canvasWidth)) + 'px';
+        parentEl.style.minHeight = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px';
+        parentEl.style.height = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px';
+        parentEl.style.display = 'flex';
+        parentEl.style.alignItems = 'center';
+        parentEl.style.justifyContent = 'center';
+      }
+
+      // Create Phaser with scale mode FIT and auto-center - this ensures canvas sizes correctly in Telegram
+      phaserGame = new Phaser.Game({
+        type: Phaser.AUTO,
+        parent: 'phaserCanvas',
+        backgroundColor: '#061426',
+        scene: [ BootScene, GameScene ],
+        render: { pixelArt: false, antialias: true },
+        scale: {
+          mode: Phaser.Scale.FIT,
+          autoCenter: Phaser.Scale.CENTER_BOTH,
+          width: canvasWidth,
+          height: canvasHeight
+        }
+      });
+
+      // handle window resize: recompute CELL/GAP and resize phaser scale
+      function onResize(){
+        try {
+          const rect = (document.getElementById('phaserCanvas') || document.body).getBoundingClientRect();
+          const availW = Math.max(320, rect.width || window.innerWidth);
+          const availH = Math.max(260, Math.min(window.innerHeight * 0.78, rect.height || window.innerHeight * 0.78));
+          const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
+          CELL = Math.max(8, Math.floor(BASE_CELL * scale));
+          GAP = Math.max(1, Math.floor(BASE_GAP * scale));
+          const w = GRID_COLS * (CELL + GAP) + 40;
+          const h = GRID_ROWS * (CELL + GAP) + 40;
+          const sc = phaserGame && phaserGame.scale;
+          if (sc && typeof sc.resize === 'function') sc.resize(w, h);
+          if (document.getElementById('phaserCanvas')) {
+            document.getElementById('phaserCanvas').style.minHeight = h + 'px';
+            document.getElementById('phaserCanvas').style.height = h + 'px';
+          }
+          // call scene redraw if present
+          const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
+          if (scene && typeof scene.drawBoard === 'function') scene.drawBoard();
+        } catch(e){ console.warn('onResize error', e); }
+      }
+      window.addEventListener('resize', onResize);
+      // small delay to allow Telegram to expand; then resize
+      setTimeout(onResize, 250);
 
       setupInjectedProviderListeners();
       loadAdsGram();
@@ -1314,15 +1388,11 @@
       // lightweight autosave every 3s (global)
       setInterval(()=>{ gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); }, 3000);
 
-      // flush on visibility change and before unload (best-effort)
-      document.addEventListener('visibilitychange', ()=> { if (document.visibilityState === 'hidden') flushActionQueue().catch(()=>{}); });
-      window.addEventListener('beforeunload', ()=> { flushOnUnload(); });
-
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
 
   // -----------------------
-  // AdsGram + ad flow (kept)
+  // AdsGram loader + showAdAndVerify (unchanged)
   // -----------------------
   let AdsGramLoaded = false, AdController = null;
   function loadAdsGram(){
@@ -1366,7 +1436,7 @@
   }
 
   // -----------------------
-  // small UI sheet helpers (used above)
+  // Small UI sheet helpers (unchanged)
   // -----------------------
   function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
   function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
@@ -1382,9 +1452,7 @@
   }
   function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
 
-  // -----------------------
-  // Misc helpers exported
-  // -----------------------
+  // expose small helper
   window._hexon_showToast = (m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); };
 
   </script>
