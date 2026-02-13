@@ -15,17 +15,60 @@
       --card-bg:rgba(255,255,255,0.03);
       --safe-pad: env(safe-area-inset-top,12px);
     }
-    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
+    /* Reset / base */
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; overflow:hidden;}
     *,*:before,*:after{ box-sizing: inherit; }
+    a { color:inherit; }
 
-    /* Layout */
-    #pageWrap { display:flex; flex-direction:column; gap:12px; padding:12px; min-height:100dvh; padding-top: calc(var(--safe-pad) + 8px); padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px); }
-    /* Phaser container: ensure it centers & reserves space for the canvas */
-    #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; min-height:260px; box-sizing:border-box; }
-    /* Force Phaser canvas to size responsively while preserving display */
-    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-height:56vh; }
+    /* Layout: responsive grid on wide screens, stacked on narrow */
+    #pageWrap {
+      min-height: 100vh;
+      padding: calc(var(--safe-pad) + 12px);
+      padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+      justify-items: stretch;
+    }
 
-    #uiPanel{ width:100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: 48vh; overflow:auto; -webkit-overflow-scrolling: touch; }
+    @media (min-width: 900px) {
+      #pageWrap {
+        grid-template-columns: 1fr 340px;
+        gap: 18px;
+        padding: 18px;
+      }
+    }
+
+    /* Phaser container */
+    #phaserCanvas {
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      background: linear-gradient(180deg,#061426,#041016);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      /* The height will be set from JS to match the canvas height precisely */
+      min-height: 260px;
+      max-height: 80vh;
+    }
+    /* ensure canvas fills container width, keep aspect */
+    #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; }
+
+    /* UI Panel */
+    #uiPanel{
+      width:100%;
+      background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88));
+      padding:12px;
+      border-radius:12px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+      max-height: calc(100vh - 160px);
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+      box-sizing:border-box;
+    }
     .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.45); }
     .muted{ color:var(--muted); opacity:.85; font-size:12px; }
     .stat{ font-size:20px; font-weight:700; color:#7EE7FF; }
@@ -39,6 +82,7 @@
     .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
     .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
 
+    /* modal / bottom sheet */
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
     .overlay.show{ display:flex; }
     .bottom-sheet{ width:100%; max-width:720px; border-radius:14px; background:linear-gradient(180deg,#071423,#03101a); box-shadow:0 20px 60px rgba(0,0,0,0.6); overflow:hidden; max-height: min(86vh, calc(100vh - 96px)); display:flex; flex-direction:column; }
@@ -50,18 +94,15 @@
     .wallet-option:active{ transform:translateY(1px); }
 
     .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; background: rgba(3,10,18,0.85); color: #E6F7FF; padding: 8px 12px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 13px; z-index: 100000; display: none; }
+
     nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; }
     nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; white-space:nowrap; }
 
-    @media(min-width:900px){
-      #pageWrap{ flex-direction:row; align-items:flex-start; gap:16px; padding:18px; }
-      #phaserCanvas{ flex: 2; max-width: calc(100% - 360px); max-height: 80vh; }
-      #uiPanel{ flex: 1; max-width: 340px; max-height: calc(100dvh - 48px); overflow:auto; }
-      #phaserCanvas canvas { max-height:80vh; }
-    }
-
-    /* Minimal reset to avoid Telegram padding issues */
+    /* Small accessibility / telegram friendly */
     .tgmini-reset { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+    /* ensure no accidental horizontal scroll */
+    body, #pageWrap { overscroll-behavior-x: none; }
   </style>
 </head>
 <body class="tgmini-reset">
@@ -154,6 +195,7 @@
     </aside>
   </div>
 
+  <!-- Bottom sheet / modal -->
   <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="bottom-sheet" role="document" aria-label="Inline sheet">
       <div class="sheet-header">
@@ -370,7 +412,6 @@
       if (window.Telegram && window.Telegram.WebApp){
         const tg = window.Telegram.WebApp;
         try{ if (typeof tg.ready === 'function') tg.ready(); } catch(e){}
-        // Expand the WebApp to available height - this helps avoid the white space
         try { if (typeof tg.expand === 'function') tg.expand(); } catch(e){}
         const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || (tg.initData && tg.initData.user) || null;
         if (u){
@@ -432,43 +473,34 @@
   let CELL = BASE_CELL, GAP = BASE_GAP;
 
   // -----------------------
-  // Real-time REST sync: use existing /game/submit-score endpoint for live updates
-  // - Throttled so we don't flood network
-  // - Sent on important events: tick, lock, clear, spawn, rotate, soft/hard drop
-  // - Also a periodic heartbeat
+  // Real-time REST sync (throttled sends)
   // -----------------------
-  const SEND_THROTTLE_MS = 400;   // minimum spacing between sends
+  const SEND_THROTTLE_MS = 400;
   let lastSendAt = 0;
   let pendingSendTimer = null;
-
   function buildStatePayload(eventType='heartbeat', extra={}){
-    // Minimal payload that is useful server-side; server may ignore unknown fields if strict.
     return {
       sessionId: clientState.sessionId,
       event: eventType,
-      partial: true, // indicates this is not final score but a live update
+      partial: true,
       score: gameState.score,
       lines: gameState.lines,
       level: gameState.level,
       dropInterval: gameState.dropInterval,
       energy: clientState.energy,
-      // shallow snapshot of active piece & next (sufficient to server-side verify/replay if needed)
       activePiece: gameState.activePiece || null,
       nextPiece: gameState.nextPiece || null,
-      // only include a light recent action log (last 200)
       actionLog: (clientState.actionLog || []).slice(-200),
       ts: Date.now(),
       ...extra
     };
   }
-
   async function sendState(eventType='heartbeat', extra={}){
     try {
       const now = Date.now();
       const sinceLast = now - lastSendAt;
       const payload = buildStatePayload(eventType, extra);
       if (sinceLast < SEND_THROTTLE_MS){
-        // schedule a deferred send to coalesce quick events
         if (pendingSendTimer) clearTimeout(pendingSendTimer);
         pendingSendTimer = setTimeout(()=> { pendingSendTimer = null; doSend(payload); }, SEND_THROTTLE_MS - sinceLast + 10);
         return;
@@ -476,69 +508,48 @@
       await doSend(payload);
     } catch(e){ console.warn('sendState error', e); }
   }
-
   async function doSend(payload){
     try {
       lastSendAt = Date.now();
-      // We reuse your existing endpoint for live updates.
-      // Server should tolerate repeated partial updates; if server expects only final submit, adapt later.
       await api('/game/submit-score','POST', payload);
     } catch(e){ console.warn('doSend error', e); }
   }
-
-  // heartbeat every 2s for additional resilience
-  setInterval(()=> {
-    if (!gameState.isPlaying) return;
-    sendState('heartbeat');
-  }, 2000);
+  setInterval(()=> { if (!gameState.isPlaying) return; sendState('heartbeat'); }, 2000);
 
   // -----------------------
-  // Phaser scenes
+  // Phaser scenes (with robust resize handling)
   // -----------------------
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
   class GameScene extends Phaser.Scene {
-    constructor(){ super({ key:'GameScene' }); }
+    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; }
     create(){
-      // compute local sizes based on CELL/GAP pre-calculated
       this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
       this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
       this.gridOrigin = { x:16, y:16 };
 
-      // draw board background and grid lines
+      // background graphics
       this.g = this.add.graphics();
       this.drawBoard();
 
-      // load saved grid or initialize
+      // ensure grid exists and spawn piece if needed
       if (!gameState.grid) initGrid();
       if (!gameState.activePiece) spawnPiece();
 
-      // create cell placeholders
-      this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
-      for (let r=0;r<GRID_ROWS;r++){
-        for (let c=0;c<GRID_COLS;c++){
-          const x = this.gridOrigin.x + c*(CELL+GAP) + CELL/2;
-          const y = this.gridOrigin.y + r*(CELL+GAP) + CELL/2;
-          const rect = this.add.rectangle(x,y,CELL,CELL,0x102033).setStrokeStyle(1,0x092033,0.6);
-          rect.updateFill = function(color){ try{ this.fillColor = color; }catch(e){} try{ if (typeof this.setFillStyle === 'function') this.setFillStyle(color); }catch(e){} };
-          rect.setInteractive({ useHandCursor: true });
-          ((rr,cc,node)=> node.on('pointerdown', ()=> { vibratePreferTelegram(); logAction('cell_click',{x:cc,y:rr}); const orig = node.fillColor || 0x102033; node.updateFill(0xFFFFFF); this.time.delayedCall(80, ()=> node.updateFill(orig)); }))(r,c,rect);
-          this.cellSprites[r][c] = rect;
-        }
-      }
+      // build cell sprites
+      this.rebuildCellSprites();
 
       gameState.isPlaying = gameState.isPlaying !== undefined ? gameState.isPlaying : true;
       updateUI();
-      // catch-up for missed ticks (in case tab was backgrounded)
       this.catchUpMissedTicks();
       this.startDropLoop();
       this.setupInput();
 
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
-      // autosave interval
       this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
     }
 
+    // draw board background / grid lines
     drawBoard(){
       try {
         if (this.g) { this.g.clear(); }
@@ -551,6 +562,46 @@
       } catch(e){ console.warn('drawBoard error', e); }
     }
 
+    // destroy and recreate cell rectangles to match new CELL/GAP
+    rebuildCellSprites(){
+      try {
+        if (this.cellSprites && Array.isArray(this.cellSprites)){
+          for (let r=0;r < this.cellSprites.length; r++){
+            for (let c=0;c < (this.cellSprites[r] || []).length; c++){
+              const obj = this.cellSprites[r][c];
+              if (obj && typeof obj.destroy === 'function') obj.destroy();
+            }
+          }
+        }
+      } catch(e){ console.warn('destroy old cellSprites failed', e); }
+      // create new grid of rectangles
+      this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+      for (let r=0;r<GRID_ROWS;r++){
+        for (let c=0;c<GRID_COLS;c++){
+          const x = this.gridOrigin.x + c*(CELL+GAP) + CELL/2;
+          const y = this.gridOrigin.y + r*(CELL+GAP) + CELL/2;
+          const rect = this.add.rectangle(x,y,CELL,CELL,0x102033).setStrokeStyle(1,0x092033,0.6);
+          rect.updateFill = function(color){ try{ this.fillColor = color; }catch(e){} try{ if (typeof this.setFillStyle === 'function') this.setFillStyle(color); }catch(e){} };
+          rect.setInteractive({ useHandCursor: true });
+          ((rr,cc,node)=> node.on('pointerdown', ()=> { vibratePreferTelegram(); logAction('cell_click',{x:cc,y:rr}); const orig = node.fillColor || 0x102033; node.updateFill(0xFFFFFF); this.time.delayedCall(80, ()=> node.updateFill(orig)); }))(r,c,rect);
+          this.cellSprites[r][c] = rect;
+        }
+      }
+      // initial paint
+      this.renderGrid();
+    }
+
+    // reposition + resize after scale change - simpler approach: rebuild
+    onResizeRebuild(){
+      // recompute board pixel size from current CELL/GAP
+      this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
+      this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
+      this.gridOrigin = { x:16, y:16 };
+      this.drawBoard();
+      // rebuild rectangles so they match new CELL size
+      this.rebuildCellSprites();
+    }
+
     startDropLoop(){
       if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
       const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
@@ -558,7 +609,6 @@
         if (!gameState.isPlaying) return;
         const moved = movePieceDown();
         logAction('tick_drop',{ moved });
-        // send a tick update (throttled)
         sendState('tick', { moved });
         if (!moved) {
           lockPiece();
@@ -572,10 +622,22 @@
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
 
     renderGrid(){
-      for (let r=0;r<GRID_ROWS;r++) for (let c=0;c<GRID_COLS;c++){ const val = gameState.grid[r][c]; const color = val ? colorFromVal(val) : 0x102033; const rect = this.cellSprites[r][c]; if (rect && typeof rect.updateFill === 'function') rect.updateFill(color); }
+      for (let r=0;r<GRID_ROWS;r++){
+        for (let c=0;c<GRID_COLS;c++){
+          const val = (gameState.grid && gameState.grid[r]) ? gameState.grid[r][c] : 0;
+          const color = val ? colorFromVal(val) : 0x102033;
+          const rect = this.cellSprites[r][c];
+          if (rect && typeof rect.updateFill === 'function') rect.updateFill(color);
+        }
+      }
       if (gameState.activePiece){
         const cells = getPieceCells(gameState.activePiece);
-        cells.forEach(p => { if (p.y>=0 && p.y<GRID_ROWS && p.x>=0 && p.x<GRID_COLS){ const rect = this.cellSprites[p.y][p.x]; if (rect && typeof rect.updateFill === 'function') rect.updateFill(colorFromVal(gameState.activePiece.type)); } });
+        cells.forEach(p => {
+          if (p.y>=0 && p.y<GRID_ROWS && p.x>=0 && p.x<GRID_COLS){
+            const rect = this.cellSprites[p.y][p.x];
+            if (rect && typeof rect.updateFill === 'function') rect.updateFill(colorFromVal(gameState.activePiece.type));
+          }
+        });
       }
     }
 
@@ -614,7 +676,7 @@
   // -----------------------
   function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
 
-  function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
+  function getPieceCells(piece){ if(!piece) return []; const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
 
   function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); sendState('init'); }
 
@@ -660,7 +722,6 @@
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
     if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
     gameState.activePiece = null;
-    // send lock event (authoritative-ish snapshot)
     sendState('lock', { lockedPiece: ap, cleared });
     spawnPiece();
     try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
@@ -686,7 +747,6 @@
     if (!gameState.isPlaying) return;
     gameState.isPlaying = false;
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
-    // Send final score payload (partial=false indicates final)
     try{
       const finalPayload = {
         sessionId: clientState.sessionId,
@@ -701,7 +761,6 @@
       await api('/game/submit-score','POST', finalPayload);
     } catch(e){ console.warn(e); }
 
-    // UI overlay
     showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
     saveGameToStorage();
     saveClientToStorage();
@@ -1238,7 +1297,7 @@
   })();
 
   // -----------------------
-  // Boot / init & Phaser startup (redone sizing)
+  // Boot / init & Phaser startup (redone sizing + robust resize)
   // -----------------------
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
@@ -1312,11 +1371,10 @@
         }
       } catch(e){ console.warn('client init failed', e); }
 
-      // compute initial scale & cell sizes using the container size
+      // compute initial scale & sizes using the container's available space
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
-      // use a reasonable height (allowing Telegram mini app to set actual visible area)
       const availH = Math.max(260, Math.min(window.innerHeight * 0.68, rect.height || window.innerHeight * 0.68));
       const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
       const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
@@ -1326,7 +1384,7 @@
       const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
       const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
 
-      // ensure the container reserves exactly the canvas height to avoid the white-right issue
+      // set explicit container size so layout engines allocate correct space
       if (parentEl && parentEl.style){
         parentEl.style.minWidth = Math.min(canvasWidth, Math.max(260, canvasWidth)) + 'px';
         parentEl.style.minHeight = Math.min(canvasHeight, Math.max(260, canvasHeight)) + 'px';
@@ -1336,7 +1394,7 @@
         parentEl.style.justifyContent = 'center';
       }
 
-      // Create Phaser with scale mode FIT and auto-center - this ensures canvas sizes correctly in Telegram
+      // Create Phaser with scale mode FIT and auto-center
       phaserGame = new Phaser.Game({
         type: Phaser.AUTO,
         parent: 'phaserCanvas',
@@ -1351,12 +1409,12 @@
         }
       });
 
-      // handle window resize: recompute CELL/GAP and resize phaser scale
+      // Resize handler: recompute CELL/GAP, resize Phaser, and tell scene to rebuild sprites
       function onResize(){
         try {
-          const rect = (document.getElementById('phaserCanvas') || document.body).getBoundingClientRect();
-          const availW = Math.max(320, rect.width || window.innerWidth);
-          const availH = Math.max(260, Math.min(window.innerHeight * 0.78, rect.height || window.innerHeight * 0.78));
+          const parentRect = (document.getElementById('phaserCanvas') || document.body).getBoundingClientRect();
+          const availW = Math.max(320, parentRect.width || window.innerWidth);
+          const availH = Math.max(260, Math.min(window.innerHeight * 0.78, parentRect.height || window.innerHeight * 0.78));
           const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
           CELL = Math.max(8, Math.floor(BASE_CELL * scale));
           GAP = Math.max(1, Math.floor(BASE_GAP * scale));
@@ -1365,12 +1423,14 @@
           const sc = phaserGame && phaserGame.scale;
           if (sc && typeof sc.resize === 'function') sc.resize(w, h);
           if (document.getElementById('phaserCanvas')) {
-            document.getElementById('phaserCanvas').style.minHeight = h + 'px';
-            document.getElementById('phaserCanvas').style.height = h + 'px';
+            const p = document.getElementById('phaserCanvas');
+            p.style.minHeight = h + 'px';
+            p.style.height = h + 'px';
           }
-          // call scene redraw if present
           const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
-          if (scene && typeof scene.drawBoard === 'function') scene.drawBoard();
+          if (scene && typeof scene.onResizeRebuild === 'function') scene.onResizeRebuild();
+          // force UI updates to reflect new sizes
+          updateUI();
         } catch(e){ console.warn('onResize error', e); }
       }
       window.addEventListener('resize', onResize);
