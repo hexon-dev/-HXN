@@ -218,6 +218,11 @@
   const AUTO_RECHARGE_PERCENT = 10;
   const MAX_ADS_PER_DAY = 9, MAX_ADS_PER_SITTING = 3, MAX_SITTINGS_PER_DAY = 3;
 
+  // Persistence keys/versioning
+  const GAME_STORAGE_KEY = 'hexon_game_v1';
+  const CLIENT_STORAGE_KEY = 'hexon_client_v1';
+  const SAVE_SCHEMA_VERSION = 1;
+
   let clientState = {
     sessionId: loadSessionFromStorage() || generateUUID(),
     userId: null,
@@ -351,6 +356,8 @@
         logAction('ad_watched',{ provider, granted: resp.grantedPercent });
         updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
+        // persist client state change
+        saveClientToStorage();
       } else {
         const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
         showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">${escapeHtml(msg)}</div>` });
@@ -360,40 +367,8 @@
 
   /* ------------------------
      Game: preserved phaser logic (unchanged)
-     (truncated in comment here for readability — code follows later unchanged)
+     with added persistence hooks
   ------------------------*/
-
-  /* ------------------------
-     Utilities & UI rendering
-  ------------------------*/
-  function isIOS(){ return /iP(ad|hone|od)/i.test(navigator.userAgent); }
-  function isAndroid(){ return /Android/i.test(navigator.userAgent); }
-  function isInAppBrowser(){ const ua = navigator.userAgent || ''; return /FBAN|FBAV|Instagram|Line|KAKAOTALK|Twitter|LinkedIn|Snapchat/i.test(ua); }
-  function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-
-  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
-
-  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
-
-  function updateUI(){
-    if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
-    if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp||0) + ' GP';
-    if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
-    if ($('ui-level')) $('ui-level').innerText = gameState.level;
-    if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
-    if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
-    if ($('ui-hxn')) { const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0; $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN'; }
-    if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
-    if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
-    if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
-    if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
-    if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
-    if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
-  }
-
-  /* ------------------------
-     Game logic (unchanged from your original) - included for completeness
-     ------------------------*/
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
     J: [[[0,0],[0,1],[1,1],[2,1]], [[1,0],[2,0],[1,1],[1,2]], [[0,1],[1,1],[2,1],[2,2]], [[1,0],[1,1],[0,2],[1,2]]],
@@ -409,7 +384,89 @@
 
   let phaserGame;
   let CELL = BASE_CELL, GAP = BASE_GAP;
+  let _saveTimer = null;
+  let _autosaveIntervalTimer = null;
+  let _restoredFromStorage = false;
 
+  /* ------------------------
+     Persistence functions: save/load game & client
+     ------------------------*/
+  function snapshotForSave(){
+    return {
+      schema: SAVE_SCHEMA_VERSION,
+      ts: Date.now(),
+      gameState: {
+        score: gameState.score,
+        level: gameState.level,
+        lines: gameState.lines,
+        dropInterval: gameState.dropInterval,
+        isPlaying: gameState.isPlaying,
+        combo: gameState.combo,
+        activePiece: gameState.activePiece ? { ...gameState.activePiece } : null,
+        nextPiece: gameState.nextPiece || null,
+        // grid as array-of-arrays (letters or 0)
+        grid: gameState.grid
+      },
+      clientState: {
+        gp: clientState.gp,
+        energy: clientState.energy,
+        wallet: clientState.wallet,
+        walletProvider: clientState.walletProvider
+      }
+    };
+  }
+
+  function saveGameToStorage(){
+    try{
+      const payload = snapshotForSave();
+      localStorage.setItem(GAME_STORAGE_KEY, JSON.stringify(payload));
+    }catch(e){ console.warn('saveGameToStorage failed', e); }
+  }
+
+  function saveClientToStorage(){
+    try{
+      const c = { schema: SAVE_SCHEMA_VERSION, ts: Date.now(), gp: clientState.gp, energy: clientState.energy, wallet: clientState.wallet, walletProvider: clientState.walletProvider };
+      localStorage.setItem(CLIENT_STORAGE_KEY, JSON.stringify(c));
+    }catch(e){ console.warn('saveClientToStorage failed', e); }
+  }
+
+  function loadGameFromStorage(){
+    try{
+      const raw = localStorage.getItem(GAME_STORAGE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.gameState) return false;
+      const s = parsed.gameState;
+      // basic validation
+      if (!Array.isArray(s.grid) || s.grid.length !== GRID_ROWS) return false;
+      gameState.grid = s.grid.map(row => (Array.isArray(row) ? row.slice(0, GRID_COLS) : Array(GRID_COLS).fill(0)));
+      gameState.score = Number(s.score) || 0;
+      gameState.level = Number(s.level) || 1;
+      gameState.lines = Number(s.lines) || 0;
+      gameState.dropInterval = Number(s.dropInterval) || INITIAL_DROP_MS;
+      gameState.isPlaying = Boolean(s.isPlaying);
+      gameState.combo = Number(s.combo) || 0;
+      gameState.activePiece = s.activePiece || null;
+      gameState.nextPiece = s.nextPiece || (PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]);
+      // restore some client bits if present
+      if (parsed.clientState){
+        clientState.gp = parsed.clientState.gp ?? clientState.gp;
+        clientState.energy = parsed.clientState.energy ?? clientState.energy;
+        clientState.wallet = parsed.clientState.wallet ?? clientState.wallet;
+        clientState.walletProvider = parsed.clientState.walletProvider ?? clientState.walletProvider;
+      }
+      _restoredFromStorage = true;
+      return true;
+    }catch(e){ console.warn('loadGameFromStorage failed', e); return false; }
+  }
+
+  function clearSavedGame(){
+    try{ localStorage.removeItem(GAME_STORAGE_KEY); }catch(e){}
+  }
+
+  /* ------------------------
+     Game scene & lifecycle
+  ------------------------*/
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
   class GameScene extends Phaser.Scene {
     constructor(){ super({ key:'GameScene' }); }
@@ -425,8 +482,11 @@
       for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
       for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
 
-      initGrid();
-
+      // initialize grid: prefer restore from storage; otherwise fresh
+      if (!_restoredFromStorage || !gameState.grid){ initGrid(); }
+      // ensure next piece exists
+      if (!gameState.nextPiece) gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
+      // create cell sprites
       this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
       for (let r=0;r<GRID_ROWS;r++){
         for (let c=0;c<GRID_COLS;c++){
@@ -440,8 +500,26 @@
         }
       }
 
-      spawnPiece();
-      gameState.isPlaying = true;
+      // if restored from storage and there's an active piece, keep it (else spawn)
+      if (!_restoredFromStorage || !gameState.activePiece){
+        spawnPiece();
+      } else {
+        // validate collision after restore
+        if (checkCollision(getPieceCells(gameState.activePiece))){ 
+          // if restored into collision (maybe the saved state was mid-lock), attempt to move piece up; if impossible -> game over
+          let canFix=false;
+          for (let dy=-2;dy<=2;dy++){
+            const cand = {...gameState.activePiece, y: gameState.activePiece.y + dy};
+            if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; canFix=true; break; }
+          }
+          if (!canFix){ // treat as game over (preserve grid & score)
+            gameState.isPlaying = false;
+            setTimeout(()=> { gameOver(); }, 200);
+          }
+        }
+      }
+
+      gameState.isPlaying = (typeof gameState.isPlaying === 'boolean') ? gameState.isPlaying : true;
       updateUI();
       this.startDropLoop();
       this.setupInput();
@@ -470,19 +548,30 @@
       if (!document.querySelector('.touch-controls')) setupTouchControls(this);
     }
 
-    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); }
+    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); saveClientToStorage(); }
   }
 
-  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); }
+  function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameDebounced(); saveClientToStorage(); }
   function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
   function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; }
-  function spawnPiece(){ if ((clientState.energy||0) <= 0){ gameState.isPlaying=false; showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' }); return; } const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]; const xStart = Math.floor((GRID_COLS - 4)/2); gameState.activePiece = { type, rot:0, x:xStart, y:0 }; gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)]; logAction('spawn',{ type, x:xStart, y:0 }); if (checkCollision(getPieceCells(gameState.activePiece))) gameOver(); }
+  function spawnPiece(){ 
+    if ((clientState.energy||0) <= 0){ gameState.isPlaying=false; showSheet({ title:'Energy', bodyHtml:'<div class="small-muted">Out of energy — watch an ad or wait for recharge.</div>' }); saveGameToStorage(); return; } 
+    if (!gameState.activePiece){
+      const type = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
+      const xStart = Math.floor((GRID_COLS - 4)/2);
+      gameState.activePiece = { type, rot:0, x:xStart, y:0 };
+      gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
+      logAction('spawn',{ type, x:xStart, y:0 });
+    }
+    if (checkCollision(getPieceCells(gameState.activePiece))) gameOver();
+    saveGameToStorage();
+  }
   function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
-  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); } }
+  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); saveGameDebounced(); } }
   function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
-  function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); } }
-  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; clientState.gp += falls * 2; logAction('hard_drop',{ falls }); updateUI(); }
-  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); return; } } }
+  function softDrop(){ if (movePieceDown()){ gameState.score += 1; clientState.gp += 1; logAction('soft_drop'); updateUI(); saveGameDebounced(); saveClientToStorage(); } }
+  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; clientState.gp += falls * 2; logAction('hard_drop',{ falls }); updateUI(); saveGameDebounced(); saveClientToStorage(); }
+  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); saveGameDebounced(); return; } } }
   function lockPiece(){
     const ap = gameState.activePiece; if (!ap) return;
     const cells = getPieceCells(ap);
@@ -491,9 +580,12 @@
     const cleared = [];
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
     if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
+    gameState.activePiece = null;
     spawnPiece();
     try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
     updateUI();
+    saveGameToStorage();
+    saveClientToStorage();
   }
   function clearLines(rows){
     rows.sort((a,b)=>a-b);
@@ -503,15 +595,34 @@
     logAction('clear',{ count, combo:gameState.combo });
     if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); }
     updateUI();
+    saveGameToStorage();
+    saveClientToStorage();
   }
   async function gameOver(){
     gameState.isPlaying = false;
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
     try{ await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
+    // keep final result persisted so refresh shows same "game over" until user clears
+    saveGameToStorage();
     showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
     updateUI();
+    saveClientToStorage();
   }
-  function resetForPlay(){ initGrid(); gameState.dropInterval = INITIAL_DROP_MS; clientState.actionLog = []; clientState.energy = Math.max(0, clientState.energy); spawnPiece(); gameState.isPlaying = true; try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){} updateUI(); }
+  function resetForPlay(){ 
+    clearSavedGame(); // clear persisted save so we start fresh
+    initGrid(); 
+    gameState.dropInterval = INITIAL_DROP_MS; 
+    clientState.actionLog = []; 
+    clientState.energy = Math.max(0, clientState.energy); 
+    gameState.activePiece = null;
+    _restoredFromStorage = false;
+    spawnPiece(); 
+    gameState.isPlaying = true; 
+    try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){} 
+    updateUI(); 
+    saveGameToStorage(); 
+    saveClientToStorage();
+  }
 
   function colorFromVal(val){ const map = { I:0x22d3ee, J:0x7c3aed, L:0xf59e0b, O:0xfacc15, S:0x10b981, T:0x8b5cf6, Z:0xef4444 }; return map[val] ?? 0x0f172a; }
   function setupTouchControls(scene){
@@ -524,19 +635,31 @@
     [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
     wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
     const ui = $('uiPanel'); if (ui) ui.append(wrapper);
-    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); };
-    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); };
-    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); };
-    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); };
+    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
+    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
+    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
+    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); saveGameDebounced(); saveClientToStorage(); };
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
+  /* simple debounce to avoid thrashing localStorage */
+  function saveGameDebounced(delay=300){
+    try{ if (_saveTimer) clearTimeout(_saveTimer); _saveTimer = setTimeout(()=> { saveGameToStorage(); _saveTimer = null; }, delay); }catch(e){}
+  }
+
+  /* also run an autosave loop for extra safety */
+  function startAutosaveLoop(){
+    try{
+      if (_autosaveIntervalTimer) clearInterval(_autosaveIntervalTimer);
+      _autosaveIntervalTimer = setInterval(()=> { saveGameToStorage(); saveClientToStorage(); }, 2500);
+    }catch(e){}
+  }
+
   /* ------------------------
      Wallet connectors — improved:
      - Prefer injected provider connect
-     - For deep links, open deep link then wait for redirect / returned params (poll parseReturnParams)
-     - store pending deeplink in localStorage to handle Telegram or external returns
+     etc (kept from your original)
      ------------------------*/
 
   function detectInjectedProviders(){
@@ -549,32 +672,26 @@
     };
   }
 
-  /* helper to set pending provider (so readWalletReturn can bind with provider hint) */
   function setPendingDeepLink(providerName){
     try { localStorage.setItem('hexon_pending_deeplink', JSON.stringify({ provider: providerName, ts: Date.now() })); } catch(e){}
   }
   function clearPendingDeepLink(){ try{ localStorage.removeItem('hexon_pending_deeplink'); }catch(e){} }
   function getPendingDeepLink(){ try{ const s = localStorage.getItem('hexon_pending_deeplink'); return s ? JSON.parse(s) : null; }catch(e){return null;} }
 
-  /* open deep link and wait for returned public key (polling parseReturnParams) */
   function openDeepLinkAndWait({ deepLink, installUrl, appName, providerName }){
     return new Promise((resolve) => {
-      // mark we opened a deep link for this provider so page load can respond
       setPendingDeepLink(providerName || 'unknown');
-      // open via Telegram helper if present, else window location
       const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
       try {
         if (tg && typeof tg.openUrl === 'function'){
           tg.openUrl(deepLink);
         } else {
-          // try assign
           window.location.assign(deepLink);
         }
       } catch (e) {
         try { window.open(deepLink, '_self'); } catch(e2){ console.warn('open deep link failed', e2); }
       }
 
-      // show waiting sheet to the user
       showSheet({
         title: `Opening ${appName}`,
         bodyHtml: `<div class="small-muted">Opening ${escapeHtml(appName)} — return to this page after approving. Waiting for a response…</div><div style="margin-top:8px;" class="small-muted">If the app didn't open, choose "Try open" or install.</div>`,
@@ -586,7 +703,6 @@
         }
       });
 
-      // poll for return (parseReturnParams reads current URL). Poll up to 90s.
       const start = Date.now();
       const interval = setInterval(async ()=>{
         const pk = parseReturnParams();
@@ -608,17 +724,14 @@
     });
   }
 
-  /* Deep link builders */
   function buildCleanRedirect(){ try{ return window.location.origin.replace(/\/+$/,'') + window.location.pathname; }catch(e){return window.location.origin + '/';} }
   function phantomDeepLink(){ try { const origin = window.location.origin.replace(/\/+$/,''); return `https://phantom.app/ul/v1/authorize?app_url=${encodeURIComponent(origin)}&redirect_link=${encodeURIComponent(buildCleanRedirect())}`; }catch(e){ return `https://phantom.app/`; } }
   function solflareDeepLink(){ try { const redirect = encodeURIComponent(buildCleanRedirect()); return `https://solflare.com/access?redirect=${redirect}`; } catch(e){ return `https://solflare.com/`; } }
   function backpackDeepLink(){ return 'https://backpack.app/'; }
 
-  /* Provider connect wrappers that return Promise<boolean> on success */
   async function connectWithPhantom(){
     const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     const detected = detectInjectedProviders();
-    // if injected Phantom is available, prefer direct connect
     if (window.solana && window.solana.isPhantom){
       try {
         const resp = await window.solana.connect();
@@ -629,7 +742,6 @@
         }
       } catch(e){ console.warn('phantom injected connect failed', e); }
     }
-    // fallback: open deep link and wait for redirect
     const deep = phantomDeepLink();
     setPendingDeepLink('phantom');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://phantom.app/', appName: 'Phantom', providerName: 'phantom' });
@@ -648,7 +760,6 @@
         }
       } catch(e){ console.warn('solflare injected failed', e); }
     }
-    // if in solana injected provider with isSolflare flag
     if (window.solana && window.solana.isSolflare){
       try {
         const r = await window.solana.connect();
@@ -659,7 +770,6 @@
         }
       } catch(e){ console.warn('solflare via solana failed', e); }
     }
-    // else open deep link and wait
     const deep = solflareDeepLink();
     setPendingDeepLink('solflare');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://solflare.com/', appName: 'Solflare', providerName: 'solflare' });
@@ -703,7 +813,6 @@
           return Boolean(ok);
         }
       }
-      // fallback: show instructions to user then accept pasted pk
       showSheet({ title:'WalletConnect', bodyHtml:`<div class="small-muted">No helper available. Open your mobile wallet and use WalletConnect; then paste the returned public key below.</div><div style="margin-top:8px;"><input id="wcManual" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" placeholder="Paste public key" /></div>`, actionsHtml:`<button id="wcBind" class="button">Bind</button><button id="wcClose" class="btn-ghost">Close</button>`, onMounted: ()=> {
         const b = $('wcBind'); const c = $('wcClose');
         if (b){ b.onclick = async ()=> { const pk = ($('wcManual').value||'').trim(); if (!pk) return alert('Paste public key'); hideSheet(); const ok = await finalizeBind(pk, 'walletconnect'); if (!ok) showToast('Bind failed',1200); }; }
@@ -723,11 +832,6 @@
   window.openBackpackDeepLink = () => openDeepLinkAndWait({ deepLink: backpackDeepLink(), installUrl: 'https://backpack.app/', appName: 'Backpack', providerName: 'backpack' });
   window.showWalletPicker = function(){ showSheet({ title:'Connect Wallet', bodyHtml: $('sheetBody').innerHTML }); };
 
-  function openAppOrPrompt({ deepLink, installUrl, appName }){
-    // kept for compatibility — prefer openDeepLinkAndWait above
-    return openDeepLinkAndWait({ deepLink, installUrl, appName, providerName: appName.toLowerCase() });
-  }
-
   function extractPublicKeyFromProviderResponse(resp){
     try {
       if (!resp) return null;
@@ -744,9 +848,6 @@
     return null;
   }
 
-  /* ------------------------
-     Server bind action (unchanged) — ensures server bind, session update, and UI update
-     ------------------------ */
   async function bindWalletWithPublicKey(publicKey, providerName){
     try {
       const payload = { sessionId: clientState.sessionId, wallet: publicKey, walletProvider: providerName||null, referral: clientState.pendingReferral || clientState.referralCode || null, username: clientState.username, telegramId: clientState.telegramId };
@@ -764,6 +865,7 @@
         if (res.referralAccepted) clearPendingReferral();
         saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
         updateUI(); renderMinersList();
+        saveClientToStorage();
         return true;
       }
       return false;
@@ -789,9 +891,6 @@
     }
   };
 
-  /* ------------------------
-     Parse wallet returns from URL / hash — improved to return first valid base58-like string
-     ------------------------ */
   function parseReturnParams(){
     try {
       let combined = window.location.search || '';
@@ -827,7 +926,6 @@
       if (pk){
         (async ()=> {
           if (!isValidSolanaPublicKey(pk)){ showSheet({ title:'Wallet', bodyHtml:'<div class="small-muted">Returned public key appears invalid</div>' }); setTimeout(hideSheet,1200); return; }
-          // check if deep link provider hint exists
           const pending = getPendingDeepLink();
           const provider = pending && pending.provider ? pending.provider : null;
           const ok = await bindWalletWithPublicKey(pk, provider);
@@ -841,9 +939,6 @@
     } catch(e){ console.warn('readWalletReturn error', e); return false; }
   }
 
-  /* ------------------------
-     Injected provider listeners — kept, but now set wallet provider properly
-     ------------------------ */
   function setupInjectedProviderListeners(){
     try {
       if (window.solana && typeof window.solana.on === 'function'){
@@ -935,6 +1030,7 @@
         updateUI();
         showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
         setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
+        saveClientToStorage();
       } else {
         const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
         showSheet({ title:'Claim', bodyHtml:`<div class="small-muted">${escapeHtml(String(err))}</div>` });
@@ -1000,7 +1096,6 @@
         try {
           const ok = await connectWithPhantom();
           if (ok) { hideSheetLocal(); return; }
-          // fallback: open deep link without waiting (handled by connectWithPhantom)
           openExternal(phantomDeepLink());
         } catch(e){ console.warn(e); showToast('Connection failed', 1200); }
       },
@@ -1108,11 +1203,13 @@
         }
       } catch(e){ console.warn('client init failed', e); }
 
+      // try to load persisted game first
+      loadGameFromStorage();
+
       // compute scale & start phaser
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
-      // more aggressive vertical fit so canvas stays small on phones
       const availH = Math.max(260, rect.height || Math.min(window.innerHeight * 0.5, 900));
       const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
       const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
@@ -1133,8 +1230,45 @@
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
+      // start autosave loop
+      startAutosaveLoop();
+
+      // persist on unload too (final catch)
+      window.addEventListener('beforeunload', () => {
+        saveGameToStorage();
+        saveClientToStorage();
+      });
+
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
+
+  /* ------------------------
+     Utilities & UI rendering (unchanged)
+  ------------------------*/
+  function isIOS(){ return /iP(ad|hone|od)/i.test(navigator.userAgent); }
+  function isAndroid(){ return /Android/i.test(navigator.userAgent); }
+  function isInAppBrowser(){ const ua = navigator.userAgent || ''; return /FBAN|FBAV|Instagram|Line|KAKAOTALK|Twitter|LinkedIn|Snapchat/i.test(ua); }
+  function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+
+  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
+
+  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
+
+  function updateUI(){
+    if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
+    if ($('ui-gp')) $('ui-gp').innerText = (clientState.gp||0) + ' GP';
+    if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
+    if ($('ui-level')) $('ui-level').innerText = gameState.level;
+    if ($('ui-lines')) $('ui-lines').innerText = gameState.lines;
+    if ($('ui-au')) $('ui-au').innerText = 'AU: ' + (clientState.userAU||0).toFixed(2);
+    if ($('ui-hxn')) { const est = clientState.totalAU>0 ? ((clientState.userAU / clientState.totalAU) * DAILY_EMISSION_CAP) : 0; $('ui-hxn').innerText = Math.round(est).toLocaleString() + ' HXN'; }
+    if ($('ui-username')) { $('ui-username').innerText = clientState.username ? `@${clientState.username}` : (clientState.userId ? `user:${clientState.userId}` : 'Guest'); }
+    if ($('ui-session')) { $('ui-session').innerText = clientState.sessionId || '—'; }
+    if ($('ui-wallet')) { $('ui-wallet').innerText = clientState.wallet ? clientState.wallet : 'Not connected'; }
+    if ($('ui-provider')) { $('ui-provider').innerText = clientState.walletProvider ? clientState.walletProvider : '—'; }
+    if ($('ui-adsToday')) $('ui-adsToday').innerText = String(clientState.adsToday||0);
+    if ($('ui-sittings')) $('ui-sittings').innerText = `${MAX_SITTINGS_PER_DAY}/${MAX_SITTINGS_PER_DAY}`;
+  }
   </script>
 </body>
 </html>
