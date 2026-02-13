@@ -2,26 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hexon — Grid (Persistent)</title>
+  <title>Hexon — Grid (Persistent & Real-time)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
   <style>
-    :root{
-      --bg-top:#071027; --bg-btm:#000; --panel-bg:rgba(8,18,36,0.95);
-      --muted:#bfeafc; --accent-from:#3b82f6; --accent-to:#22d3ee;
-      --card-bg:rgba(255,255,255,0.03);
-      --safe-pad: env(safe-area-inset-top,12px);
-    }
+    /* (unchanged style from your original — trimmed here for brevity in the preview) */
+    :root{ --bg-top:#071027; --bg-btm:#000; --panel-bg:rgba(8,18,36,0.95); --muted:#bfeafc; --accent-from:#3b82f6; --accent-to:#22d3ee; --card-bg:rgba(255,255,255,0.03); --safe-pad: env(safe-area-inset-top,12px); }
     html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; }
     *,*:before,*:after{ box-sizing: inherit; }
-
     #pageWrap { display:flex; flex-direction:column; gap:12px; padding:12px; min-height:100dvh; padding-top: calc(var(--safe-pad) + 8px); padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px); }
     #phaserCanvas { width:100%; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#061426,#041016); max-height:56vh; }
     #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-height:56vh; }
-
     #uiPanel{ width:100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: 48vh; overflow:auto; -webkit-overflow-scrolling: touch; }
     .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.45); }
     .muted{ color:var(--muted); opacity:.85; font-size:12px; }
@@ -35,7 +28,6 @@
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
     .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
     .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
-
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
     .overlay.show{ display:flex; }
     .bottom-sheet{ width:100%; max-width:720px; border-radius:14px; background:linear-gradient(180deg,#071423,#03101a); box-shadow:0 20px 60px rgba(0,0,0,0.6); overflow:hidden; max-height: min(86vh, calc(100vh - 96px)); display:flex; flex-direction:column; }
@@ -45,11 +37,9 @@
     .sheet-actions{ padding:12px 16px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent); }
     .wallet-option{ padding:12px; border-radius:10px; background:transparent; display:flex; justify-content:space-between; align-items:center; border:1px solid rgba(255,255,255,0.03); margin-bottom:8px; cursor:pointer; }
     .wallet-option:active{ transform:translateY(1px); }
-
     .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; background: rgba(3,10,18,0.85); color: #E6F7FF; padding: 8px 12px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 13px; z-index: 100000; display: none; }
     nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; }
     nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; white-space:nowrap; }
-
     @media(min-width:900px){
       #pageWrap{ flex-direction:row; align-items:flex-start; gap:16px; padding:18px; }
       #phaserCanvas{ flex: 2; max-width: calc(100% - 360px); max-height: 80vh; }
@@ -197,6 +187,7 @@
   // Config
   // -----------------------
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
+  const WS_PATH = '/ws'; // server-side WS endpoint (try to connect; fallback if unavailable)
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
   const BASE_CELL = 20, BASE_GAP = 2;
@@ -230,7 +221,7 @@
     telegramId: null,
     wallet: loadBoundWalletFromStorage(),
     walletProvider: localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER) || null,
-    gpBase: 0,              // server-provided GP (base), score-derived GP is added on display
+    gpBase: 0,
     energy: 100,
     miners: [],
     shopItems: [],
@@ -255,8 +246,8 @@
     dropInterval: INITIAL_DROP_MS,
     isPlaying: false,
     combo: 0,
-    lastSavedAt: null,      // timestamp saved last
-    lastTickAt: null        // timestamp of last automatic drop tick (for catch-up)
+    lastSavedAt: null,
+    lastTickAt: null
   };
 
   saveSessionToStorage(clientState.sessionId);
@@ -273,7 +264,6 @@
   function saveClientToStorage(){
     try {
       const toSave = Object.assign({}, clientState);
-      // avoid saving large action log; persist recent
       toSave.actionLog = (clientState.actionLog || []).slice(-2000);
       localStorage.setItem(STORAGE_KEYS.CLIENT, JSON.stringify(toSave));
     } catch(e){ console.warn('saveClientToStorage error', e); }
@@ -325,9 +315,11 @@
   // -----------------------
   function generateUUID(){ try{ if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){} return 'sess-'+Math.floor(Math.random()*1e12).toString(36); }
   function $(id){ return document.getElementById(id); }
-  function logAction(a,p={}){ clientState.actionLog.push({t:Date.now(), a, p}); if (clientState.actionLog.length>5000) clientState.actionLog.shift(); saveClientToStorage(); }
   function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
+  // -----------------------
+  // Networking: REST wrapper
+  // -----------------------
   async function api(path, method='GET', body=null, optsExtra={}){
     try{
       let url = API_BASE + path;
@@ -362,6 +354,157 @@
   }
 
   // -----------------------
+  // Real-time layer: WebSocket + REST fallback
+  // -----------------------
+  let ws = null;
+  let wsBackoff = 1000;
+  const MAX_WS_BACKOFF = 60000;
+  const eventQueue = []; // queued events when offline
+  let flushTimer = null;
+  const FLUSH_INTERVAL = 2000; // try to flush queue every 2s
+  let wsReady = false;
+  let heartbeatTimer = null;
+
+  function buildWsUrl(){
+    try {
+      const base = API_BASE.replace(/^http/, 'ws').replace(/\/+$/,'');
+      const q = clientState.sessionId ? '?sessionId=' + encodeURIComponent(clientState.sessionId) : '';
+      return base + WS_PATH + q;
+    } catch(e){ return null; }
+  }
+
+  function initSocket(){
+    const url = buildWsUrl();
+    if (!url) return scheduleSocketReconnect();
+    try {
+      ws = new WebSocket(url);
+      wsReady = false;
+      ws.onopen = () => {
+        wsReady = true;
+        wsBackoff = 1000;
+        console.info('WS open', url);
+        sendEvent('connection_open', { client: navigator.userAgent, ts: Date.now() }, true);
+        flushQueue(); // push any queued events immediately
+        startHeartbeat();
+      };
+      ws.onmessage = (m) => {
+        // handle server push messages (optional)
+        try {
+          const msg = JSON.parse(m.data);
+          handleServerMessage(msg);
+        } catch(e){ console.warn('ws msg parse', e); }
+      };
+      ws.onclose = (ev) => {
+        wsReady = false;
+        stopHeartbeat();
+        console.warn('WS closed', ev.code, ev.reason);
+        scheduleSocketReconnect();
+      };
+      ws.onerror = (err) => {
+        wsReady = false;
+        console.warn('WS error', err);
+        try { ws.close(); } catch(e){}
+        scheduleSocketReconnect();
+      };
+    } catch(e){
+      console.warn('initSocket error', e);
+      scheduleSocketReconnect();
+    }
+  }
+
+  function scheduleSocketReconnect(){
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(()=>{
+      try {
+        wsBackoff = Math.min(MAX_WS_BACKOFF, Math.max(1000, wsBackoff * 1.8));
+      } catch(e){}
+      initSocket();
+    }, wsBackoff);
+  }
+
+  function startHeartbeat(){
+    stopHeartbeat();
+    heartbeatTimer = setInterval(()=> {
+      if (ws && ws.readyState === WebSocket.OPEN){
+        try { ws.send(JSON.stringify({ type:'heartbeat', ts: Date.now(), sessionId: clientState.sessionId })); } catch(e){}
+      }
+    }, 15000);
+  }
+  function stopHeartbeat(){ if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+
+  function handleServerMessage(msg){
+    // handle incoming server instructions if any (e.g., live leaderboard updates, server-initiated state changes)
+    if (!msg || !msg.type) return;
+    switch(msg.type){
+      case 'leaderboard_update':
+        if (Array.isArray(msg.data)) renderLeaderboardFromServer(msg.data);
+        break;
+      case 'client_update':
+        // server can push energy/miners updates
+        if (msg.data) {
+          if (typeof msg.data.energy === 'number'){ clientState.energy = msg.data.energy; saveClientToStorage(); updateUI(); }
+          if (Array.isArray(msg.data.miners)){ clientState.miners = msg.data.miners; saveClientToStorage(); renderMinersList(); }
+        }
+        break;
+      default:
+        // console.log('WS message', msg);
+        break;
+    }
+  }
+
+  async function flushQueue(){
+    // Called periodically (or on ws open) to flush queued events.
+    if (ws && ws.readyState === WebSocket.OPEN){
+      while(eventQueue.length){
+        const e = eventQueue.shift();
+        try { ws.send(JSON.stringify(e)); } catch(err){ eventQueue.unshift(e); break; }
+      }
+      return;
+    }
+    // fallback: send batched REST requests to server if WS not available
+    if (eventQueue.length === 0) return;
+    const batch = eventQueue.splice(0, 20);
+    try {
+      // Attempt to POST to a best-effort server endpoint: /game/event
+      // If your server doesn't expose /game/event, this will still try and we also try /game/submit-score fallback.
+      const resp = await api('/game/event','POST',{ sessionId: clientState.sessionId, events: batch });
+      if (!resp || (resp && resp.error)){ // fallback to /game/submit-score with an 'events' wrapper
+        await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, events: batch, fallback:true });
+      }
+    } catch(e){
+      // on error, requeue for retry (with backoff)
+      eventQueue.unshift(...batch);
+    }
+  }
+
+  setInterval(()=> { try { flushQueue(); } catch(e){} }, FLUSH_INTERVAL);
+
+  // sendEvent optionally bypassQueue to force immediate send if WS is available
+  async function sendEvent(type, payload = {}, bypassQueue = false){
+    const message = { type, ts: Date.now(), sessionId: clientState.sessionId, username: clientState.username, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, data: payload };
+    logAction(type, payload, /*remoteLog*/ false); // local log; avoid double-queue recursion
+    if (ws && ws.readyState === WebSocket.OPEN){
+      try { ws.send(JSON.stringify(message)); return true; } catch(e){ console.warn('ws send failed', e); }
+    }
+    // if bypassQueue true we still attempt an immediate REST POST
+    if (bypassQueue){
+      try {
+        const r = await api('/game/event','POST', message);
+        if (r && (r.ok || r.success || r.eventsAccepted)) return true;
+      } catch(e){ console.warn('immediate REST event failed', e); }
+    }
+    // otherwise queue it
+    eventQueue.push(message);
+    // ensure flush timer will run soon
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(()=> flushQueue(), 200);
+    return false;
+  }
+
+  // start WS right away (best-effort)
+  initSocket();
+
+  // -----------------------
   // Telegram init
   // -----------------------
   function initTelegram(){
@@ -380,7 +523,7 @@
   }
 
   // -----------------------
-  // UI helpers
+  // UI helpers (unchanged largely)
   // -----------------------
   function getRefFromURL(){ try{ const params = new URLSearchParams(window.location.search); return params.get('ref') || params.get('refCode') || null; } catch(e){ return null; } }
   function savePendingReferral(code){ if (!code) return; try{ localStorage.setItem(STORAGE_KEYS.PENDING_REF, code); clientState.pendingReferral = code; saveClientToStorage(); } catch(e){} }
@@ -391,18 +534,32 @@
 
   function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
 
-  async function refreshLeaderboard(){ const top = await api('/leaderboard/top','GET'); const el = $('leaderboard'); if (!el) return; el.innerHTML=''; if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; } top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); }); }
-
-  function derivedGPFromScore(score){ // 150 score == 1 GP
-    const d = Math.floor((score || 0) / 150);
-    return d;
+  async function refreshLeaderboard(){
+    const top = await api('/leaderboard/top','GET');
+    const el = $('leaderboard'); if (!el) return;
+    el.innerHTML='';
+    if (!top || !Array.isArray(top)){ el.innerHTML = '<div class="small-muted">Leaderboard unavailable</div>'; return; }
+    top.forEach((t,idx)=>{ const row = document.createElement('div'); row.className='leader-entry'; row.style.display='flex'; row.style.justifyContent='space-between'; row.style.padding='6px 0'; row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`; el.appendChild(row); });
+    // push leaderboard request as an event so server can optionally stream updates back
+    sendEvent('leaderboard_refreshed', { count: top.length }, true);
   }
 
-  function computeDisplayedGP(){
-    const base = Number(clientState.gpBase || 0);
-    const derived = derivedGPFromScore(gameState.score || 0);
-    return base + derived;
+  function renderLeaderboardFromServer(data){
+    const el = $('leaderboard'); if (!el) return;
+    el.innerHTML = '';
+    data.forEach((t, idx) => {
+      const row = document.createElement('div');
+      row.className='leader-entry';
+      row.style.display='flex';
+      row.style.justifyContent='space-between';
+      row.style.padding='6px 0';
+      row.innerHTML = `<div>${idx+1}. ${escapeHtml(t.name || '—')}</div><div>${(t.score!=null)?Number(t.score).toLocaleString():'—'}</div>`;
+      el.appendChild(row);
+    });
   }
+
+  function derivedGPFromScore(score){ return Math.floor((score || 0) / 150); }
+  function computeDisplayedGP(){ const base = Number(clientState.gpBase || 0); const derived = derivedGPFromScore(gameState.score || 0); return base + derived; }
 
   function updateUI(){
     if ($('ui-score')) $('ui-score').innerText = gameState.score || 0;
@@ -421,7 +578,7 @@
   }
 
   // -----------------------
-  // Pieces & core logic
+  // Pieces & core logic (mostly unchanged, but every action sends events)
   // -----------------------
   const PIECES = {
     I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
@@ -452,9 +609,7 @@
       for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
       for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
 
-      // If a saved grid exists, keep it; otherwise initialize.
       if (!gameState.grid) initGrid();
-      // ensure activePiece exists; if not, spawn (spawnPiece respects energy)
       if (!gameState.activePiece) spawnPiece();
 
       this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
@@ -472,20 +627,17 @@
 
       gameState.isPlaying = gameState.isPlaying !== undefined ? gameState.isPlaying : true;
       updateUI();
-      // Catch up any missed ticks before scheduling the loop
       this.catchUpMissedTicks();
       this.startDropLoop();
       this.setupInput();
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
-      // autosave interval from scene (safe)
       this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
     }
 
     startDropLoop(){
       if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
       const delay = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
-      // schedule recurring drop (we've already caught up to now)
-      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); gameState.lastTickAt = Date.now(); saveGameToStorage(); updateUI(); } });
+      this.dropEvent = this.time.addEvent({ delay, loop: true, callback: ()=> { if (!gameState.isPlaying) return; const moved = movePieceDown(); sendEvent('tick_drop', { moved }); logAction('tick_drop',{ moved }); if (!moved) lockPiece(); gameState.lastTickAt = Date.now(); saveGameToStorage(); updateUI(); } });
     }
 
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
@@ -504,8 +656,7 @@
       if (!document.querySelector('.touch-controls')) setupTouchControls(this);
     }
 
-    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); }
-
+    autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); sendEvent('auto_recharge', { energy: clientState.energy }); saveClientToStorage(); }
     catchUpMissedTicks(){
       try {
         if (!gameState.lastTickAt || !gameState.isPlaying) return;
@@ -519,7 +670,6 @@
           const moved = movePieceDown();
           if (!moved){
             lockPiece();
-            // if lockPiece spawns a new piece and that collides, gameOver will be triggered
             if (!gameState.isPlaying) break;
           }
         }
@@ -530,9 +680,10 @@
   }
 
   function handleKey(code){ switch(code){ case 'ArrowLeft': case 'Left': movePiece(-1); break; case 'ArrowRight': case 'Right': movePiece(1); break; case 'ArrowDown': case 'Down': softDrop(); break; case 'Space': case ' ': hardDrop(); break; case 'ArrowUp': case 'Up': rotatePiece(); break; default: return; } updateUI(); saveGameToStorage(); saveClientToStorage(); }
+
   function getPieceCells(piece){ const states = PIECES[piece.type]; const state = states[piece.rot % states.length]; return state.map(p => ({ x:p[0] + piece.x, y:p[1] + piece.y })); }
 
-  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); }
+  function initGrid(){ gameState.grid = Array.from({ length: GRID_ROWS }, ()=> Array(GRID_COLS).fill(0)); gameState.score = 0; gameState.level = 1; gameState.lines = 0; gameState.combo = 0; gameState.dropInterval = INITIAL_DROP_MS; gameState.isPlaying = true; gameState.lastSavedAt = Date.now(); gameState.lastTickAt = Date.now(); saveGameToStorage(); sendEvent('init_grid', { rows: GRID_ROWS, cols: GRID_COLS }); }
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
@@ -546,7 +697,7 @@
     gameState.activePiece = { type, rot:0, x:xStart, y:0 };
     gameState.nextPiece = PIECE_TYPES[Math.floor(Math.random()*PIECE_TYPES.length)];
     logAction('spawn',{ type, x:xStart, y:0 });
-    // collision at spawn -> gameOver
+    sendEvent('spawn', { type, x: xStart, y: 0 });
     if (checkCollision(getPieceCells(gameState.activePiece))) {
       gameOver();
     } else {
@@ -556,18 +707,16 @@
   }
 
   function checkCollision(cells){ for (const p of cells){ if (p.x < 0 || p.x >= GRID_COLS) return true; if (p.y >= GRID_ROWS) return true; if (p.y >= 0 && gameState.grid[p.y][p.x]) return true; } return false; }
-  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); saveGameToStorage(); } }
+
+  function movePiece(dir){ if (!gameState.activePiece) return; const cand = { ...gameState.activePiece, x: gameState.activePiece.x + dir }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.x = cand.x; logAction('move',{ dir }); sendEvent('move', { dir, piece: gameState.activePiece }); saveGameToStorage(); } }
 
   function movePieceDown(){ if (!gameState.activePiece) return false; const cand = { ...gameState.activePiece, y: gameState.activePiece.y + 1 }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.y = cand.y; return true; } return false; }
 
-  function softDrop(){ if (movePieceDown()){ // reward only reflected through score; GP is derived from score below
-    gameState.score += 1;
-    logAction('soft_drop'); updateUI(); saveGameToStorage();
-  } }
+  function softDrop(){ if (movePieceDown()){ gameState.score += 1; logAction('soft_drop'); sendEvent('soft_drop', { score: gameState.score }); updateUI(); saveGameToStorage(); } }
 
-  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); updateUI(); saveGameToStorage(); }
+  function hardDrop(){ let falls=0; while(movePieceDown()) falls++; lockPiece(); gameState.score += falls * 2; logAction('hard_drop',{ falls }); sendEvent('hard_drop', { falls, score: gameState.score }); updateUI(); saveGameToStorage(); }
 
-  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); saveGameToStorage(); return; } } }
+  function rotatePiece(){ if (!gameState.activePiece) return; const candidate = { ...gameState.activePiece, rot: (gameState.activePiece.rot + 1) }; const kicks = [{dx:0,dy:0},{dx:-1,dy:0},{dx:1,dy:0},{dx:-2,dy:0},{dx:2,dy:0},{dx:0,dy:-1}]; for (const k of kicks){ const cand = { ...candidate, x: candidate.x + k.dx, y: candidate.y + k.dy }; if (!checkCollision(getPieceCells(cand))){ gameState.activePiece.rot = cand.rot; gameState.activePiece.x = cand.x; gameState.activePiece.y = cand.y; logAction('rotate',{ rot:cand.rot, kick:k }); sendEvent('rotate', { rot: cand.rot, kick: k, piece: gameState.activePiece }); saveGameToStorage(); return; } } }
 
   function lockPiece(){
     const ap = gameState.activePiece; if (!ap) return;
@@ -577,9 +726,8 @@
     const cleared = [];
     for (let r=0;r<GRID_ROWS;r++) if (gameState.grid[r].every(v=>v!==0)) cleared.push(r);
     if (cleared.length > 0) clearLines(cleared); else gameState.combo = 0;
-    // remove active piece, then spawn next
     gameState.activePiece = null;
-    // spawn piece => uses spawnPiece()
+    sendEvent('lock', { piece: ap, cleared: cleared.length, energy: clientState.energy });
     spawnPiece();
     try{ const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene; if (scene && typeof scene.startDropLoop === 'function') scene.startDropLoop(); }catch(e){}
     saveClientToStorage();
@@ -593,8 +741,8 @@
     const count = rows.length; const base = [0,100,300,500,800];
     gameState.score += base[count] * gameState.level;
     gameState.lines += count; gameState.combo += 1;
-    // do not directly increment clientState.gp here — GP comes from server base + score conversion
     logAction('clear',{ count, combo:gameState.combo });
+    sendEvent('clear_lines', { rows, count, combo: gameState.combo, score: gameState.score });
     if (gameState.lines % 10 === 0){ gameState.level++; gameState.dropInterval = Math.max(120, Math.floor(gameState.dropInterval * 0.92)); }
     saveGameToStorage();
     updateUI();
@@ -603,10 +751,13 @@
   async function gameOver(){
     gameState.isPlaying = false;
     logAction('gameover',{ score:gameState.score, lines:gameState.lines });
-    try{ await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) }); } catch(e){ console.warn(e); }
-    // show overlay and allow play again (playAgain should clear saved game)
-    showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick=hideSheet; }});
-    // persist final state (so user can inspect after reload) but mark not playing
+    // send final score to server
+    try{
+      await sendEvent('gameover', { score: gameState.score, lines: gameState.lines }, true);
+      // the server still expects /game/submit-score — keep that call for backward compat
+      await api('/game/submit-score','POST',{ sessionId: clientState.sessionId, score: gameState.score, lines: gameState.lines, actionLog: clientState.actionLog.slice(-2000) });
+    }catch(e){ console.warn('gameover notify failed', e); }
+    showSheet({ title:'Game Over', bodyHtml:`<div style="font-weight:700">Game Over</div><div class="small-muted">Score ${gameState.score} • Lines ${gameState.lines}</div>`, actionsHtml:`<button id="playAgain" class="button"><i class="fa-solid fa-rotate"></i> Play Again</button><button id="closeOver" class="btn-ghost">Close</button>`, onMounted: ()=>{ const p=$('playAgain'); if (p) p.onclick = ()=> { hideSheet(); resetForPlay(); }; const c=$('closeOver'); if (c) c.onclick = hideSheet; }});
     saveGameToStorage();
     saveClientToStorage();
     updateUI();
@@ -619,7 +770,6 @@
     clientState.energy = Math.max(0, clientState.energy);
     spawnPiece();
     gameState.isPlaying = true;
-    // clear stored game (fresh start)
     clearSavedGame();
     saveClientToStorage();
     updateUI();
@@ -638,16 +788,16 @@
     [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
     wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
     const ui = $('uiPanel'); if (ui) ui.append(wrapper);
-    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); updateUI(); saveGameToStorage(); };
-    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); updateUI(); saveGameToStorage(); };
-    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); updateUI(); saveGameToStorage(); };
-    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); updateUI(); saveGameToStorage(); };
+    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); sendEvent('touch_left', {}); logAction('touch_left'); updateUI(); saveGameToStorage(); };
+    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); sendEvent('touch_right', {}); logAction('touch_right'); updateUI(); saveGameToStorage(); };
+    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); sendEvent('touch_rotate', {}); logAction('touch_rotate'); updateUI(); saveGameToStorage(); };
+    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); sendEvent('touch_drop', {}); logAction('touch_drop'); updateUI(); saveGameToStorage(); };
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet code (kept but unchanged except small persistence touches)
+  // Wallet code (kept but now logs events on bind/connect)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -723,6 +873,7 @@
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'phantom');
+          if (ok) sendEvent('wallet_connect', { provider: 'phantom', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('phantom injected connect failed', e); }
@@ -730,6 +881,7 @@
     const deep = phantomDeepLink();
     setPendingDeepLink('phantom');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://phantom.app/', appName: 'Phantom', providerName: 'phantom' });
+    if (ok) sendEvent('wallet_connect', { provider: 'phantom' }, true);
     return Boolean(ok);
   }
 
@@ -741,6 +893,7 @@
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'solflare');
+          if (ok) sendEvent('wallet_connect', { provider: 'solflare', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('solflare injected failed', e); }
@@ -751,6 +904,7 @@
         const publicKey = extractPublicKeyFromProviderResponse(r);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'solflare');
+          if (ok) sendEvent('wallet_connect', { provider: 'solflare', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('solflare via solana failed', e); }
@@ -758,6 +912,7 @@
     const deep = solflareDeepLink();
     setPendingDeepLink('solflare');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://solflare.com/', appName: 'Solflare', providerName: 'solflare' });
+    if (ok) sendEvent('wallet_connect', { provider: 'solflare' }, true);
     return Boolean(ok);
   }
 
@@ -769,6 +924,7 @@
         const publicKey = extractPublicKeyFromProviderResponse(resp);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'backpack');
+          if (ok) sendEvent('wallet_connect', { provider: 'backpack', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){ console.warn('backpack injected failed', e); }
@@ -779,6 +935,7 @@
         const publicKey = extractPublicKeyFromProviderResponse(r);
         if (publicKey && isValidSolanaPublicKey(publicKey)){
           const ok = await finalizeBind(publicKey, 'backpack');
+          if (ok) sendEvent('wallet_connect', { provider: 'backpack', publicKey }, true);
           return Boolean(ok);
         }
       } catch(e){}
@@ -786,6 +943,7 @@
     const deep = backpackDeepLink();
     setPendingDeepLink('backpack');
     const ok = await openDeepLinkAndWait({ deepLink: deep, installUrl: 'https://backpack.app/', appName: 'Backpack', providerName: 'backpack' });
+    if (ok) sendEvent('wallet_connect', { provider: 'backpack' }, true);
     return Boolean(ok);
   }
 
@@ -795,12 +953,13 @@
         const pk = await window.SOL_WALLETCONNECT_CONNECTOR.connect({ redirect: buildCleanRedirect() });
         if (pk) {
           const ok = await finalizeBind(pk, 'walletconnect');
+          if (ok) sendEvent('wallet_connect', { provider: 'walletconnect', publicKey: pk }, true);
           return Boolean(ok);
         }
       }
       showSheet({ title:'WalletConnect', bodyHtml:`<div class="small-muted">No helper available. Open your mobile wallet and use WalletConnect; then paste the returned public key below.</div><div style="margin-top:8px;"><input id="wcManual" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.06)" placeholder="Paste public key" /></div>`, actionsHtml:`<button id="wcBind" class="button">Bind</button><button id="wcClose" class="btn-ghost">Close</button>`, onMounted: ()=> {
         const b = $('wcBind'); const c = $('wcClose');
-        if (b){ b.onclick = async ()=> { const pk = ($('wcManual').value||'').trim(); if (!pk) return alert('Paste public key'); hideSheet(); const ok = await finalizeBind(pk, 'walletconnect'); if (!ok) showToast('Bind failed',1200); }; }
+        if (b){ b.onclick = async ()=> { const pk = ($('wcManual').value||'').trim(); if (!pk) return alert('Paste public key'); hideSheet(); const ok = await finalizeBind(pk, 'walletconnect'); if (!ok) showToast('Bind failed',1200); else sendEvent('wallet_connect', { provider: 'walletconnect', publicKey: pk }, true); }; }
         if (c) c.onclick = hideSheet;
       }});
       return false;
@@ -850,6 +1009,7 @@
         saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
         saveClientToStorage();
         updateUI(); renderMinersList();
+        sendEvent('wallet_bind', { provider: providerName, publicKey }, true);
         return true;
       }
       return false;
@@ -934,11 +1094,11 @@
                 const det = detectInjectedProviders();
                 clientState.walletProvider = det.phantom ? 'phantom' : (det.solflare ? 'solflare' : (det.backpack ? 'backpack' : clientState.walletProvider));
                 const ok = await bindWalletWithPublicKey(publicKey, clientState.walletProvider);
-                if (ok) showToast('Wallet connected',900);
+                if (ok){ showToast('Wallet connected',900); sendEvent('wallet_connect_event', { provider: clientState.walletProvider, publicKey }, true); }
               }
             } catch(e){ console.warn('provider connect handler error', e); }
           });
-          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
+          window.solana.on('disconnect', () => { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); sendEvent('wallet_disconnect', {}, true); });
         } catch(e){ console.warn('solana listener setup failed', e); }
       }
 
@@ -949,10 +1109,10 @@
             if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
               clientState.walletProvider = 'solflare';
               const ok = await bindWalletWithPublicKey(publicKey, 'solflare');
-              if (ok) showToast('Wallet connected',900);
+              if (ok) { showToast('Wallet connected',900); sendEvent('wallet_connect_event', { provider: 'solflare', publicKey }, true); }
             }
           });
-          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
+          window.solflare.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); sendEvent('wallet_disconnect', {}, true); });
         } catch(e){}
       }
 
@@ -963,10 +1123,10 @@
             if (publicKey && (!clientState.wallet || clientState.wallet !== publicKey)){
               clientState.walletProvider = 'backpack';
               const ok = await bindWalletWithPublicKey(publicKey, 'backpack');
-              if (ok) showToast('Wallet connected',900);
+              if (ok) { showToast('Wallet connected',900); sendEvent('wallet_connect_event', { provider: 'backpack', publicKey }, true); }
             }
           });
-          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); });
+          window.backpack.on('disconnect', ()=> { clientState.wallet = null; clientState.walletProvider = null; clearBoundWalletFromStorage(); updateUI(); saveClientToStorage(); sendEvent('wallet_disconnect', {}, true); });
         } catch(e){}
       }
     } catch(e){ console.warn('setupInjectedProviderListeners failed', e); }
@@ -1009,6 +1169,7 @@
         if (typeof resp.energy === 'number') clientState.energy = Math.max(0, Math.min(100, resp.energy));
         saveClientToStorage();
         updateUI();
+        sendEvent('claim_rewards', { gp: clientState.gpBase, userAU: clientState.userAU }, true);
         showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
         setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
       } else {
@@ -1147,13 +1308,11 @@
   document.addEventListener('DOMContentLoaded', async ()=>{
     try {
       initTelegram();
-      // if returned from wallet deep link, try to read
       readWalletReturn();
 
       const ref = getRefFromURL();
       if (ref) savePendingReferral(ref); else loadPendingReferral();
 
-      // wire page buttons
       try{ const wa = $('watchAdBtn'); if (wa) wa.addEventListener('click', showAdAndVerify); } catch(e){}
       try{ const os = $('openStore'); if (os) os.addEventListener('click', ()=> window.location.href = 'shop.html'); } catch(e){}
       try{ const bw = $('bindWalletBtn'); if (bw) bw.addEventListener('click', (ev)=> { ev.preventDefault(); ev.stopPropagation(); if (typeof window._hexon_openWalletSheet === 'function') { window._hexon_openWalletSheet(); } else { showSheet({ title: 'Connect Wallet' }); } }); } catch(e){}
@@ -1161,10 +1320,8 @@
       try{ const va = $('viewAlloc'); if (va) va.addEventListener('click', ()=> showSheet({ title: 'Allocation', bodyHtml: '<div class="small-muted">Allocation preview</div>' })); } catch(e){}
       try{ const cr = $('claimRewardBtn'); if (cr) cr.addEventListener('click', claimRewards); } catch(e){}
 
-      // Restore saved client & game if present (persistence)
       const savedClient = loadClientFromStorage();
       if (savedClient){
-        // merge saved client (keep current sessionId if different)
         const keepSession = clientState.sessionId;
         Object.assign(clientState, savedClient);
         clientState.sessionId = keepSession || clientState.sessionId;
@@ -1172,7 +1329,6 @@
 
       const savedGame = loadGameFromStorage();
       if (savedGame){
-        // minimal validation and merge
         try {
           if (Array.isArray(savedGame.grid) && savedGame.grid.length === GRID_ROWS){
             gameState.grid = savedGame.grid;
@@ -1187,7 +1343,6 @@
             gameState.lastSavedAt = savedGame.lastSavedAt || Date.now();
             gameState.lastTickAt = savedGame.lastTickAt || Date.now();
           } else {
-            // disregard corrupt saved game
             initGrid();
             clearSavedGame();
           }
@@ -1196,7 +1351,6 @@
           clearSavedGame();
         }
       } else {
-        // fresh start, initialize
         if (!gameState.grid) initGrid();
         if (!gameState.activePiece) spawnPiece();
       }
@@ -1221,7 +1375,7 @@
         }
       } catch(e){ console.warn('client init failed', e); }
 
-      // compute scale & start phaser
+      // scale & start phaser
       const parentEl = $('phaserCanvas') || document.body;
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
@@ -1245,8 +1399,10 @@
       refreshLeaderboard();
       setInterval(()=>{ refreshLeaderboard(); updateUI(); }, 15000);
 
-      // lightweight autosave every 3s (global)
       setInterval(()=>{ gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); }, 3000);
+
+      // try WS if not initialized earlier
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) initSocket();
 
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
@@ -1285,6 +1441,7 @@
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
         logAction('ad_watched',{ provider, granted: resp.grantedPercent });
+        sendEvent('ad_watched', { provider, granted: resp.grantedPercent }, true);
         saveClientToStorage();
         updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
@@ -1311,6 +1468,16 @@
     if (typeof onMounted === 'function'){ setTimeout(()=> { try{ onMounted(); } catch(e){ console.warn('sheet onMounted error', e); } }, 50); }
   }
   function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
+
+  // -----------------------
+  // Logging helpers
+  // -----------------------
+  function logAction(a,p={}, remoteLog=true){
+    clientState.actionLog.push({t:Date.now(), a, p});
+    if (clientState.actionLog.length>5000) clientState.actionLog.shift();
+    saveClientToStorage();
+    // if remoteLog true, send lightweight event (we call sendEvent at the call site to avoid double-send)
+  }
 
   // -----------------------
   // Misc helpers exported
