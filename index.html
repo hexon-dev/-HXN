@@ -50,7 +50,6 @@
       position: relative;
       z-index: 0;
       min-width: 0;
-      touch-action: none;
     }
     #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-width:100%; }
     #uiPanel{ width:100%; max-width: 100%; background: linear-gradient(180deg,var(--panel-bg), rgba(3,6,12,0.88)); padding:12px; border-radius:12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); max-height: calc(100vh - 160px); overflow:auto; -webkit-overflow-scrolling: touch; box-sizing:border-box; position: relative; z-index: 1; min-width: 0; }
@@ -66,7 +65,7 @@
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
     .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
     .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
-    .touch-footer { display:none; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom,12px) + 8px); z-index: 120000; gap: 8px; padding: 8px; border-radius: 12px; background: rgba(2,6,12,0.6); backdrop-filter: blur(6px); box-shadow: 0 10px 30px rgba(0,0,0,0.6); align-items:center; }
+    .touch-footer { display:none; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom,12px) + 8px); z-index:120000; gap: 8px; padding: 8px; border-radius: 12px; background: rgba(2,6,12,0.6); backdrop-filter: blur(6px); box-shadow: 0 10px 30px rgba(0,0,0,0.6); align-items:center; }
     .touch-footer .touch-btn { margin: 0 6px; }
     @media (max-width: 900px){ .touch-footer { display:flex; } }
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
@@ -254,6 +253,7 @@
   const TAP_MAX_TIME = 250;
   const TAP_MAX_MOV = 14;
   const SWIPE_MIN_DIST = 30;
+  const BOARD_PADDING = 16; // padding around grid inside canvas
 
   // -----------------------
   // Persistence keys
@@ -479,6 +479,13 @@
   let phaserGame;
   let CELL = BASE_CELL, GAP = BASE_GAP;
 
+  function gridPixelSize(cols, rows){
+    // Correct math: cols*CELL + (cols-1)*GAP
+    const width = cols * CELL + Math.max(0, cols - 1) * GAP;
+    const height = rows * CELL + Math.max(0, rows - 1) * GAP;
+    return { width, height };
+  }
+
   // -----------------------
   // Real-time REST sync (throttled sends)
   // -----------------------
@@ -529,43 +536,67 @@
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
   class GameScene extends Phaser.Scene {
-    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; this.dropEvent = null; this._gestureBound = false; }
+    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; this.dropEvent = null; this._gestureBound = false; this._dropPaused = false; }
     create(){
-      this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
-      this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
-      this.gridOrigin = { x:16, y:16 };
+      // compute board sizes using consistent math
+      const gridSize = gridPixelSize(GRID_COLS, GRID_ROWS);
+      this.boardPixelWidth = gridSize.width + BOARD_PADDING * 2;
+      this.boardPixelHeight = gridSize.height + BOARD_PADDING * 2;
+      this.gridOrigin = { x: BOARD_PADDING, y: BOARD_PADDING };
       this.g = this.add.graphics();
       this.drawBoard();
       if (!gameState.grid) initGrid();
       if (!gameState.activePiece) spawnPiece();
       this.rebuildCellSprites();
+      // default to playing unless persisted otherwise
       gameState.isPlaying = gameState.isPlaying !== undefined ? gameState.isPlaying : true;
       updateUI();
       this.catchUpMissedTicks();
+
       // If we have a saved tickRemaining, use it to resume precisely.
+      const scene = this;
       if (gameState.isPlaying){
         if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
           // schedule first tick after the remaining time and then start normal repeating loop
-          this.startDropLoop(gameState.tickRemaining);
+          scene.startDropLoop(gameState.tickRemaining);
         } else {
-          this.startDropLoop();
+          scene.startDropLoop();
         }
       }
+
       this.setupInput();
       this.time.addEvent({ delay: AUTO_RECHARGE_MINUTES * 60e3, callback: this.autoRecharge, callbackScope: this, loop: true });
       this.saveInterval = this.time.addEvent({ delay: 2000, loop:true, callback: ()=> { gameState.lastTickAt = Date.now(); saveGameToStorage(); saveClientToStorage(); } });
     }
+
     drawBoard(){
       try {
         if (this.g) { this.g.clear(); }
         const g = this.g;
+        // background
         g.fillStyle(0x061426,1);
         g.fillRoundedRect(this.gridOrigin.x -8, this.gridOrigin.y -8, this.boardPixelWidth, this.boardPixelHeight, 10);
+
+        // grid lines and stroke bounding box using accurate totals
+        const totalW = GRID_COLS * CELL + Math.max(0, GRID_COLS - 1) * GAP;
+        const totalH = GRID_ROWS * CELL + Math.max(0, GRID_ROWS - 1) * GAP;
+
         g.lineStyle(1, 0x0d2130, 0.6);
-        for (let r=0;r<=GRID_ROWS;r++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, this.gridOrigin.y + r*(CELL+GAP), this.gridOrigin.x + GRID_COLS*(CELL+GAP), this.gridOrigin.y + r*(CELL+GAP)));
-        for (let c=0;c<=GRID_COLS;c++) g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y, this.gridOrigin.x + c*(CELL+GAP), this.gridOrigin.y + GRID_ROWS*(CELL+GAP)));
+        // horizontal lines (rows+1 lines)
+        for (let r=0; r<=GRID_ROWS; r++){
+          const y = this.gridOrigin.y + r * (CELL + GAP) - (r>0 ? GAP * r - GAP * r : 0); // simpler: use r*(CELL+GAP), consistent with cell positions
+          // simplified consistent placement:
+          const yy = this.gridOrigin.y + r * (CELL + GAP);
+          g.strokeLineShape(new Phaser.Geom.Line(this.gridOrigin.x, yy, this.gridOrigin.x + totalW, yy));
+        }
+        // vertical lines
+        for (let c=0; c<=GRID_COLS; c++){
+          const xx = this.gridOrigin.x + c * (CELL + GAP);
+          g.strokeLineShape(new Phaser.Geom.Line(xx, this.gridOrigin.y, xx, this.gridOrigin.y + totalH));
+        }
       } catch(e){ console.warn('drawBoard error', e); }
     }
+
     rebuildCellSprites(){
       try {
         if (this.cellSprites && Array.isArray(this.cellSprites)){
@@ -578,10 +609,12 @@
         }
       } catch(e){ console.warn('destroy old cellSprites failed', e); }
       this.cellSprites = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+
       for (let r=0;r<GRID_ROWS;r++){
         for (let c=0;c<GRID_COLS;c++){
-          const x = this.gridOrigin.x + c*(CELL+GAP) + CELL/2;
-          const y = this.gridOrigin.y + r*(CELL+GAP) + CELL/2;
+          // use consistent coordinates based on CELL & GAP (no stray extra gap at edge)
+          const x = this.gridOrigin.x + c * (CELL + GAP) + CELL/2;
+          const y = this.gridOrigin.y + r * (CELL + GAP) + CELL/2;
           const rect = this.add.rectangle(x,y,CELL,CELL,0x102033).setStrokeStyle(1,0x092033,0.6);
           rect.updateFill = function(color){
             try { if (typeof this.setFillStyle === 'function') this.setFillStyle(color); else this.fillColor = color; } catch(e) { try{ this.fillColor = color; }catch(_){} }
@@ -593,10 +626,12 @@
       }
       this.renderGrid();
     }
+
     onResizeRebuild(){
-      this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
-      this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
-      this.gridOrigin = { x:16, y:16 };
+      const gridSize = gridPixelSize(GRID_COLS, GRID_ROWS);
+      this.boardPixelWidth = gridSize.width + BOARD_PADDING * 2;
+      this.boardPixelHeight = gridSize.height + BOARD_PADDING * 2;
+      this.gridOrigin = { x: BOARD_PADDING, y: BOARD_PADDING };
       this.drawBoard();
       this.rebuildCellSprites();
     }
@@ -611,6 +646,7 @@
       try {
         // Remove existing event(s)
         if (this.dropEvent){ try{ this.dropEvent.remove(false); }catch(e){} this.dropEvent=null; }
+        this._dropPaused = false;
 
         const di = Math.max(40, gameState.dropInterval || INITIAL_DROP_MS);
 
@@ -646,8 +682,7 @@
               console.warn('startDropLoop fallback to single loop failed', err);
             }
           }, [], this);
-          // Set lastTickAt for consistent bookkeeping so pause uses it.
-          // lastTickAt remains the last tick time (we don't advance it until tick occurs).
+          // We do not set lastTickAt until the tick actually occurs, keeping parity with pause/resume math.
         } else {
           // Normal repeating loop
           this.dropEvent = this.time.addEvent({ delay: di, loop: true, callback: ()=> {
@@ -664,6 +699,27 @@
           }});
         }
       } catch(e){ console.warn('startDropLoop error', e); }
+    }
+
+    // pause drop loop without destroying tickRemaining if possible
+    pauseDropLoop(){
+      try {
+        if (this.dropEvent){
+          try { this.dropEvent.paused = true; this._dropPaused = true; } catch(e){ this._dropPaused = false; }
+        } else {
+          this._dropPaused = false;
+        }
+      } catch(e){ console.warn('pauseDropLoop error', e); }
+    }
+
+    resumeDropLoop(initialDelay){
+      try {
+        if (this._dropPaused && this.dropEvent){
+          try { this.dropEvent.paused = false; this._dropPaused = false; return; } catch(e){ /* fall through to recreate */ }
+        }
+        // If not paused or cannot unpause, recreate loop
+        this.startDropLoop(initialDelay);
+      } catch(e){ console.warn('resumeDropLoop error', e); }
     }
 
     update(){ if (!gameState.isPlaying) return; this.renderGrid(); }
@@ -690,8 +746,6 @@
     setupInput(){
       this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
       window.addEventListener('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
-      // NOTE: we no longer append inline touch controls into uiPanel.
-      // setupTouchControls will only wire the floating footer so there's a single set of buttons.
       setupTouchControls(this);
 
       if (!this._gestureBound){
@@ -731,16 +785,14 @@
                 }
                 return;
               }
-              // Horizontal swipe detection - NORMAL mapping: left -> move left, right -> move right
+              // Horizontal swipe detection
               if (Math.abs(dx) >= SWIPE_MIN_DIST && Math.abs(dx) > Math.abs(dy)) {
                 if (dx < 0) {
-                  // swipe left -> move LEFT
                   movePiece(-1);
                   vibratePreferTelegram();
                   logAction('gesture_swipe_left_moved_left');
                   sendState('gesture_swipe_left_moved_left');
                 } else {
-                  // swipe right -> move RIGHT
                   movePiece(1);
                   vibratePreferTelegram();
                   logAction('gesture_swipe_right_moved_right');
@@ -821,7 +873,6 @@
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
-      // mark that the game is paused because of energy so we can resume later automatically
       // compute tickRemaining so we resume where we left off
       try {
         const now = Date.now();
@@ -962,8 +1013,6 @@
   // Touch controls wiring (ONLY floating footer)
   // -----------------------
   function setupTouchControls(scene){
-    // PURPOSEFULLY DO NOT create inline touch controls in the UI panel.
-    // Only wire the floating footer buttons (single control set).
     const tfLeft = $('tf-left'), tfRight = $('tf-right'), tfRotate = $('tf-rotate'), tfDown = $('tf-down');
     if (tfLeft) tfLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('footer_left'); sendState('footer_left'); updateUI(); saveGameToStorage(); };
     if (tfRight) tfRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('footer_right'); sendState('footer_right'); updateUI(); saveGameToStorage(); };
@@ -1249,7 +1298,6 @@
         updateUI();
         showSheet({ title:'Claim', bodyHtml:'<div class="small-muted">Rewards claimed — closing…</div>' });
         setTimeout(()=>{ hideSheet(); try { const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.close === 'function') tg.close(); } catch(e){} }, 900);
-        // attempt to resume if we were paused for energy
         attemptResumeAfterEnergy();
       } else {
         const err = (resp && resp.error) ? resp.error : 'Claim failed — try again later.';
@@ -1391,7 +1439,6 @@
       gameState.wasPlayingBeforeHidden = gameState.isPlaying;
 
       if (!gameState.isPlaying) {
-        // still note hiddenAt for predictable resume behavior
         gameState.hiddenAt = Date.now();
         saveGameToStorage();
         return;
@@ -1414,8 +1461,8 @@
       // pause visual ticking
       gameState.isPlaying = false;
       gameState.hiddenAt = Date.now();
-      if (scene && scene.dropEvent){
-        try { if (typeof scene.dropEvent.paused !== 'undefined') scene.dropEvent.paused = true; } catch(e){}
+      if (scene){
+        try { if (typeof scene.pauseDropLoop === 'function') scene.pauseDropLoop(); else if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined') scene.dropEvent.paused = true; } catch(e){}
       }
       sendState('pause');
       saveGameToStorage();
@@ -1432,13 +1479,12 @@
         // Only resume if it was playing before hidden
         gameState.isPlaying = true;
 
-        // If we have a saved tickRemaining, schedule exactly that amount for the next tick
         if (scene) {
           try {
             if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
-              scene.startDropLoop(gameState.tickRemaining);
+              if (typeof scene.resumeDropLoop === 'function') scene.resumeDropLoop(gameState.tickRemaining);
+              else scene.startDropLoop(gameState.tickRemaining);
             } else {
-              // no stored remainder -> start standard loop
               if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
                 scene.dropEvent.paused = false;
               } else if (typeof scene.startDropLoop === 'function'){
@@ -1473,18 +1519,15 @@
   // -----------------------
   function attemptResumeAfterEnergy(){
     try {
-      // If we were paused specifically because we ran out of energy, resume automatically when energy > 0
       if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
         gameState.pausedForEnergy = false;
-        // spawn piece if none present
         if (!gameState.activePiece) spawnPiece();
         gameState.isPlaying = true;
-        // restart / unpause drop loop using any stored tickRemaining so we preserve fraction
         try {
           const scene = phaserGame && phaserGame.scene && phaserGame.scene.keys && phaserGame.scene.keys.GameScene;
           if (scene){
             if (gameState.tickRemaining && Number.isFinite(gameState.tickRemaining) && gameState.tickRemaining > 0){
-              scene.startDropLoop(gameState.tickRemaining);
+              scene.resumeDropLoop(gameState.tickRemaining);
             } else if (scene.dropEvent && typeof scene.dropEvent.paused !== 'undefined'){
               scene.dropEvent.paused = false;
             } else if (typeof scene.startDropLoop === 'function'){
@@ -1548,7 +1591,6 @@
             gameState.pausedForEnergy = savedGame.pausedForEnergy || false;
             gameState.tickRemaining = savedGame.tickRemaining || null;
             if (gameState.hiddenAt) gameState.isPlaying = false;
-            // If paused for energy and energy is now > 0, attempt to resume
             if (gameState.pausedForEnergy && (clientState.energy || 0) > 0){
               gameState.pausedForEnergy = false;
               if (!gameState.activePiece) spawnPiece();
@@ -1590,13 +1632,14 @@
       const rect = parentEl.getBoundingClientRect();
       const availW = Math.max(320, rect.width || Math.min(window.innerWidth * 0.98, 900));
       const availH = Math.max(260, Math.min(window.innerHeight * 0.68, rect.height || window.innerHeight * 0.68));
-      const desiredW = GRID_COLS * (BASE_CELL + BASE_GAP) + 40;
-      const desiredH = GRID_ROWS * (BASE_CELL + BASE_GAP) + 40;
+      const desiredGrid = gridPixelSize(GRID_COLS, GRID_ROWS);
+      const desiredW = desiredGrid.width + BOARD_PADDING * 2;
+      const desiredH = desiredGrid.height + BOARD_PADDING * 2;
       const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
       CELL = Math.max(8, Math.floor(BASE_CELL * scale));
       GAP = Math.max(1, Math.floor(BASE_GAP * scale));
-      const canvasWidth = GRID_COLS * (CELL + GAP) + 40;
-      const canvasHeight = GRID_ROWS * (CELL + GAP) + 40;
+      const canvasWidth = GRID_COLS * CELL + Math.max(0, GRID_COLS - 1) * GAP + BOARD_PADDING * 2;
+      const canvasHeight = GRID_ROWS * CELL + Math.max(0, GRID_ROWS - 1) * GAP + BOARD_PADDING * 2;
 
       if (parentEl && parentEl.style){
         parentEl.style.width = '100%';
@@ -1627,11 +1670,14 @@
           const parentRect = (document.getElementById('phaserCanvas') || document.body).getBoundingClientRect();
           const availW = Math.max(320, parentRect.width || window.innerWidth);
           const availH = Math.max(260, Math.min(window.innerHeight * 0.78, parentRect.height || window.innerHeight * 0.78));
-          const scale = Math.min(1, Math.min(availW / desiredW, availH / desiredH));
+          const desiredGrid = gridPixelSize(GRID_COLS, GRID_ROWS);
+          const desiredW_local = desiredGrid.width + BOARD_PADDING * 2;
+          const desiredH_local = desiredGrid.height + BOARD_PADDING * 2;
+          const scale = Math.min(1, Math.min(availW / desiredW_local, availH / desiredH_local));
           CELL = Math.max(8, Math.floor(BASE_CELL * scale));
           GAP = Math.max(1, Math.floor(BASE_GAP * scale));
-          const w = GRID_COLS * (CELL + GAP) + 40;
-          const h = GRID_ROWS * (CELL + GAP) + 40;
+          const w = GRID_COLS * CELL + Math.max(0, GRID_COLS - 1) * GAP + BOARD_PADDING * 2;
+          const h = GRID_ROWS * CELL + Math.max(0, GRID_ROWS - 1) * GAP + BOARD_PADDING * 2;
           const sc = phaserGame && phaserGame.scale;
           if (sc && typeof sc.resize === 'function') sc.resize(w, h);
           if (document.getElementById('phaserCanvas')) {
@@ -1708,7 +1754,6 @@
         saveClientToStorage();
         updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
-        // Try to resume the game if paused for energy
         attemptResumeAfterEnergy();
       } else {
         const msg = (resp && resp.error) ? resp.error : 'Ad verification failed';
@@ -1720,7 +1765,7 @@
   // -----------------------
   // Small UI sheet helpers
   // -----------------------
-  function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display='block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
+  function getSheetElements(){ return { overlay: $('overlay'), sheetBody: $('sheetBody'), sheetTitle: document.querySelector('.sheet-title'), sheetActions: $('sheetActions'), showToast: window._hexon_showToast || ((m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display = 'block'; setTimeout(()=> el.style.display='none', t||2000); }) }; }
   function showSheet({ title='Info', bodyHtml='', actionsHtml='', onMounted=null } = {}){
     const { overlay, sheetBody, sheetTitle, sheetActions } = getSheetElements();
     if (!overlay || !sheetBody || !sheetTitle || !sheetActions){ console.warn('Sheet elements missing'); const { showToast } = getSheetElements(); showToast('UI unavailable', 1200); return; }
@@ -1734,7 +1779,7 @@
   }
   function hideSheet(){ const { overlay } = getSheetElements(); if (!overlay) return; overlay.classList.remove('show'); overlay.setAttribute('aria-hidden','true'); }
 
-  window._hexon_showToast = (m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display = 'block'; setTimeout(()=> el.style.display='none', t||2000); };
+  window._hexon_showToast = (m,t)=> { const el = $('toast'); if(!el) return; el.textContent = m; el.style.display = 'block'; setTimeout(()=> el.style.display = 'none', t||2000); };
   </script>
 </body>
 </html>
