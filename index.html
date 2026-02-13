@@ -250,7 +250,6 @@
   // Config / constants
   // -----------------------
   const TELEGRAM_BOT_USERNAME = 'hxxxnbot';
-  // allow overriding API_BASE at runtime (helps when testing locally)
   const API_BASE = (window.__API_BASE__ || 'https://sites-kick-nottingham-seems.trycloudflare.com').replace(/\/+$/, '');
   const DAILY_EMISSION_CAP = 1250000;
   const GRID_COLS = 14, GRID_ROWS = 24;
@@ -286,6 +285,34 @@
   };
 
   // -----------------------
+  // Safe numeric parser (handles "1,234", "143M", "2.5k", numbers, nulls)
+  // -----------------------
+  function parseNumeric(v){
+    if (v === null || typeof v === 'undefined') return 0;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string'){
+      let s = v.trim().toLowerCase();
+      // remove commas and spaces
+      s = s.replace(/[, ]+/g, '');
+      // handle suffixes
+      const suffix = s.slice(-1);
+      if (suffix === 'k' || suffix === 'm' || suffix === 'b'){
+        const numPart = parseFloat(s.slice(0, -1));
+        if (!Number.isFinite(numPart)) return 0;
+        if (suffix === 'k') return Math.round(numPart * 1e3);
+        if (suffix === 'm') return Math.round(numPart * 1e6);
+        if (suffix === 'b') return Math.round(numPart * 1e9);
+      }
+      // plain number
+      const n = parseFloat(s);
+      return Number.isFinite(n) ? n : 0;
+    }
+    // fallback: try Number coercion
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  // -----------------------
   // State
   // -----------------------
   let clientState = {
@@ -295,7 +322,7 @@
     telegramId: null,
     wallet: loadBoundWalletFromStorage(),
     walletProvider: localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER) || null,
-    gpBase: 0,
+    gpBase: 0, // numeric base GP from server
     serverScore: null,
     energy: 100,
     energyLastUpdatedAt: Date.now(),
@@ -339,7 +366,7 @@
   saveSessionToStorage(clientState.sessionId);
 
   // -----------------------
-  // Storage helpers
+  // Storage helpers (ensure gpBase numeric on load)
   // -----------------------
   function loadSessionFromStorage(){ try{return localStorage.getItem(STORAGE_KEYS.SESSION)||null;}catch(e){return null;} }
   function saveSessionToStorage(sid){ try{ if (sid) localStorage.setItem(STORAGE_KEYS.SESSION, sid); }catch(e){} }
@@ -351,6 +378,8 @@
     try {
       const toSave = Object.assign({}, clientState);
       toSave.actionLog = (clientState.actionLog || []).slice(-2000);
+      // Ensure gpBase saved as numeric (no formatting)
+      toSave.gpBase = parseNumeric(toSave.gpBase);
       localStorage.setItem(STORAGE_KEYS.CLIENT, JSON.stringify(toSave));
     } catch(e){ console.warn('saveClientToStorage error', e); }
   }
@@ -382,7 +411,10 @@
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.CLIENT);
       if (!raw) return null;
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      // sanitize gpBase to numeric
+      if (parsed && typeof parsed.gpBase !== 'undefined') parsed.gpBase = parseNumeric(parsed.gpBase);
+      return parsed;
     } catch(e){ return null; }
   }
 
@@ -490,7 +522,7 @@
         saveClientToStorage();
         updateUI();
       } else {
-        // if sitting started long ago, reset it
+        // if sitting started long ago, reset it (cooldown elapsed)
         if (clientState.adsThisSittingStartedAt && (Date.now() - clientState.adsThisSittingStartedAt) >= SITTING_COOLDOWN_MS){
           clientState.adsThisSitting = 0;
           clientState.adsThisSittingStartedAt = null;
@@ -553,12 +585,13 @@
       clientState.adsThisSittingStartedAt = Date.now();
       clientState.adsThisSitting = clientState.adsThisSitting || 0;
       saveClientToStorage();
+      updateUI();
     }
   }
 
   function finishSittingAndConsume(){
     // Mark one sitting used, reset sitting counters, persist and update UI
-    clientState.sittingsUsedToday = (clientState.sittingsUsedToday || 0) + 1;
+    clientState.sittingsUsedToday = Math.min(MAX_SITTINGS_PER_DAY, (clientState.sittingsUsedToday || 0) + 1);
     clientState.adsThisSitting = 0;
     clientState.adsThisSittingStartedAt = null;
     saveClientToStorage();
@@ -610,7 +643,6 @@
       let json = null;
       try { json = text ? JSON.parse(text) : null; } catch(e){ json = text || null; }
       if (!res.ok) {
-        // if 401/403, bubble up error object for caller (server side auth issue)
         console.warn('API non-ok', res.status, path, json);
         return { ok: false, status: res.status, error: (json && json.error) ? json.error : `HTTP ${res.status}`, raw: json };
       }
@@ -720,7 +752,7 @@
   function showToast(msg, ms=2000){ const el = $('toast'); if(!el) return; el.textContent = msg; el.style.display = 'block'; setTimeout(()=> el.style.display='none', ms); }
   function showLoader(on=true, message='Loading…'){ const l = $('appLoader'); if(!l) return; l.textContent = message; if(on) l.classList.add('show'); else l.classList.remove('show'); }
 
-  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display='flex'; node.style.justifyContent='space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
+  function renderMinersList(){ const container = $('minersList'); if (!container) return; container.innerHTML=''; if (!clientState.miners || clientState.miners.length===0){ container.innerHTML='<div class="small-muted">No miners owned</div>'; return; } clientState.miners.forEach(m=>{ const node = document.createElement('div'); node.style.display = 'flex'; node.style.justifyContent = 'space-between'; node.style.padding='6px 0'; node.innerHTML = `<div><b>${escapeHtml(m.name)}</b><div class="small-muted">Hash ${escapeHtml(String(m.au))} AU</div></div><div class="small-muted">${escapeHtml(m.status||'Active')}</div>`; container.appendChild(node); }); }
 
   async function refreshLeaderboard(){
     const el = $('leaderboard');
@@ -742,7 +774,6 @@
       else if (Array.isArray(res.items)) list = res.items;
       else if (Array.isArray(res.rows)) list = res.rows;
       else if (res && typeof res === 'object') {
-        // sometimes server returns { ok:true, top: [...] }
         for (const key of ['top','data','items','rows']) {
           if (Array.isArray(res[key])) { list = res[key]; break; }
         }
@@ -771,13 +802,26 @@
     }
   }
 
-  function derivedGPFromScore(score){ return Math.floor((score || 0) / 150); }
-  function computeDisplayedGP(){ const base = Number(clientState.gpBase || 0); const derived = derivedGPFromScore(gameState.score || 0); return base + derived; }
+  // -----------------------
+  // GP calculation helpers (FIXED)
+  // -----------------------
+  // 1 GP per 150 score
+  function derivedGPFromScore(score){ 
+    const s = Number(score || 0);
+    if (!Number.isFinite(s) || s <= 0) return 0;
+    return Math.floor(s / 150);
+  }
+  function computeDisplayedGP(){ 
+    // ensure gpBase numeric
+    const base = parseNumeric(clientState.gpBase || 0);
+    const derived = derivedGPFromScore(gameState.score || 0);
+    // always use integers
+    return Math.max(0, Math.floor(base)) + Math.floor(derived); 
+  }
 
   function updateUI(){
     if ($('ui-score')) {
       const server = (clientState.serverScore != null) ? Number(clientState.serverScore).toLocaleString() : '—';
-      // changed label 'server' -> 'Backend'
       $('ui-score').innerHTML = `${(gameState.score || 0).toLocaleString()} <div class="small-muted" style="margin-top:4px;">Backend: ${server}</div>`;
     }
     if ($('ui-gp')) {
@@ -785,7 +829,8 @@
       $('ui-gp').innerText = total.toLocaleString() + ' GP';
     }
     if ($('ui-gp-server')) {
-      $('ui-gp-server').innerText = 'Backend: ' + (Number(clientState.gpBase || 0).toLocaleString()) + ' GP';
+      const backend = parseNumeric(clientState.gpBase || 0);
+      $('ui-gp-server').innerText = 'Backend: ' + backend.toLocaleString() + ' GP';
     }
     if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
     if ($('ui-level')) $('ui-level').innerText = gameState.level;
@@ -812,7 +857,9 @@
     if ($('ui-sittings')) {
       const remaining = sittingsRemainingToday();
       const used = clientState.sittingsUsedToday || 0;
-      $('ui-sittings').innerText = `${remaining} left • ${used}/${MAX_SITTINGS_PER_DAY} used`;
+      // also show ads in current sitting if any
+      const adsInSit = clientState.adsThisSitting || 0;
+      $('ui-sittings').innerText = `${remaining} left • ${used}/${MAX_SITTINGS_PER_DAY} used • ${adsInSit}/${MAX_ADS_PER_SITTING} ads`;
     }
   }
 
@@ -897,7 +944,6 @@
       const res = await api('/game/submit-score','POST', payload);
       if (!res) return;
       if (res.ok === false && res.status === 401) {
-        // If unauthorized, notify user and attempt to re-init session
         console.warn('Server returned 401 on /game/submit-score — trying re-init');
         showToast('Authentication required — re-initializing...', 1500);
         await clientInitWithRetry();
@@ -905,8 +951,9 @@
       }
 
       if (res){
+        // IMPORTANT: parse gp safely
         if (typeof res.gp !== 'undefined'){
-          clientState.gpBase = Number(res.gp || 0);
+          clientState.gpBase = parseNumeric(res.gp || 0);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.gpTotal = Number(clientState.gpBase);
         } else {
@@ -946,7 +993,7 @@
   setInterval(()=> { if (!gameState.isPlaying) return; sendState('heartbeat'); }, 2000);
 
   // -----------------------
-  // Phaser scenes
+  // Phaser scenes (unchanged)
   // -----------------------
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
@@ -1245,7 +1292,6 @@
 
   function spawnPiece(){
     if ((clientState.energy||0) <= 0){
-      // compute tickRemaining safely
       try {
         const now = Date.now();
         if (gameState.lastTickAt && Number.isFinite(gameState.dropInterval)){
@@ -1356,17 +1402,16 @@
 
       const res = await api('/game/submit-score','POST', finalPayload);
       if (res && res.ok === false && res.status === 401) {
-        // try re-init if unauthorized
         await clientInitWithRetry();
       }
       if (res){
         if (typeof res.gp !== 'undefined'){
-          clientState.gpBase = Number(res.gp || 0);
+          clientState.gpBase = parseNumeric(res.gp || 0);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.gpTotal = Number(clientState.gpBase);
         }
         if (typeof res.score !== 'undefined'){
-          clientState.serverScore = Number(res.score || 0);
+          clientState.serverScore = Number(res.score);
           clientState.lastSent = clientState.lastSent || {};
           clientState.lastSent.score = Number(res.score);
         }
@@ -1408,7 +1453,7 @@
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
 
   // -----------------------
-  // Wallet + deep link code (fixed and hardened)
+  // Wallet + deep link code (unchanged but hardened)
   // -----------------------
   function detectInjectedProviders(){
     const solana = window.solana || null;
@@ -1512,7 +1557,8 @@
         if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.wallet = publicKey;
         clientState.userId = res.userId ?? clientState.userId;
-        clientState.gpBase = typeof res.gp !== 'undefined' ? Number(res.gp) : clientState.gpBase;
+        // parse gp safely
+        clientState.gpBase = typeof res.gp !== 'undefined' ? parseNumeric(res.gp) : clientState.gpBase;
         clientState.miners = res.miners ?? clientState.miners;
         clientState.userAU = res.userAU ?? clientState.userAU;
         clientState.totalAU = res.totalAU ?? clientState.totalAU;
@@ -1695,7 +1741,7 @@
         setTimeout(hideSheet,1200);
         return;
       }
-      clientState.gpBase = resp.gp ?? clientState.gpBase;
+      clientState.gpBase = parseNumeric(resp.gp ?? clientState.gpBase);
       clientState.userAU = resp.userAU ?? clientState.userAU;
       if (typeof resp.energy === 'number') setEnergy(Math.max(0, Math.min(100, resp.energy)), true);
       clientState.lastSent = clientState.lastSent || {};
@@ -1974,7 +2020,6 @@
       try {
         init = await api('/client/init','POST',{ sessionId: clientState.sessionId, referral: clientState.pendingReferral || null, username: clientState.username, telegramId: clientState.telegramId }, { timeout: 9000 });
         if (init && init.ok === false && init.status === 401) {
-          // server says session invalid — clear session and try once to create new
           console.warn('init returned 401 — regenerating session id');
           clientState.sessionId = generateUUID();
           saveSessionToStorage(clientState.sessionId);
@@ -2040,6 +2085,8 @@
         const keepSession = clientState.sessionId;
         Object.assign(clientState, savedClient);
         clientState.sessionId = keepSession || clientState.sessionId;
+        // ensure gpBase numeric
+        clientState.gpBase = parseNumeric(clientState.gpBase || 0);
       }
       clientState.lastSent = clientState.lastSent || { gpTotal: Number(clientState.gpBase || 0), score: Number(clientState.serverScore || 0) };
 
@@ -2114,12 +2161,11 @@
       showLoader(false);
 
       if (init && init.ok === false && init.status === 401) {
-        // if still unauthorized, show an actionable message
         showSheet({ title:'Server auth', bodyHtml:`<div class="small-muted">Server rejected session (401). Please reload or try connecting your wallet.</div>`, actionsHtml:`<button id="reloadBtn" class="button">Reload</button><button id="closeAuth" class="btn-ghost">Close</button>`, onMounted: ()=> { const r=$('reloadBtn'); if (r) r.onclick = ()=> location.reload(); const c=$('closeAuth'); if (c) c.onclick = hideSheet; }});
       } else if (init) {
         if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.userId = init.userId ?? clientState.userId;
-        clientState.gpBase = init.gp ?? clientState.gpBase;
+        clientState.gpBase = parseNumeric(init.gp ?? clientState.gpBase);
         clientState.miners = init.miners ?? clientState.miners;
         clientState.userAU = init.userAU ?? clientState.userAU;
         clientState.totalAU = init.totalAU ?? clientState.totalAU;
@@ -2141,7 +2187,6 @@
 
         saveClientToStorage();
       } else {
-        // network or server error — show a hint but continue (session may still be usable for local play)
         showToast('Server init failed — offline or server issue. Local play active.', 2200);
       }
 
@@ -2274,7 +2319,7 @@
   });
 
   // -----------------------
-  // Ads loader + showAdAndVerify
+  // Ads loader + showAdAndVerify (improved tracking)
   // -----------------------
   let AdsGramLoaded = false, AdController = null;
   function loadAdsGram(){ try { if (window.Adsgram && !AdController){ try{ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; return; } catch(e){ console.warn('adsgram init existing', e); } } if (AdsGramLoaded) return; const s = document.createElement('script'); s.src = ADSGRAM_SRC; s.async = true; s.onload = ()=>{ try{ if (window.Adsgram && typeof window.Adsgram.init === 'function'){ AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID }); AdsGramLoaded = true; } }catch(e){ console.warn('AdsGram init error', e); } }; s.onerror = ()=>{ console.warn('Failed to load AdsGram SDK'); }; document.head.appendChild(s); } catch(e){ console.warn('loadAdsGram', e); } }
@@ -2295,9 +2340,11 @@
           showSheet({ title:'Ad', bodyHtml:`<div class="small-muted">Sitting limit reached. Next sitting available in <b>${formatMs(rem)}</b>.</div>` });
           return;
         } else {
+          // sitting exceeded but cooldown has expired; reset sitting and allow new sitting
           clientState.adsThisSitting = 0;
           clientState.adsThisSittingStartedAt = null;
           saveClientToStorage();
+          updateUI();
         }
       }
 
@@ -2312,6 +2359,7 @@
 
       showSheet({ title:'Sponsored Transmission', bodyHtml:'<div class="small-muted">Opening sponsored transmission…</div>' });
 
+      // start or continue sitting
       startSittingIfNeeded();
       saveClientToStorage();
       updateUI();
@@ -2321,28 +2369,36 @@
         provider='AdsGram';
         try { const result = await AdController.show(); payload={ result }; } catch(err){ showToast('Ad failed / skipped — no reward',1200); hideSheet(); return; }
       } else {
+        // fallback: simulate a short delay as "ad"
         await new Promise(res=>setTimeout(res,1800));
       }
 
+      // verify with server
       const resp = await api('/ad/verify','POST',{ sessionId: clientState.sessionId, provider, payload });
       hideSheet();
       if (resp && resp.grantedPercent){
+        // apply energy
         setEnergy((clientState.energy || 0) + resp.grantedPercent, true);
 
+        // increment ad counters now (persisted)
         clientState.adsThisSitting = (clientState.adsThisSitting||0) + 1;
         clientState.adsToday = (clientState.adsToday||0) + 1;
 
+        // cap to maximum for UI safety
         if (clientState.adsThisSitting > MAX_ADS_PER_SITTING){
           clientState.adsThisSitting = MAX_ADS_PER_SITTING;
         }
 
+        // if reached sitting limit, finish and consume the sitting (mark used)
         if ((clientState.adsThisSitting||0) >= MAX_ADS_PER_SITTING){
           finishSittingAndConsume();
+        } else {
+          // still within sitting; persist and update UI
+          saveClientToStorage();
+          updateUI();
         }
 
         logAction('ad_watched',{ provider, granted: resp.grantedPercent, adsThisSitting: clientState.adsThisSitting, sittingsUsedToday: clientState.sittingsUsedToday });
-        saveClientToStorage();
-        updateUI();
         showToast(`Energy credited +${resp.grantedPercent}%`,1200);
         attemptResumeAfterEnergy();
       } else {
