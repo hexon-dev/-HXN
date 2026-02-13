@@ -134,7 +134,7 @@
       <div class="card">
         <div class="small muted">GP</div>
         <div class="stat" id="ui-gp">0 GP</div>
-        <div class="small-muted" id="ui-gp-server" style="margin-top:6px;">Backend: — GP</div>
+        <div class="small-muted" id="ui-gp-server" style="margin-top:6px;">Lattice Ledger: — GP</div>
       </div>
 
       <div class="card">
@@ -322,8 +322,8 @@
     telegramId: null,
     wallet: loadBoundWalletFromStorage(),
     walletProvider: localStorage.getItem(STORAGE_KEYS.BOUND_PROVIDER) || null,
-    gpBase: 0, // numeric base GP from server
-    serverScore: null,
+    gpLedger: 0, // authoritative GP from Lattice Ledger (server-side awarded GP outside of score -> e.g. claims/rewards)
+    serverScore: null, // authoritative best score recorded on server
     energy: 100,
     energyLastUpdatedAt: Date.now(),
     miners: [],
@@ -339,7 +339,6 @@
     adsToday: 0,
     adsTodayDate: null,
     actionLog: [],
-    lastSent: { gpTotal: 0, score: 0 },
     hxnBalance: "0",
     hxnCredits: "0"
   };
@@ -366,7 +365,7 @@
   saveSessionToStorage(clientState.sessionId);
 
   // -----------------------
-  // Storage helpers (ensure gpBase numeric on load)
+  // Storage helpers (ensure gpLedger numeric on load)
   // -----------------------
   function loadSessionFromStorage(){ try{return localStorage.getItem(STORAGE_KEYS.SESSION)||null;}catch(e){return null;} }
   function saveSessionToStorage(sid){ try{ if (sid) localStorage.setItem(STORAGE_KEYS.SESSION, sid); }catch(e){} }
@@ -378,8 +377,8 @@
     try {
       const toSave = Object.assign({}, clientState);
       toSave.actionLog = (clientState.actionLog || []).slice(-2000);
-      // Ensure gpBase saved as numeric (no formatting)
-      toSave.gpBase = parseNumeric(toSave.gpBase);
+      // Ensure gpLedger saved as numeric (no formatting)
+      toSave.gpLedger = parseNumeric(toSave.gpLedger);
       localStorage.setItem(STORAGE_KEYS.CLIENT, JSON.stringify(toSave));
     } catch(e){ console.warn('saveClientToStorage error', e); }
   }
@@ -412,8 +411,8 @@
       const raw = localStorage.getItem(STORAGE_KEYS.CLIENT);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      // sanitize gpBase to numeric
-      if (parsed && typeof parsed.gpBase !== 'undefined') parsed.gpBase = parseNumeric(parsed.gpBase);
+      // sanitize gpLedger to numeric
+      if (parsed && typeof parsed.gpLedger !== 'undefined') parsed.gpLedger = parseNumeric(parsed.gpLedger);
       return parsed;
     } catch(e){ return null; }
   }
@@ -803,34 +802,38 @@
   }
 
   // -----------------------
-  // GP calculation helpers (FIXED)
+  // GP calculation helpers (ENFORCED)
+  // - 1 GP per 150 best score (best = max(local score, server-recorded best))
+  // - server GP (gpLedger) is authoritative extra GP from claims/rewards and is simply added
+  // - no delta accumulation client-side (avoids double-crediting)
   // -----------------------
   // 1 GP per 150 score
-  function derivedGPFromScore(score){ 
+  function derivedGPFromScore(score){
     const s = Number(score || 0);
     if (!Number.isFinite(s) || s <= 0) return 0;
     return Math.floor(s / 150);
   }
-  function computeDisplayedGP(){ 
-    // ensure gpBase numeric
-    const base = parseNumeric(clientState.gpBase || 0);
-    const derived = derivedGPFromScore(gameState.score || 0);
-    // always use integers
-    return Math.max(0, Math.floor(base)) + Math.floor(derived); 
+  function computeDisplayedGP(){
+    // gpLedger = GP directly awarded/stored in server-ledger (claims, promos, other)
+    const ledger = parseNumeric(clientState.gpLedger || 0);
+    // best score is authoritative serverScore vs client local score
+    const bestScore = Math.max(Number(clientState.serverScore || 0), Number(gameState.score || 0));
+    const derived = derivedGPFromScore(bestScore);
+    return Math.max(0, ledger) + Math.floor(derived);
   }
 
   function updateUI(){
     if ($('ui-score')) {
       const server = (clientState.serverScore != null) ? Number(clientState.serverScore).toLocaleString() : '—';
-      $('ui-score').innerHTML = `${(gameState.score || 0).toLocaleString()} <div class="small-muted" style="margin-top:4px;">Backend: ${server}</div>`;
+      $('ui-score').innerHTML = `${(gameState.score || 0).toLocaleString()} <div class="small-muted" style="margin-top:4px;">Lattice Best: ${server}</div>`;
     }
     if ($('ui-gp')) {
       const total = computeDisplayedGP();
       $('ui-gp').innerText = total.toLocaleString() + ' GP';
     }
     if ($('ui-gp-server')) {
-      const backend = parseNumeric(clientState.gpBase || 0);
-      $('ui-gp-server').innerText = 'Backend: ' + backend.toLocaleString() + ' GP';
+      const ledger = parseNumeric(clientState.gpLedger || 0);
+      $('ui-gp-server').innerText = 'Lattice Ledger: ' + ledger.toLocaleString() + ' GP';
     }
     if ($('ui-energyFill') && $('ui-energyFill').style) $('ui-energyFill').style.width = Math.max(0, Math.min(100, clientState.energy||0)) + '%';
     if ($('ui-level')) $('ui-level').innerText = gameState.level;
@@ -887,21 +890,15 @@
   }
 
   // -----------------------
-  // Real-time REST sync (unchanged core but safer)
+  // Real-time REST sync (reworked)
+  // - no gpDelta / scoreDelta in payload (we avoid client-side delta accounting)
+  // - sending current score + partial flag only
   // -----------------------
   const SEND_THROTTLE_MS = 400;
   let lastSendAt = 0;
   let pendingSendTimer = null;
 
   function buildStatePayload(eventType='heartbeat', extra={}){
-    const displayedGP = computeDisplayedGP();
-    const lastSentGp = Number((clientState.lastSent && clientState.lastSent.gpTotal) || 0);
-    const gpDelta = displayedGP - lastSentGp;
-
-    const displayedScore = Number(gameState.score || 0);
-    const lastSentScore = Number((clientState.lastSent && clientState.lastSent.score) || 0);
-    const scoreDelta = displayedScore - lastSentScore;
-
     const base = {
       sessionId: clientState.sessionId,
       event: eventType,
@@ -914,11 +911,7 @@
       activePiece: clientState.activePiece || null,
       nextPiece: gameState.nextPiece || null,
       actionLog: (clientState.actionLog || []).slice(-200),
-      ts: Date.now(),
-      gpDelta: gpDelta !== 0 ? gpDelta : 0,
-      scoreDelta: scoreDelta !== 0 ? scoreDelta : 0,
-      gpTotalClient: displayedGP,
-      scoreTotalClient: displayedScore
+      ts: Date.now()
     };
 
     return Object.assign({}, base, extra);
@@ -951,27 +944,14 @@
       }
 
       if (res){
-        // IMPORTANT: parse gp safely
+        // Server is authoritative. If it returns gp or score, update authoritative fields.
         if (typeof res.gp !== 'undefined'){
-          clientState.gpBase = parseNumeric(res.gp || 0);
-          clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.gpTotal = Number(clientState.gpBase);
-        } else {
-          if (payload.gpDelta && payload.gpDelta !== 0){
-            clientState.lastSent = clientState.lastSent || {};
-            clientState.lastSent.gpTotal = Number((clientState.lastSent.gpTotal || 0) + payload.gpDelta);
-          }
+          clientState.gpLedger = parseNumeric(res.gp || 0);
         }
 
         if (typeof res.score !== 'undefined'){
+          // serverRecord of best score
           clientState.serverScore = Number(res.score || 0);
-          clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.score = Number(clientState.serverScore);
-        } else {
-          if (payload.scoreDelta && payload.scoreDelta !== 0){
-            clientState.lastSent = clientState.lastSent || {};
-            clientState.lastSent.score = Number((clientState.lastSent.score || 0) + payload.scoreDelta);
-          }
         }
 
         if (typeof res.userAU !== 'undefined') clientState.userAU = res.userAU;
@@ -1406,14 +1386,11 @@
       }
       if (res){
         if (typeof res.gp !== 'undefined'){
-          clientState.gpBase = parseNumeric(res.gp || 0);
-          clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.gpTotal = Number(clientState.gpBase);
+          // server authoritative ledger GP
+          clientState.gpLedger = parseNumeric(res.gp || 0);
         }
         if (typeof res.score !== 'undefined'){
           clientState.serverScore = Number(res.score);
-          clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.score = Number(res.score);
         }
         if (typeof res.userAU !== 'undefined') clientState.userAU = res.userAU;
         if (typeof res.totalAU !== 'undefined') clientState.totalAU = res.totalAU;
@@ -1460,7 +1437,7 @@
     return {
       phantom: Boolean((solana && solana.isPhantom) || (window.phantom && window.phantom.isPhantom)),
       solflare: Boolean(window.solflare || (solana && solana.isSolflare)),
-      backpack: Boolean(window.backpack || (solana && solana.isBackpack)),
+      backpack: Boolean(window.backpack || (solana && solana.isBackpack || window.backpack)),
       anySolana: Boolean(solana || window.solflare || window.backpack || window.phantom)
     };
   }
@@ -1557,8 +1534,8 @@
         if (res.sessionId && res.sessionId !== clientState.sessionId){ clientState.sessionId = res.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.wallet = publicKey;
         clientState.userId = res.userId ?? clientState.userId;
-        // parse gp safely
-        clientState.gpBase = typeof res.gp !== 'undefined' ? parseNumeric(res.gp) : clientState.gpBase;
+        // parse gp safely -> gpLedger
+        clientState.gpLedger = typeof res.gp !== 'undefined' ? parseNumeric(res.gp) : clientState.gpLedger;
         clientState.miners = res.miners ?? clientState.miners;
         clientState.userAU = res.userAU ?? clientState.userAU;
         clientState.totalAU = res.totalAU ?? clientState.totalAU;
@@ -1567,11 +1544,7 @@
         if (res.referralAccepted) clearPendingReferral();
         if (typeof res.score !== 'undefined'){
           clientState.serverScore = Number(res.score);
-          clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.score = Number(res.score);
         }
-        clientState.lastSent = clientState.lastSent || {};
-        clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
         if (typeof res.energy === 'number') setEnergy(Math.max(0, Math.min(100, res.energy)), true);
 
         saveBoundWalletToStorage(publicKey, providerName || clientState.walletProvider || null);
@@ -1741,14 +1714,11 @@
         setTimeout(hideSheet,1200);
         return;
       }
-      clientState.gpBase = parseNumeric(resp.gp ?? clientState.gpBase);
+      clientState.gpLedger = parseNumeric(resp.gp ?? clientState.gpLedger);
       clientState.userAU = resp.userAU ?? clientState.userAU;
       if (typeof resp.energy === 'number') setEnergy(Math.max(0, Math.min(100, resp.energy)), true);
-      clientState.lastSent = clientState.lastSent || {};
-      clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
       if (typeof resp.score !== 'undefined'){
         clientState.serverScore = Number(resp.score);
-        clientState.lastSent.score = Number(resp.score);
       }
       saveClientToStorage();
       updateUI();
@@ -2085,10 +2055,9 @@
         const keepSession = clientState.sessionId;
         Object.assign(clientState, savedClient);
         clientState.sessionId = keepSession || clientState.sessionId;
-        // ensure gpBase numeric
-        clientState.gpBase = parseNumeric(clientState.gpBase || 0);
+        // ensure gpLedger numeric
+        clientState.gpLedger = parseNumeric(clientState.gpLedger || 0);
       }
-      clientState.lastSent = clientState.lastSent || { gpTotal: Number(clientState.gpBase || 0), score: Number(clientState.serverScore || 0) };
 
       normalizeAdStateOnLoad();
       setInterval(resetDailyAdsIfNeeded, 60e3);
@@ -2156,7 +2125,7 @@
       }
 
       // Server init (with retry)
-      showLoader(true, 'Contacting server…');
+      showLoader(true, 'Contacting Lattice Ledger…');
       const init = await clientInitWithRetry(2);
       showLoader(false);
 
@@ -2165,7 +2134,7 @@
       } else if (init) {
         if (init.sessionId && init.sessionId !== clientState.sessionId){ clientState.sessionId = init.sessionId; saveSessionToStorage(clientState.sessionId); }
         clientState.userId = init.userId ?? clientState.userId;
-        clientState.gpBase = parseNumeric(init.gp ?? clientState.gpBase);
+        clientState.gpLedger = parseNumeric(init.gp ?? clientState.gpLedger);
         clientState.miners = init.miners ?? clientState.miners;
         clientState.userAU = init.userAU ?? clientState.userAU;
         clientState.totalAU = init.totalAU ?? clientState.totalAU;
@@ -2178,12 +2147,7 @@
 
         if (typeof init.score !== 'undefined'){
           clientState.serverScore = Number(init.score);
-          clientState.lastSent = clientState.lastSent || {};
-          clientState.lastSent.score = Number(init.score);
         }
-
-        clientState.lastSent = clientState.lastSent || {};
-        clientState.lastSent.gpTotal = Number(clientState.gpBase || 0);
 
         saveClientToStorage();
       } else {
