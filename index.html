@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hexon — Grid (Persistent)</title>
+  <title>Hexon — Grid</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
@@ -16,15 +16,15 @@
       --safe-pad: env(safe-area-inset-top,12px);
     }
     /* Reset / base */
-    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; overflow:hidden; max-width:100%; }
+    html,body{ height:100%; margin:0; font-family:'Orbitron',sans-serif; background:radial-gradient(circle at top,var(--bg-top),var(--bg-btm)); color:#E6F7FF; -webkit-font-smoothing:antialiased; box-sizing:border-box; overflow:auto; -webkit-overflow-scrolling:touch; }
     *,*:before,*:after{ box-sizing: inherit; }
-    a { color:inherit; text-decoration:none; }
+    a { color:inherit; text-decoration:none; -webkit-tap-highlight-color: transparent; }
 
     /* Layout: responsive grid on wide screens, stacked on narrow */
     #pageWrap {
       min-height: 100vh;
       padding: calc(var(--safe-pad) + 12px);
-      padding-bottom: calc(env(safe-area-inset-bottom,12px) + 12px);
+      padding-bottom: calc(env(safe-area-inset-bottom,12px) + 80px); /* extra bottom for mobile touch footer */
       display: grid;
       grid-template-columns: 1fr;
       gap: 12px;
@@ -32,6 +32,7 @@
       justify-items: stretch;
       width: 100%;
       overflow-x: hidden;
+      overflow-y: auto; /* allow vertical scroll */
     }
 
     @media (min-width: 900px) {
@@ -41,6 +42,7 @@
         gap: 18px;
         padding: 18px;
         align-items: start;
+        padding-bottom: calc(env(safe-area-inset-bottom,12px) + 18px);
       }
     }
 
@@ -65,6 +67,7 @@
       position: relative;
       z-index: 0;
       min-width: 0; /* critical to allow the grid cell to shrink properly */
+      touch-action: none; /* allow custom swipe/tap handling */
     }
     /* ensure canvas fills container width, keep aspect */
     #phaserCanvas canvas { width:100% !important; height:auto !important; display:block; max-width:100%; }
@@ -82,7 +85,7 @@
       -webkit-overflow-scrolling: touch;
       box-sizing:border-box;
       position: relative;
-      z-index: 1; /* ensure panel sits beside canvas but does not overlay */
+      z-index: 1;
       min-width: 0;
     }
     .card{ background:var(--card-bg); padding:12px; border-radius:12px; margin-bottom:12px; box-shadow:0 6px 18px rgba(0,0,0,0.45); }
@@ -97,6 +100,29 @@
     input[type="text"]{ background:transparent; border:1px solid rgba(255,255,255,0.06); padding:8px; border-radius:8px; width:100%; color:inherit; box-sizing:border-box; }
     .touch-controls{ display:flex; justify-content:space-around; gap:8px; margin-top:12px; }
     .touch-btn{ padding:10px; border-radius:8px; background:rgba(255,255,255,0.04); cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; }
+
+    /* mobile fixed footer for touch nav (always visible on small screens) */
+    .touch-footer {
+      display:none;
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: calc(env(safe-area-inset-bottom,12px) + 8px);
+      z-index: 120000;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 12px;
+      background: rgba(2,6,12,0.6);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      align-items:center;
+    }
+    .touch-footer .touch-btn { margin: 0 6px; }
+
+    /* show footer on narrow screens */
+    @media (max-width: 900px){
+      .touch-footer { display:flex; }
+    }
 
     /* modal / bottom sheet */
     .overlay{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:99999; background:rgba(0,0,0,0.45); padding:env(safe-area-inset-top,12px) 12px calc(env(safe-area-inset-bottom,12px) + 6px); box-sizing:border-box; }
@@ -113,9 +139,6 @@
 
     nav{ margin-bottom:8px; display:flex; gap:8px; overflow:auto; -webkit-overflow-scrolling:touch; flex-wrap:wrap; }
     nav a{ color:inherit; text-decoration:none; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-weight:600; white-space:nowrap; }
-
-    /* Small accessibility / telegram friendly */
-    .tgmini-reset { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
 
     /* ensure no accidental horizontal scroll */
     body, #pageWrap { overscroll-behavior-x: none; }
@@ -226,6 +249,14 @@
     </aside>
   </div>
 
+  <!-- fixed touch footer for small screens (always reachable) -->
+  <div id="touchFooter" class="touch-footer" aria-hidden="false" role="toolbar" aria-label="Touch controls">
+    <div class="touch-btn" id="tf-left" title="Left"><i class="fa-solid fa-arrow-left"></i></div>
+    <div class="touch-btn" id="tf-rotate" title="Rotate"><i class="fa-solid fa-rotate"></i></div>
+    <div class="touch-btn" id="tf-down" title="Drop"><i class="fa-solid fa-arrow-down"></i></div>
+    <div class="touch-btn" id="tf-right" title="Right"><i class="fa-solid fa-arrow-right"></i></div>
+  </div>
+
   <!-- Bottom sheet / modal -->
   <div id="overlay" class="overlay" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="bottom-sheet" role="document" aria-label="Inline sheet">
@@ -275,7 +306,7 @@
   // -----------------------
   // Config / constants
   // -----------------------
-  const TELEGRAM_BOT_USERNAME = 'HexonGameBot';
+  const TELEGRAM_BOT_USERNAME = 'hxxxnbot';
 
   const API_BASE = 'https://trainer-induced-beta-estimated.trycloudflare.com';
   const DAILY_EMISSION_CAP = 1250000;
@@ -287,6 +318,11 @@
   const AUTO_RECHARGE_MINUTES = 30;
   const AUTO_RECHARGE_PERCENT = 10;
   const MAX_ADS_PER_DAY = 9, MAX_ADS_PER_SITTING = 3, MAX_SITTINGS_PER_DAY = 3;
+
+  // Gesture thresholds (pixels / ms)
+  const TAP_MAX_TIME = 250;
+  const TAP_MAX_MOV = 14;
+  const SWIPE_MIN_DIST = 30;
 
   // -----------------------
   // Persistence keys
@@ -560,7 +596,7 @@
   class BootScene extends Phaser.Scene { constructor(){ super({ key:'BootScene' }); } create(){ this.scene.start('GameScene'); } }
 
   class GameScene extends Phaser.Scene {
-    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; this.dropEvent = null; }
+    constructor(){ super({ key:'GameScene' }); this.cellSprites = null; this.g = null; this.dropEvent = null; this._gestureBound = false; }
     create(){
       this.boardPixelWidth = GRID_COLS * (CELL + GAP) + 40;
       this.boardPixelHeight = GRID_ROWS * (CELL + GAP) + 40;
@@ -689,6 +725,85 @@
       this.input.keyboard.on('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
       window.addEventListener('keydown', (ev)=>{ if (!gameState.isPlaying) return; handleKey(ev.code || ev.key); });
       if (!document.querySelector('.touch-controls')) setupTouchControls(this);
+
+      // Setup gesture handlers on the DOM container so they work reliably in Telegram mini-app environment.
+      if (!this._gestureBound){
+        const el = document.getElementById('phaserCanvas');
+        if (el){
+          let startX = 0, startY = 0, startT = 0, moved = false;
+          el.addEventListener('pointerdown', (e) => {
+            try {
+              startX = e.clientX;
+              startY = e.clientY;
+              startT = Date.now();
+              moved = false;
+            } catch(e){ console.warn('pointerdown gesture', e); }
+          }, { passive: true });
+
+          el.addEventListener('pointermove', (e) => {
+            try {
+              const dx = Math.abs(e.clientX - startX);
+              const dy = Math.abs(e.clientY - startY);
+              if (dx > TAP_MAX_MOV || dy > TAP_MAX_MOV) moved = true;
+            } catch(e){ /* ignore */ }
+          }, { passive: true });
+
+          el.addEventListener('pointerup', (e) => {
+            try {
+              const dx = e.clientX - startX;
+              const dy = e.clientY - startY;
+              const dt = Date.now() - startT;
+              // Tap detection
+              if (!moved && Math.abs(dx) <= TAP_MAX_MOV && Math.abs(dy) <= TAP_MAX_MOV && dt <= TAP_MAX_TIME) {
+                // tap -> rotate piece
+                if (gameState.isPlaying) {
+                  rotatePiece();
+                  vibratePreferTelegram();
+                  logAction('gesture_tap');
+                  sendState('gesture_tap');
+                  updateUI(); saveGameToStorage();
+                }
+                return;
+              }
+              // Horizontal swipe detection
+              if (Math.abs(dx) >= SWIPE_MIN_DIST && Math.abs(dx) > Math.abs(dy)) {
+                if (dx < 0) {
+                  // swipe left -> move RIGHT (per spec)
+                  movePiece(1);
+                  vibratePreferTelegram();
+                  logAction('gesture_swipe_left_moved_right');
+                  sendState('gesture_swipe_left_moved_right');
+                } else {
+                  // swipe right -> move LEFT (per spec)
+                  movePiece(-1);
+                  vibratePreferTelegram();
+                  logAction('gesture_swipe_right_moved_left');
+                  sendState('gesture_swipe_right_moved_left');
+                }
+                updateUI(); saveGameToStorage();
+                return;
+              }
+              // vertical swipe down -> soft drop
+              if (Math.abs(dy) >= SWIPE_MIN_DIST && Math.abs(dy) > Math.abs(dx)) {
+                if (dy > 0) {
+                  // swipe down
+                  softDrop();
+                  vibratePreferTelegram();
+                  logAction('gesture_swipe_down_softdrop');
+                  sendState('gesture_swipe_down_softdrop');
+                  updateUI(); saveGameToStorage();
+                }
+                return;
+              }
+            } catch(err){ console.warn('pointerup error', err); }
+          }, { passive: true });
+
+          // prevent double-tap zoom issues on iOS
+          el.addEventListener('touchstart', function(){}, { passive: true });
+
+          this._gestureBound = true;
+        }
+      }
     }
 
     autoRecharge(){ clientState.energy = Math.min(100, clientState.energy + AUTO_RECHARGE_PERCENT); updateUI(); logAction('auto_recharge', { energy: clientState.energy }); sendState('auto_recharge', { energy: clientState.energy }); }
@@ -879,19 +994,28 @@
   // Touch controls wiring
   // -----------------------
   function setupTouchControls(scene){
-    if (document.querySelector('.touch-controls')) return;
-    const wrapper = document.createElement('div'); wrapper.classList.add('touch-controls');
-    const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
-    const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerHTML = '<i class="fa-solid fa-arrow-right"></i>';
-    const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerHTML = '<i class="fa-solid fa-rotate"></i>';
-    const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
-    [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
-    wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
-    const ui = $('uiPanel'); if (ui) ui.append(wrapper);
-    btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); sendState('touch_left'); updateUI(); saveGameToStorage(); };
-    btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); sendState('touch_right'); updateUI(); saveGameToStorage(); };
-    btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); sendState('touch_rotate'); updateUI(); saveGameToStorage(); };
-    btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); sendState('touch_drop'); updateUI(); saveGameToStorage(); };
+    // append inline touch controls into uiPanel (keeps original behavior)
+    if (!document.querySelector('.touch-controls-inline')){
+      const wrapper = document.createElement('div'); wrapper.classList.add('touch-controls','touch-controls-inline');
+      const btnLeft = document.createElement('div'); btnLeft.className='touch-btn'; btnLeft.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
+      const btnRight = document.createElement('div'); btnRight.className='touch-btn'; btnRight.innerHTML = '<i class="fa-solid fa-arrow-right"></i>';
+      const btnRotate = document.createElement('div'); btnRotate.className='touch-btn'; btnRotate.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+      const btnDown = document.createElement('div'); btnDown.className='touch-btn'; btnDown.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
+      [btnLeft, btnRotate, btnDown, btnRight].forEach(b=>{ b.style.padding='10px'; b.style.borderRadius='8px'; b.style.background='rgba(255,255,255,0.04)'; });
+      wrapper.append(btnLeft, btnRotate, btnDown, btnRight);
+      const ui = $('uiPanel'); if (ui) ui.append(wrapper);
+      btnLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('touch_left'); sendState('touch_left'); updateUI(); saveGameToStorage(); };
+      btnRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('touch_right'); sendState('touch_right'); updateUI(); saveGameToStorage(); };
+      btnRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('touch_rotate'); sendState('touch_rotate'); updateUI(); saveGameToStorage(); };
+      btnDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('touch_drop'); sendState('touch_drop'); updateUI(); saveGameToStorage(); };
+    }
+
+    // Wire the fixed footer buttons (always visible on small screens)
+    const tfLeft = $('tf-left'), tfRight = $('tf-right'), tfRotate = $('tf-rotate'), tfDown = $('tf-down');
+    if (tfLeft) tfLeft.onclick = ()=>{ movePiece(-1); vibratePreferTelegram(); logAction('footer_left'); sendState('footer_left'); updateUI(); saveGameToStorage(); };
+    if (tfRight) tfRight.onclick = ()=>{ movePiece(1); vibratePreferTelegram(); logAction('footer_right'); sendState('footer_right'); updateUI(); saveGameToStorage(); };
+    if (tfRotate) tfRotate.onclick = ()=>{ rotatePiece(); vibratePreferTelegram(); logAction('footer_rotate'); sendState('footer_rotate'); updateUI(); saveGameToStorage(); };
+    if (tfDown) tfDown.onclick = ()=>{ softDrop(); vibratePreferTelegram(); logAction('footer_down'); sendState('footer_down'); updateUI(); saveGameToStorage(); };
   }
 
   function vibratePreferTelegram(){ try{ const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null; if (tg && typeof tg.triggerHapticFeedback === 'function'){ tg.triggerHapticFeedback('selection_change'); return; } }catch(e){} if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(20); }
@@ -1669,6 +1793,14 @@
       });
       window.addEventListener('blur', ()=> { pauseForHidden(); });
       window.addEventListener('focus', ()=> { if (!document.hidden) resumeFromHidden(); });
+
+      // also handle pagehide and beforeunload to pause and persist exact piece position
+      window.addEventListener('pagehide', (e) => {
+        try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {}
+      }, { passive: true });
+      window.addEventListener('beforeunload', (e) => {
+        try { pauseForHidden(); saveGameToStorage(); saveClientToStorage(); } catch(_) {}
+      });
 
     } catch(err){ console.error('Hexon boot failure:', err); }
   });
